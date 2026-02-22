@@ -9,7 +9,7 @@
   "window": "5m",
   "signal_source": "binance",
   "volume_confidence": true,
-  "daily_budget": 10.0,
+  "daily_budget": 5.0,
   "composite_threshold": 0.60,
   "signal_weights": {
     "order_imbalance": 0.25,

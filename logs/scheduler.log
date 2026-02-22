@@ -9,3 +9,25 @@
 2026-02-22T20:27:59Z [INFO] Market CLOSED (Sunday) — opens in 18h 2m
 2026-02-22T20:36:11Z [INFO] Received signal 15, shutting down gracefully...
 2026-02-22T20:36:12Z [INFO] Scheduler stopped.
+2026-02-22T20:36:15Z [INFO] ============================================================
+2026-02-22T20:36:15Z [INFO] FastLoop Scheduler starting
+2026-02-22T20:36:15Z [INFO]   Mode:     dry
+2026-02-22T20:36:15Z [INFO]   Asset:    BTC 5m
+2026-02-22T20:36:15Z [INFO]   Interval: 20s
+2026-02-22T20:36:15Z [INFO]   DB:       /data/signal_research.db
+2026-02-22T20:36:15Z [INFO]   Hours:    Mon–Fri 14:30–21:00 UTC
+2026-02-22T20:36:15Z [INFO] ============================================================
+2026-02-22T20:36:15Z [INFO] Market CLOSED (Sunday) — opens in 17h 53m
+2026-02-22T22:10:53Z [INFO] Received signal 15, shutting down gracefully...
+2026-02-22T22:10:53Z [INFO] Scheduler stopped.
+2026-02-22T22:10:56Z [INFO] ============================================================
+2026-02-22T22:10:56Z [INFO] FastLoop Scheduler starting
+2026-02-22T22:10:56Z [INFO]   Mode:     dry
+2026-02-22T22:10:56Z [INFO]   Asset:    BTC 5m
+2026-02-22T22:10:56Z [INFO]   Interval: 20s
+2026-02-22T22:10:56Z [INFO]   DB:       /data/signal_research.db
+2026-02-22T22:10:56Z [INFO]   Hours:    Mon–Fri 14:30–21:00 UTC
+2026-02-22T22:10:56Z [INFO] ============================================================
+2026-02-22T22:10:56Z [INFO] Market CLOSED (Sunday) — opens in 16h 19m
+2026-02-22T22:11:57Z [INFO] Received signal 15, shutting down gracefully...
+2026-02-22T22:11:57Z [INFO] Scheduler stopped.

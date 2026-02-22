@@ -1,12 +1,12 @@
 {
-  "ts": "2026-02-22T21:12:16.471715+00:00",
+  "ts": "2026-02-22T22:15:00.245910+00:00",
   "cycle": 0,
-  "mode": "dry",
+  "mode": "collect",
   "asset": "BTC",
   "window": "5m",
   "market_open": false,
-  "market_status": "CLOSED (Sunday) \u2014 opens in 17h 17m",
-  "last_action": "waiting \u2014 CLOSED (Sunday) \u2014 opens in 17h 17m",
+  "market_status": "CLOSED (Sunday) \u2014 opens in 16h 14m",
+  "last_action": "waiting \u2014 CLOSED (Sunday) \u2014 opens in 16h 14m",
   "interval_s": 20,
   "db_error": "no such table: signal_observations"
 }

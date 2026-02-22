@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FastLoop — How It Works</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #07090c;
+    --surface: #0c1018;
+    --border: #18222f;
+    --text: #b8cce0;
+    --dim: #445566;
+    --bright: #e8f2ff;
+    --green: #00e676;
+    --red: #ff4458;
+    --amber: #ffb300;
+    --blue: #4fc3f7;
+    --purple: #b39ddb;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Syne', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 40px 20px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-size: 32px;
+    font-weight: 800;
+    color: var(--bright);
+    margin-bottom: 6px;
+  }
+  h1 span { color: var(--green); }
+
+  .subtitle {
+    color: var(--dim);
+    font-size: 12px;
+    margin-bottom: 48px;
+    letter-spacing: 1px;
+  }
+
+  h2 {
+    font-family: var(--display);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--bright);
+    margin: 40px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  h2 .num {
+    display: inline-block;
+    width: 24px; height: 24px;
+    line-height: 24px;
+    text-align: center;
+    background: var(--green);
+    color: #000;
+    font-size: 12px;
+    font-weight: 800;
+    border-radius: 50%;
+    margin-right: 10px;
+  }
+
+  p { color: var(--text); margin-bottom: 12px; }
+  strong { color: var(--bright); }
+
+  /* Flow diagram */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 24px 0;
+  }
+  .flow-step {
+    display: flex;
+    gap: 0;
+    position: relative;
+  }
+  .flow-left {
+    width: 180px;
+    min-width: 180px;
+    text-align: right;
+    padding: 12px 16px 12px 0;
+    color: var(--dim);
+    font-size: 11px;
+  }
+  .flow-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 40px;
+    min-width: 40px;
+  }
+  .flow-dot {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--green);
+    border: 2px solid var(--bg);
+    z-index: 1;
+    margin-top: 14px;
+    flex-shrink: 0;
+  }
+  .flow-dot.amber { background: var(--amber); }
+  .flow-dot.blue { background: var(--blue); }
+  .flow-dot.red { background: var(--red); }
+  .flow-dot.purple { background: var(--purple); }
+  .flow-line {
+    width: 2px;
+    flex: 1;
+    background: var(--border);
+  }
+  .flow-step:last-child .flow-line { display: none; }
+  .flow-right {
+    padding: 10px 0 10px 16px;
+    flex: 1;
+  }
+  .flow-title {
+    color: var(--bright);
+    font-weight: 700;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .flow-desc { color: var(--text); font-size: 12px; }
+  .flow-code {
+    margin-top: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--blue);
+  }
+
+  /* Signal grid */
+  .signal-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin: 16px 0;
+  }
+  .signal-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 12px;
+  }
+  .signal-card-title {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 8px;
+  }
+  .signal-item {
+    font-size: 11px;
+    padding: 2px 0;
+    color: var(--text);
+  }
+  .signal-item::before {
+    content: '→ ';
+    color: var(--green);
+  }
+
+  /* Decision tree */
+  .decision {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 20px;
+    margin: 16px 0;
+    font-size: 12px;
+  }
+  .d-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .d-row:last-child { border-bottom: none; }
+  .d-label {
+    min-width: 160px;
+    color: var(--dim);
+  }
+  .d-val { color: var(--bright); }
+  .d-val.green { color: var(--green); }
+  .d-val.red { color: var(--red); }
+  .d-val.amber { color: var(--amber); }
+
+  /* Timeline */
+  .timeline {
+    display: flex;
+    gap: 0;
+    margin: 20px 0;
+    position: relative;
+  }
+  .tl-item {
+    flex: 1;
+    text-align: center;
+    padding: 0 4px;
+    position: relative;
+  }
+  .tl-item::after {
+    content: '';
+    position: absolute;
+    top: 16px; right: 0;
+    width: 50%; height: 2px;
+    background: var(--border);
+  }
+  .tl-item:last-child::after { display: none; }
+  .tl-item::before {
+    content: '';
+    position: absolute;
+    top: 16px; left: 0;
+    width: 50%; height: 2px;
+    background: var(--border);
+  }
+  .tl-item:first-child::before { display: none; }
+  .tl-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--green);
+    margin: 11px auto 8px;
+    position: relative;
+    z-index: 1;
+  }
+  .tl-dot.amber { background: var(--amber); }
+  .tl-dot.blue { background: var(--blue); }
+  .tl-dot.red { background: var(--red); }
+  .tl-time { font-size: 11px; color: var(--blue); font-weight: 700; }
+  .tl-label { font-size: 10px; color: var(--dim); margin-top: 4px; }
+
+  /* Callout boxes */
+  .callout {
+    border-radius: 3px;
+    padding: 14px 16px;
+    margin: 16px 0;
+    font-size: 12px;
+  }
+  .callout.green { background: rgba(0,230,118,0.07); border: 1px solid rgba(0,230,118,0.2); }
+  .callout.amber { background: rgba(255,179,0,0.07); border: 1px solid rgba(255,179,0,0.2); }
+  .callout.red { background: rgba(255,68,88,0.07); border: 1px solid rgba(255,68,88,0.2); }
+  .callout.blue { background: rgba(79,195,247,0.07); border: 1px solid rgba(79,195,247,0.2); }
+  .callout-title {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    font-weight: 700;
+  }
+  .callout.green .callout-title { color: var(--green); }
+  .callout.amber .callout-title { color: var(--amber); }
+  .callout.red .callout-title { color: var(--red); }
+  .callout.blue .callout-title { color: var(--blue); }
+
+  /* Score bar */
+  .score-demo {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 16px;
+    margin: 16px 0;
+  }
+  .score-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 6px 0;
+    font-size: 11px;
+  }
+  .score-name { width: 160px; color: var(--dim); }
+  .score-track {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .score-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--green);
+  }
+  .score-fill.neg { background: var(--red); }
+  .score-val { width: 50px; text-align: right; color: var(--bright); }
+  .score-total {
+    border-top: 1px solid var(--border);
+    margin-top: 10px;
+    padding-top: 10px;
+    display: flex;
+    justify-content: space-between;
+    font-weight: 700;
+  }
+  .score-total-label { color: var(--dim); }
+  .score-total-val { color: var(--green); font-size: 14px; }
+
+  /* Status chips */
+  .chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 2px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    vertical-align: middle;
+  }
+  .chip.green { background: rgba(0,230,118,0.15); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+  .chip.red { background: rgba(255,68,88,0.15); color: var(--red); border: 1px solid rgba(255,68,88,0.3); }
+  .chip.amber { background: rgba(255,179,0,0.15); color: var(--amber); border: 1px solid rgba(255,179,0,0.3); }
+  .chip.blue { background: rgba(79,195,247,0.15); color: var(--blue); border: 1px solid rgba(79,195,247,0.3); }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+</style>
+</head>
+<body>
+
+<h1>Fast<span>Loop</span> — How It Works</h1>
+<div class="subtitle">A COMPLETE GUIDE TO YOUR POLYMARKET TRADING SYSTEM</div>
+
+<!-- WHAT IS THIS -->
+<h2><span class="num">1</span> What Is This?</h2>
+<p>FastLoop is an <strong>algorithmic trading bot</strong> that trades on <strong>Polymarket</strong> — a prediction market where you bet on real-world outcomes using crypto. Specifically, it trades <strong>Bitcoin fast markets</strong>: short-duration markets that ask a simple question:</p>
+
+<div class="callout blue">
+  <div class="callout-title">The Market Question</div>
+  <strong style="font-size:15px;color:var(--bright)">"Will Bitcoin be higher or lower at 3:40PM ET than it was at 3:35PM ET?"</strong><br><br>
+  You buy <span class="chip green">YES (Up)</span> or <span class="chip red">NO (Down)</span> tokens at a price between $0.01 and $0.99.<br>
+  If you're right, your token pays out <strong>$1.00</strong>. If wrong, it pays <strong>$0.00</strong>.
+</div>
+
+<p>If YES is priced at <strong>$0.52</strong>, the market thinks there's a 52% chance BTC goes up in that window. Your bot's job is to find moments where the <strong>real probability differs from the market price</strong> — and bet accordingly before others catch on.</p>
+
+
+<!-- HOW MARKETS WORK -->
+<h2><span class="num">2</span> Market Structure</h2>
+
+<div class="timeline">
+  <div class="tl-item">
+    <div class="tl-time">~Day Before</div>
+    <div class="tl-dot"></div>
+    <div class="tl-label">Market created<br>by Polymarket</div>
+  </div>
+  <div class="tl-item">
+    <div class="tl-time">14:30 UTC</div>
+    <div class="tl-dot blue"></div>
+    <div class="tl-label">US market opens<br>trading begins</div>
+  </div>
+  <div class="tl-item">
+    <div class="tl-time">T-60s</div>
+    <div class="tl-dot amber"></div>
+    <div class="tl-label">Bot spots market<br>reads signals</div>
+  </div>
+  <div class="tl-item">
+    <div class="tl-time">T-30s</div>
+    <div class="tl-dot amber"></div>
+    <div class="tl-label">Bot places<br>trade if signal</div>
+  </div>
+  <div class="tl-item">
+    <div class="tl-time">T+0</div>
+    <div class="tl-dot red"></div>
+    <div class="tl-label">Window closes<br>Chainlink reads BTC</div>
+  </div>
+  <div class="tl-item">
+    <div class="tl-time">~T+30s</div>
+    <div class="tl-dot red"></div>
+    <div class="tl-label">Market resolves<br>tokens pay out</div>
+  </div>
+</div>
+
+<p>New 5-minute markets open <strong>every 5 minutes</strong> throughout the US trading day. The resolution source is <strong>Chainlink BTC/USD</strong> — not Binance, not Coinbase. Your bot reads BTC price data from Binance as a <em>leading indicator</em> of where Chainlink will land.</p>
+
+<div class="callout amber">
+  <div class="callout-title">Key Insight — Why Binance Data Matters</div>
+  Chainlink aggregates prices from multiple exchanges with a short delay. If Binance shows a strong move in the last 60 seconds, there's a window where Polymarket hasn't fully priced that move in yet. That's where the potential edge lives.
+</div>
+
+
+<!-- THE SIGNAL SYSTEM -->
+<h2><span class="num">3</span> The Signal System</h2>
+
+<p>Your bot collects <strong>19 signals</strong> every 20 seconds and combines them into a single <strong>composite score</strong> between 0 and 1. Above 0.60 = bet UP. Below 0.40 = bet DOWN. In between = no trade.</p>
+
+<div class="signal-grid">
+  <div class="signal-card">
+    <div class="signal-card-title">📈 CEX Signals (Binance)</div>
+    <div class="signal-item">momentum_1m / 5m / 15m</div>
+    <div class="signal-item">RSI_14 (overbought/oversold)</div>
+    <div class="signal-item">volume_ratio (unusual volume?)</div>
+    <div class="signal-item">order_imbalance (bids vs asks)</div>
+    <div class="signal-item">trade_flow_ratio (buyers vs sellers)</div>
+    <div class="signal-item">volatility_1m / 5m</div>
+    <div class="signal-item">price_acceleration</div>
+  </div>
+  <div class="signal-card">
+    <div class="signal-card-title">🎯 Polymarket Signals</div>
+    <div class="signal-item">poly_yes_price (current odds)</div>
+    <div class="signal-item">poly_divergence (CEX vs market)</div>
+    <div class="signal-item">poly_spread (bid/ask gap)</div>
+    <div class="signal-item">poly_volume_24h</div>
+    <div class="signal-item">poly_order_imbalance</div>
+  </div>
+  <div class="signal-card">
+    <div class="signal-card-title">🔗 Derived Signals</div>
+    <div class="signal-item">cex_poly_lag (timing gap)</div>
+    <div class="signal-item">momentum_consistency</div>
+    <div class="signal-item">vol_adjusted_momentum</div>
+  </div>
+</div>
+
+<p>Each signal is <strong>normalized</strong> to a 0–1 scale and multiplied by its <strong>weight</strong>. The weights start equal, but after collecting real data and running <code>--analyze</code>, you'll update them based on which signals actually predict outcomes.</p>
+
+<div class="score-demo">
+  <div style="font-size:10px;letter-spacing:2px;color:var(--dim);margin-bottom:12px;text-transform:uppercase">Example Composite Score Calculation (BTC momentum detected)</div>
+  <div class="score-row">
+    <div class="score-name">order_imbalance (0.25×)</div>
+    <div class="score-track"><div class="score-fill" style="width:78%"></div></div>
+    <div class="score-val" style="color:var(--green)">+0.195</div>
+  </div>
+  <div class="score-row">
+    <div class="score-name">trade_flow_ratio (0.20×)</div>
+    <div class="score-track"><div class="score-fill" style="width:65%"></div></div>
+    <div class="score-val" style="color:var(--green)">+0.130</div>
+  </div>
+  <div class="score-row">
+    <div class="score-name">momentum_5m (0.20×)</div>
+    <div class="score-track"><div class="score-fill" style="width:55%"></div></div>
+    <div class="score-val" style="color:var(--green)">+0.110</div>
+  </div>
+  <div class="score-row">
+    <div class="score-name">cex_poly_lag (0.15×)</div>
+    <div class="score-track"><div class="score-fill" style="width:60%"></div></div>
+    <div class="score-val" style="color:var(--green)">+0.090</div>
+  </div>
+  <div class="score-row">
+    <div class="score-name">momentum_consistency (0.10×)</div>
+    <div class="score-track"><div class="score-fill" style="width:40%"></div></div>
+    <div class="score-val" style="color:var(--green)">+0.040</div>
+  </div>
+  <div class="score-row">
+    <div class="score-name">vol_adjusted_momentum (0.10×)</div>
+    <div class="score-track"><div class="score-fill neg" style="width:20%"></div></div>
+    <div class="score-val" style="color:var(--red)">−0.020</div>
+  </div>
+  <div class="score-total">
+    <span class="score-total-label">COMPOSITE SCORE</span>
+    <span class="score-total-val">0.545 → NO TRADE (need &gt;0.60)</span>
+  </div>
+</div>
+
+
+<!-- THE DECISION -->
+<h2><span class="num">4</span> The Trading Decision</h2>
+
+<p>Before placing a trade, the bot runs through a series of hard filters and a final EV check:</p>
+
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-left">Every 20 seconds</div>
+    <div class="flow-center"><div class="flow-dot"></div><div class="flow-line"></div></div>
+    <div class="flow-right">
+      <div class="flow-title">Discover Active Market</div>
+      <div class="flow-desc">Find a 5m BTC market expiring in 60–900 seconds. If none found, skip this cycle.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-left">Binance + Polymarket APIs</div>
+    <div class="flow-center"><div class="flow-dot blue"></div><div class="flow-line"></div></div>
+    <div class="flow-right">
+      <div class="flow-title">Collect 19 Signals</div>
+      <div class="flow-desc">Pull order book, recent trades, kline candles from Binance. Pull yes/no prices and order book from Polymarket CLOB.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-left">composite_signal.py</div>
+    <div class="flow-center"><div class="flow-dot amber"></div><div class="flow-line"></div></div>
+    <div class="flow-right">
+      <div class="flow-title">Compute Composite Score</div>
+      <div class="flow-desc">Normalize + weight all signals → score 0.0–1.0</div>
+      <div class="flow-code">score &gt; 0.60 → signal UP &nbsp;&nbsp; score &lt; 0.40 → signal DOWN &nbsp;&nbsp; else → no trade</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-left">Hard filters</div>
+    <div class="flow-center"><div class="flow-dot red"></div><div class="flow-line"></div></div>
+    <div class="flow-right">
+      <div class="flow-title">Pass Safety Filters</div>
+      <div class="flow-desc">All of these must pass or the trade is killed:</div>
+      <div class="flow-code">
+        RSI not overbought/oversold (&lt;72, &gt;28)<br>
+        Momentum &gt; 0.15% minimum<br>
+        Volatility not too high (&lt;2.0 σ)<br>
+        Polymarket spread not too wide<br>
+        Volume ratio &gt; 0.3× average
+      </div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-left">Fee-aware EV check</div>
+    <div class="flow-center"><div class="flow-dot purple"></div><div class="flow-line"></div></div>
+    <div class="flow-right">
+      <div class="flow-title">Expected Value Check</div>
+      <div class="flow-desc">Polymarket charges ~10% fee on winnings. The bot calculates if the edge is big enough to be profitable after fees.</div>
+      <div class="flow-code">
+        EV = (win_prob × $1.00 × 0.90) − (loss_prob × entry_price)<br>
+        If EV &lt; 0 → skip trade
+      </div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-left">Position sizing</div>
+    <div class="flow-center"><div class="flow-dot"></div><div class="flow-line"></div></div>
+    <div class="flow-right">
+      <div class="flow-title">Size the Trade</div>
+      <div class="flow-desc">Bet size scales quadratically with confidence. Low conviction = small bet. High conviction = up to max bet. Daily budget tracked to prevent overtrading.</div>
+      <div class="flow-code">
+        score=0.61 → ~$5 (minimum)<br>
+        score=0.75 → ~$15 (medium)<br>
+        score=0.90+ → $25 (maximum)
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- THE RESEARCH LOOP -->
+<h2><span class="num">5</span> The Research Loop</h2>
+
+<p>The bot has two separate phases. You <strong>cannot skip Phase 1</strong> — trading without signal validation is gambling.</p>
+
+<div class="callout green">
+  <div class="callout-title">Phase 1 — Collect (current phase)</div>
+  <strong>Goal:</strong> Gather 500–1000 observations of all 19 signals alongside actual market outcomes (did BTC go up or down?).<br><br>
+  Run <code>signal_research.py --collect</code> during market hours for 3–5 trading days.<br>
+  Then run <code>--analyze</code> to see which signals actually predicted outcomes.<br><br>
+  <strong>You are here right now. This is working correctly once tomorrow's session opens.</strong>
+</div>
+
+<div class="callout amber">
+  <div class="callout-title">Phase 2 — Validate (dry run)</div>
+  Update <code>config.json</code> signal weights based on correlation analysis.<br>
+  Switch <code>FASTLOOP_MODE=dry</code> in Docker. Bot runs full logic but places no real trades.<br>
+  Watch win rate over 2–3 days. If win rate &gt; 55%, you have edge.
+</div>
+
+<div class="callout blue">
+  <div class="callout-title">Phase 3 — Trade Live</div>
+  Switch <code>FASTLOOP_MODE=both</code>. Collector and trader run simultaneously.<br>
+  Monitor dashboard at <strong>http://localhost:5000</strong>.<br>
+  Re-run <code>--analyze</code> weekly and update weights as market conditions change.
+</div>
+
+
+<!-- THE DOCKER DEPLOYMENT -->
+<h2><span class="num">6</span> Docker Deployment</h2>
+
+<p>Two containers run simultaneously sharing a single database file:</p>
+
+<div class="decision">
+  <div class="d-row">
+    <div class="d-label">fastloop-collector</div>
+    <div class="d-val">Runs scheduler.py — enforces market hours, calls collect_one() every 20s, auto-resolves outcomes every 10min</div>
+  </div>
+  <div class="d-row">
+    <div class="d-label">fastloop-monitor</div>
+    <div class="d-val">Runs monitor_api.py — Flask API + dashboard at localhost:5000, reads same DB, refreshes every 15s</div>
+  </div>
+  <div class="d-row">
+    <div class="d-label">Market hours</div>
+    <div class="d-val green">Mon–Fri 14:30–21:00 UTC only. Sleeps outside this window automatically.</div>
+  </div>
+  <div class="d-row">
+    <div class="d-label">Data persists</div>
+    <div class="d-val">SQLite DB lives in ./data/ on your host. Container restarts don't lose data.</div>
+  </div>
+</div>
+
+
+<!-- WHERE YOU ARE NOW -->
+<h2><span class="num">7</span> Where You Are Right Now</h2>
+
+<div class="callout red">
+  <div class="callout-title">Current Status — Feb 22 Evening</div>
+  Today's 5m markets just closed (last window was 3:55–4:00 PM ET = 20:55–21:00 UTC).<br><br>
+  The Gamma API is only returning <strong>tomorrow's pre-created Feb 23 markets</strong> (endDate ~85,000s away), which is why the collector says "No markets with enough time remaining" — this is correct behaviour, not a bug.<br><br>
+  <strong>Action:</strong> Tomorrow at <strong>14:30 UTC</strong> (9:30am ET), run the collector. The Feb 23 markets will become live and you'll start collecting real observations.
+</div>
+
+<div class="decision">
+  <div class="d-row">
+    <div class="d-label">Tomorrow's plan</div>
+    <div class="d-val green">14:30 UTC → docker compose up -d (or python signal_research.py --collect)</div>
+  </div>
+  <div class="d-row">
+    <div class="d-label">What you'll see</div>
+    <div class="d-val">secs=180-300 [api] — real markets, clean data collection</div>
+  </div>
+  <div class="d-row">
+    <div class="d-label">After 3–5 days</div>
+    <div class="d-val amber">python signal_research.py --analyze --min-n 100</div>
+  </div>
+  <div class="d-row">
+    <div class="d-label">Goal</div>
+    <div class="d-val">1000+ observations, mix of up/down outcomes, correlation table shows which signals have edge &gt;5%</div>
+  </div>
+</div>
+
+</body>
+</html>
