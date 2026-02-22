@@ -356,50 +356,51 @@ def derive_combo_signals(cex, poly):
 def resolve_outcomes(conn, symbol="BTCUSDT"):
     """
     For unresolved observations, check if market has resolved and fill in outcome.
-    Fetches the actual market resolution from Gamma API.
+
+    Resolution strategy (in priority order):
+      1. market.winners field — explicit winner token label ("Up" / "Down")
+      2. outcomePrices — YES token final price (>0.8 = up, <0.2 = down)
+      3. outcomes array with winner flag
+      4. Mark as 'unclear' if closed but can't determine direction
+
+    Note: secs_remaining may be inflated (pre-created market bug).
+    We ignore it and just check market age + closed flag.
     """
     cursor = conn.execute("""
         SELECT id, market_condition_id, ts, seconds_remaining, price_now
         FROM signal_observations
         WHERE resolved = 0 AND market_condition_id IS NOT NULL
-        ORDER BY ts DESC LIMIT 50
+        ORDER BY ts ASC LIMIT 100
     """)
     rows = cursor.fetchall()
     resolved_count = 0
+    skipped_open = 0
 
     for row in rows:
         obs_id, cond_id, ts_str, secs_remaining, price_at_obs = row
         if not cond_id:
             continue
 
-        # Estimate when market resolved
+        # Only attempt resolution if observation is at least 10 minutes old
         try:
             obs_time = datetime.fromisoformat(ts_str)
         except ValueError:
             continue
-        resolve_time = obs_time + timedelta(seconds=float(secs_remaining or 0) + 30)
-        now = datetime.now(timezone.utc)
+        age_seconds = (datetime.now(timezone.utc) - obs_time).total_seconds()
+        if age_seconds < 600:
+            skipped_open += 1
+            continue
 
-        if now < resolve_time:
-            continue  # Not resolved yet
-
-        # Fetch market to check resolution
         market = fetch_poly_market(cond_id)
         if not market:
             continue
 
         closed = market.get("closed", False)
         if not closed:
+            skipped_open += 1
             continue
 
-        # Determine outcome from winning token price
-        try:
-            prices = json.loads(market.get("outcomePrices", "[]"))
-            yes_final = float(prices[0]) if prices else 0.5
-            outcome = "up" if yes_final > 0.9 else ("down" if yes_final < 0.1 else "unclear")
-        except Exception:
-            outcome = "unclear"
-
+        outcome = _determine_outcome(market)
         conn.execute("""
             UPDATE signal_observations
             SET resolved = 1, outcome = ?
@@ -408,7 +409,61 @@ def resolve_outcomes(conn, symbol="BTCUSDT"):
         resolved_count += 1
 
     conn.commit()
+    if skipped_open:
+        print(f"  ({skipped_open} observations still open / too recent)")
     return resolved_count
+
+
+def _determine_outcome(market):
+    """
+    Extract up/down outcome from a resolved Gamma market dict.
+    Tries multiple fields since Gamma API is inconsistent post-resolution.
+    """
+    # Strategy 1: explicit winners array e.g. ["Up"] or ["Down"]
+    winners = market.get("winners") or market.get("winner")
+    if winners:
+        if isinstance(winners, list):
+            winners = winners[0] if winners else ""
+        w = str(winners).lower()
+        if "up" in w:
+            return "up"
+        if "down" in w:
+            return "down"
+
+    # Strategy 2: outcomePrices — winning token resolves to ~1.0
+    try:
+        prices = json.loads(market.get("outcomePrices", "[]"))
+        if len(prices) >= 2:
+            yes_price = float(prices[0])
+            no_price = float(prices[1])
+            if yes_price > 0.8:
+                return "up"
+            if no_price > 0.8:
+                return "down"
+            if yes_price > no_price and yes_price > 0.6:
+                return "up"
+            if no_price > yes_price and no_price > 0.6:
+                return "down"
+    except (ValueError, json.JSONDecodeError, IndexError):
+        pass
+
+    # Strategy 3: outcomes array with winner flag
+    outcomes = market.get("outcomes")
+    if outcomes:
+        try:
+            if isinstance(outcomes, str):
+                outcomes = json.loads(outcomes)
+            for o in outcomes:
+                if isinstance(o, dict) and o.get("winner"):
+                    label = str(o.get("value") or o.get("label") or "").lower()
+                    if "up" in label:
+                        return "up"
+                    if "down" in label:
+                        return "down"
+        except Exception:
+            pass
+
+    return "unclear"
 
 
 # ─────────────────────────────────────────────
@@ -517,6 +572,53 @@ def export_csv(conn, path):
 # Collection Loop
 # ─────────────────────────────────────────────
 
+def _is_valid_market(gamma_mkt):
+    """
+    Validate that a Gamma market is a real, recently-created fast market.
+    Rejects ghost markets (closedTime from 2020), untraded markets, and
+    markets that closed before today.
+    """
+    if not gamma_mkt:
+        return False, "no gamma data"
+
+    # Ghost market check: closedTime should be recent, not 2020
+    closed_time_raw = gamma_mkt.get("closedTime")
+    if closed_time_raw:
+        try:
+            ct = datetime.fromisoformat(str(closed_time_raw).replace(" ", "T").split(".")[0] + "+00:00")
+            age_days = (datetime.now(timezone.utc) - ct).days
+            if age_days > 2:
+                return False, f"ghost market (closedTime={closed_time_raw})"
+        except ValueError:
+            pass
+
+    # Must have been created recently (within last 2 days)
+    created_raw = gamma_mkt.get("createdAt")
+    if created_raw:
+        try:
+            ct = datetime.fromisoformat(str(created_raw).replace(" ", "T").split(".")[0] + "+00:00")
+            age_days = (datetime.now(timezone.utc) - ct).days
+            if age_days > 2:
+                return False, f"market too old (createdAt={created_raw})"
+        except ValueError:
+            pass
+
+    # endDate must be in the future or very recent (within last hour)
+    for key in ("endDate", "endDateIso", "end_date"):
+        raw = gamma_mkt.get(key)
+        if raw:
+            try:
+                end = datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+                age_minutes = (datetime.now(timezone.utc) - end).total_seconds() / 60
+                if age_minutes > 60:
+                    return False, f"market ended {age_minutes:.0f}m ago"
+                break
+            except ValueError:
+                pass
+
+    return True, "ok"
+
+
 def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
     """Collect one round of signal observations for the best active fast market."""
     from fast_trader import discover_fast_market_markets, find_best_fast_market
@@ -534,8 +636,14 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
     cond_id = best.get("condition_id", "")
     now = datetime.now(timezone.utc)
 
-    # Fetch gamma market first so we can get accurate endDate
+    # Fetch gamma market first — used for end_time, validation, and poly signals
     gamma_mkt = fetch_poly_market(cond_id) if cond_id else None
+
+    # Validate market is real and current (rejects ghost markets)
+    valid, reason = _is_valid_market(gamma_mkt)
+    if not valid:
+        print(f"[{_now()}] SKIP: {reason} — {best.get('slug', '')[:50]}")
+        return
 
     # Prefer endDate from the API (reliable ISO timestamp) over regex-parsed end_time
     end_time = None

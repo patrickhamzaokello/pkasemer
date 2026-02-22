@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FastLoop Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080b0f;
+    --surface: #0d1117;
+    --border: #1a2332;
+    --border-bright: #243347;
+    --text: #c8d6e8;
+    --text-dim: #4a6080;
+    --text-bright: #e8f0f8;
+    --green: #00e676;
+    --green-dim: #00c45a;
+    --red: #ff3d57;
+    --red-dim: #cc2a40;
+    --amber: #ffb300;
+    --blue: #2196f3;
+    --blue-dim: #1565c0;
+    --cyan: #00bcd4;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Syne', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.03) 2px,
+      rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    font-family: var(--display);
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--text-bright);
+  }
+  .logo span { color: var(--green); }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .market-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 2px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .market-badge.open {
+    background: rgba(0,230,118,0.1);
+    border: 1px solid rgba(0,230,118,0.3);
+    color: var(--green);
+  }
+  .market-badge.closed {
+    background: rgba(255,61,87,0.1);
+    border: 1px solid rgba(255,61,87,0.3);
+    color: var(--red);
+  }
+  .badge-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .badge-dot.pulse {
+    animation: pulse 1.5s ease infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .last-update {
+    color: var(--text-dim);
+    font-size: 10px;
+  }
+
+  /* Layout */
+  .layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    grid-template-rows: auto 1fr;
+    gap: 0;
+    height: calc(100vh - 45px);
+  }
+
+  /* Sidebar */
+  .sidebar {
+    grid-row: 1 / 3;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    background: var(--surface);
+  }
+
+  .sidebar-section {
+    border-bottom: 1px solid var(--border);
+    padding: 14px 16px;
+  }
+
+  .section-label {
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 3px 0;
+  }
+  .stat-label { color: var(--text-dim); font-size: 11px; }
+  .stat-val { color: var(--text-bright); font-size: 11px; font-weight: 500; }
+  .stat-val.green { color: var(--green); }
+  .stat-val.red { color: var(--red); }
+  .stat-val.amber { color: var(--amber); }
+  .stat-val.blue { color: var(--blue); }
+
+  /* Signal bars */
+  .signal-bar-row {
+    margin: 4px 0;
+  }
+  .signal-bar-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 3px;
+    font-size: 10px;
+  }
+  .signal-bar-name { color: var(--text-dim); }
+  .signal-bar-val { color: var(--text-bright); }
+  .signal-bar-track {
+    height: 3px;
+    background: var(--border);
+    border-radius: 1px;
+    overflow: hidden;
+  }
+  .signal-bar-fill {
+    height: 100%;
+    border-radius: 1px;
+    transition: width 0.4s ease;
+  }
+  .signal-bar-fill.pos { background: var(--green); }
+  .signal-bar-fill.neg { background: var(--red); }
+  .signal-bar-fill.neutral { background: var(--text-dim); }
+
+  /* Main area */
+  .main {
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  /* Top stats strip */
+  .stats-strip {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 12px 14px;
+    border-radius: 2px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+  .stat-card.green-top::before { background: var(--green); }
+  .stat-card.red-top::before { background: var(--red); }
+  .stat-card.amber-top::before { background: var(--amber); }
+  .stat-card.blue-top::before { background: var(--blue); }
+  .stat-card.cyan-top::before { background: var(--cyan); }
+
+  .stat-card-label {
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+  .stat-card-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-bright);
+    font-family: var(--display);
+    line-height: 1;
+  }
+  .stat-card-sub {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  /* Correlation table */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .panel-title {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .panel-meta {
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  th {
+    padding: 7px 10px;
+    text-align: left;
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    font-weight: 400;
+  }
+  th.right { text-align: right; }
+  td {
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(26,35,50,0.5);
+    font-family: var(--mono);
+  }
+  td.right { text-align: right; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  tr:last-child td { border-bottom: none; }
+
+  .corr-bar {
+    display: inline-block;
+    height: 8px;
+    border-radius: 1px;
+    vertical-align: middle;
+    margin-right: 6px;
+    min-width: 2px;
+    transition: width 0.3s;
+  }
+
+  .tag {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 2px;
+    font-size: 9px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .tag.strong { background: rgba(0,230,118,0.15); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+  .tag.weak { background: rgba(255,179,0,0.1); color: var(--amber); border: 1px solid rgba(255,179,0,0.3); }
+  .tag.none { background: rgba(74,96,128,0.2); color: var(--text-dim); border: 1px solid var(--border); }
+
+  /* Log feed */
+  .log-feed {
+    font-size: 10px;
+    line-height: 1.8;
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 10px 14px;
+  }
+  .log-row {
+    display: grid;
+    grid-template-columns: 80px 1fr auto;
+    gap: 10px;
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(26,35,50,0.3);
+    animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .log-time { color: var(--text-dim); }
+  .log-market { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-signals { color: var(--cyan); white-space: nowrap; }
+
+  /* Outcome distribution bar */
+  .outcome-bar {
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+    display: flex;
+    margin: 8px 0 4px;
+  }
+  .outcome-bar-up { background: var(--green); transition: width 0.5s; }
+  .outcome-bar-down { background: var(--red); transition: width 0.5s; }
+  .outcome-bar-unclear { background: var(--border-bright); transition: width 0.5s; }
+
+  .outcome-legend {
+    display: flex;
+    gap: 12px;
+    font-size: 10px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 4px; color: var(--text-dim); }
+  .legend-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+  /* Empty state */
+  .empty {
+    padding: 30px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 11px;
+  }
+  .empty-title { font-size: 13px; color: var(--text); margin-bottom: 6px; }
+
+  /* Refresh btn */
+  .refresh-btn {
+    background: none;
+    border: 1px solid var(--border-bright);
+    color: var(--text-dim);
+    padding: 3px 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    cursor: pointer;
+    border-radius: 2px;
+    transition: all 0.15s;
+  }
+  .refresh-btn:hover {
+    border-color: var(--green);
+    color: var(--green);
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+  /* Spinner */
+  .spinner {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border: 1.5px solid var(--border-bright);
+    border-top-color: var(--green);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading { color: var(--text-dim); font-size: 11px; padding: 20px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">Fast<span>Loop</span> <span style="font-size:11px;color:var(--text-dim);font-family:var(--mono);font-weight:400">/ monitor</span></div>
+  <div class="header-right">
+    <div id="market-badge" class="market-badge closed">
+      <div class="badge-dot" id="badge-dot"></div>
+      <span id="market-status-text">checking...</span>
+    </div>
+    <span class="last-update" id="last-update">—</span>
+    <button class="refresh-btn" onclick="refresh()">↺ refresh</button>
+  </div>
+</div>
+
+<div class="layout">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+
+    <div class="sidebar-section">
+      <div class="section-label">Scheduler</div>
+      <div class="stat-row">
+        <span class="stat-label">mode</span>
+        <span class="stat-val" id="s-mode">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">asset</span>
+        <span class="stat-val blue" id="s-asset">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">cycle</span>
+        <span class="stat-val" id="s-cycle">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">interval</span>
+        <span class="stat-val" id="s-interval">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">last action</span>
+        <span class="stat-val" id="s-action" style="font-size:10px;max-width:140px;text-align:right;word-break:break-all">—</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-label">Database</div>
+      <div class="stat-row">
+        <span class="stat-label">total obs</span>
+        <span class="stat-val amber" id="s-total">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">resolved</span>
+        <span class="stat-val" id="s-resolved">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">pending</span>
+        <span class="stat-val" id="s-pending">—</span>
+      </div>
+      <div id="outcome-section">
+        <div class="outcome-bar" id="outcome-bar">
+          <div class="outcome-bar-up" id="bar-up" style="width:33%"></div>
+          <div class="outcome-bar-down" id="bar-down" style="width:33%"></div>
+          <div class="outcome-bar-unclear" id="bar-unclear" style="width:34%"></div>
+        </div>
+        <div class="outcome-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div><span id="leg-up">— up</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div><span id="leg-down">— down</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--border-bright)"></div><span id="leg-unclear">— ?</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-label">Live Signals (avg last 50)</div>
+      <div id="signal-bars">
+        <div class="loading"><span class="spinner"></span>loading...</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-label">Market Hours</div>
+      <div class="stat-row">
+        <span class="stat-label">open</span>
+        <span class="stat-val green">14:30 UTC</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">close</span>
+        <span class="stat-val red">21:00 UTC</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">days</span>
+        <span class="stat-val">Mon – Fri</span>
+      </div>
+      <div class="stat-row" style="margin-top:6px">
+        <span class="stat-label">your time now</span>
+        <span class="stat-val cyan" id="utc-clock">—</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- Stats strip -->
+    <div class="stats-strip">
+      <div class="stat-card green-top">
+        <div class="stat-card-label">Observations</div>
+        <div class="stat-card-value" id="c-total">—</div>
+        <div class="stat-card-sub" id="c-date-range">no data yet</div>
+      </div>
+      <div class="stat-card blue-top">
+        <div class="stat-card-label">Resolved</div>
+        <div class="stat-card-value" id="c-resolved">—</div>
+        <div class="stat-card-sub" id="c-res-pct">0% resolve rate</div>
+      </div>
+      <div class="stat-card amber-top">
+        <div class="stat-card-label">Up / Down</div>
+        <div class="stat-card-value" id="c-updown">—</div>
+        <div class="stat-card-sub" id="c-balance">awaiting data</div>
+      </div>
+      <div class="stat-card cyan-top">
+        <div class="stat-card-label">Avg RSI</div>
+        <div class="stat-card-value" id="c-rsi">—</div>
+        <div class="stat-card-sub">last 50 obs</div>
+      </div>
+      <div class="stat-card red-top">
+        <div class="stat-card-label">Avg Poly Price</div>
+        <div class="stat-card-value" id="c-poly">—</div>
+        <div class="stat-card-sub">YES token price</div>
+      </div>
+    </div>
+
+    <!-- Correlation table -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Signal Correlations</div>
+        <div class="panel-meta" id="corr-meta">—</div>
+      </div>
+      <div id="corr-table-wrap">
+        <div class="loading"><span class="spinner"></span>loading correlations...</div>
+      </div>
+    </div>
+
+    <!-- Recent observations log -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Recent Observations</div>
+        <div class="panel-meta" id="obs-meta">last 20</div>
+      </div>
+      <div class="log-feed" id="log-feed">
+        <div class="loading"><span class="spinner"></span>loading...</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+
+// UTC clock
+setInterval(() => {
+  const now = new Date();
+  const h = String(now.getUTCHours()).padStart(2,'0');
+  const m = String(now.getUTCMinutes()).padStart(2,'0');
+  const s = String(now.getUTCSeconds()).padStart(2,'0');
+  document.getElementById('utc-clock').textContent = `${h}:${m}:${s} UTC`;
+}, 1000);
+
+function isMarketOpen() {
+  const now = new Date();
+  const day = now.getUTCDay(); // 0=Sun, 6=Sat
+  if (day === 0 || day === 6) return false;
+  const mins = now.getUTCHours() * 60 + now.getUTCMinutes();
+  return mins >= 870 && mins < 1260; // 14:30=870, 21:00=1260
+}
+
+async function fetchStatus() {
+  try {
+    const r = await fetch(`${API}/api/status`);
+    const d = await r.json();
+    if (d.error) return;
+
+    document.getElementById('s-mode').textContent = d.mode || '—';
+    document.getElementById('s-asset').textContent = `${d.asset || '—'} ${d.window || ''}`;
+    document.getElementById('s-cycle').textContent = d.cycle || '0';
+    document.getElementById('s-interval').textContent = `${d.interval_s || '—'}s`;
+    document.getElementById('s-action').textContent = d.last_action || '—';
+
+    const open = d.market_open || isMarketOpen();
+    const badge = document.getElementById('market-badge');
+    const dot = document.getElementById('badge-dot');
+    const txt = document.getElementById('market-status-text');
+    badge.className = `market-badge ${open ? 'open' : 'closed'}`;
+    dot.className = `badge-dot ${open ? 'pulse' : ''}`;
+    txt.textContent = d.market_status || (open ? 'market open' : 'market closed');
+
+    if (d.db) {
+      const db = d.db;
+      document.getElementById('s-total').textContent = db.total;
+      document.getElementById('s-resolved').textContent = db.resolved;
+      document.getElementById('s-pending').textContent = db.unresolved;
+
+      const {up, down, unclear} = db.outcomes;
+      const tot = up + down + unclear || 1;
+      document.getElementById('bar-up').style.width = `${up/tot*100}%`;
+      document.getElementById('bar-down').style.width = `${down/tot*100}%`;
+      document.getElementById('bar-unclear').style.width = `${unclear/tot*100}%`;
+      document.getElementById('leg-up').textContent = `${up} up`;
+      document.getElementById('leg-down').textContent = `${down} dn`;
+      document.getElementById('leg-unclear').textContent = `${unclear} ?`;
+    }
+
+    document.getElementById('last-update').textContent =
+      `updated ${new Date().toUTCString().slice(17,25)} UTC`;
+  } catch(e) {}
+}
+
+async function fetchSummary() {
+  try {
+    const r = await fetch(`${API}/api/summary`);
+    const d = await r.json();
+    if (d.error) return;
+
+    document.getElementById('c-total').textContent = d.total || '0';
+    document.getElementById('c-resolved').textContent = d.resolved || '0';
+
+    const pct = d.total > 0 ? Math.round(d.resolved/d.total*100) : 0;
+    document.getElementById('c-res-pct').textContent = `${pct}% resolve rate`;
+
+    const {up, down} = d.outcomes;
+    document.getElementById('c-updown').textContent = `${up}/${down}`;
+    const total = up + down;
+    if (total > 0) {
+      const upPct = Math.round(up/total*100);
+      document.getElementById('c-balance').textContent = `${upPct}% up bias`;
+    }
+
+    if (d.recent_avg) {
+      const avg = d.recent_avg;
+      document.getElementById('c-rsi').textContent =
+        avg.rsi_14 ? avg.rsi_14.toFixed(0) : '—';
+      document.getElementById('c-poly').textContent =
+        avg.poly_yes_price ? `$${avg.poly_yes_price.toFixed(3)}` : '—';
+
+      // Signal bars
+      const bars = [
+        {name: 'm5 momentum', val: avg.momentum_5m, range: [-1, 1]},
+        {name: 'order imbal', val: avg.order_imbalance, range: [-1, 1]},
+        {name: 'trade flow', val: avg.trade_flow_ratio ? avg.trade_flow_ratio - 0.5 : null, range: [-0.5, 0.5]},
+      ];
+      const barsEl = document.getElementById('signal-bars');
+      barsEl.innerHTML = bars.map(b => {
+        if (b.val == null) return '';
+        const pct = Math.min(100, Math.abs(b.val) / Math.max(...b.range.map(Math.abs)) * 100);
+        const cls = b.val > 0.01 ? 'pos' : b.val < -0.01 ? 'neg' : 'neutral';
+        const valStr = b.val > 0 ? `+${b.val.toFixed(4)}` : b.val.toFixed(4);
+        return `<div class="signal-bar-row">
+          <div class="signal-bar-label">
+            <span class="signal-bar-name">${b.name}</span>
+            <span class="signal-bar-val ${cls === 'pos' ? 'green' : cls === 'neg' ? 'red' : ''}">${valStr}</span>
+          </div>
+          <div class="signal-bar-track">
+            <div class="signal-bar-fill ${cls}" style="width:${pct}%"></div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    // Date range
+    if (d.date_range.oldest && d.date_range.latest) {
+      const fmt = s => s ? s.slice(0,10) : '—';
+      document.getElementById('c-date-range').textContent =
+        `${fmt(d.date_range.oldest)} → ${fmt(d.date_range.latest)}`;
+    }
+  } catch(e) {}
+}
+
+async function fetchCorrelations() {
+  const wrap = document.getElementById('corr-table-wrap');
+  try {
+    const r = await fetch(`${API}/api/correlations`);
+    const d = await r.json();
+
+    if (d.error || !d.data || d.data.length === 0) {
+      wrap.innerHTML = `<div class="empty">
+        <div class="empty-title">No resolved observations yet</div>
+        Collect data during market hours (14:30–21:00 UTC) and run --resolve
+      </div>`;
+      document.getElementById('corr-meta').textContent = '0 resolved';
+      return;
+    }
+
+    document.getElementById('corr-meta').textContent = `${d.total_resolved} resolved obs`;
+
+    const maxCorr = Math.max(...d.data.map(x => Math.abs(x.corr)));
+
+    wrap.innerHTML = `<table>
+      <thead>
+        <tr>
+          <th>Signal</th>
+          <th class="right">N</th>
+          <th>Correlation</th>
+          <th class="right">WR (+)</th>
+          <th class="right">WR (−)</th>
+          <th class="right">Edge</th>
+          <th class="right">Strength</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${d.data.map(row => {
+          const absCorr = Math.abs(row.corr);
+          const barWidth = maxCorr > 0 ? Math.round(absCorr / maxCorr * 80) : 0;
+          const barColor = row.corr > 0 ? '#00e676' : '#ff3d57';
+          const corrStr = (row.corr >= 0 ? '+' : '') + row.corr.toFixed(4);
+          const corrColor = row.corr > 0.05 ? 'var(--green)' : row.corr < -0.05 ? 'var(--red)' : 'var(--text-dim)';
+
+          const wrPos = row.wr_pos != null ? (row.wr_pos * 100).toFixed(1) + '%' : 'n/a';
+          const wrNeg = row.wr_neg != null ? (row.wr_neg * 100).toFixed(1) + '%' : 'n/a';
+          const edgeStr = row.edge != null ? (row.edge >= 0 ? '+' : '') + (row.edge * 100).toFixed(1) + '%' : 'n/a';
+          const edgeColor = row.edge > 0.05 ? 'var(--green)' : row.edge < -0.05 ? 'var(--red)' : 'var(--text-dim)';
+
+          const strength = absCorr > 0.15 ? 'strong' : absCorr > 0.05 ? 'weak' : 'none';
+          const strengthLabel = absCorr > 0.15 ? 'STRONG' : absCorr > 0.05 ? 'WEAK' : 'NONE';
+
+          return `<tr>
+            <td style="color:var(--text)">${row.signal}</td>
+            <td class="right" style="color:var(--text-dim)">${row.n}</td>
+            <td>
+              <span class="corr-bar" style="width:${barWidth}px;background:${barColor}"></span>
+              <span style="color:${corrColor}">${corrStr}</span>
+            </td>
+            <td class="right" style="color:var(--text)">${wrPos}</td>
+            <td class="right" style="color:var(--text)">${wrNeg}</td>
+            <td class="right" style="color:${edgeColor}">${edgeStr}</td>
+            <td class="right"><span class="tag ${strength}">${strengthLabel}</span></td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty">Error loading correlations: ${e.message}</div>`;
+  }
+}
+
+async function fetchObservations() {
+  const feed = document.getElementById('log-feed');
+  try {
+    const r = await fetch(`${API}/api/observations`);
+    const rows = await r.json();
+    if (rows.error || !rows.length) {
+      feed.innerHTML = '<div class="empty"><div class="empty-title">No observations yet</div>Start the collector during market hours.</div>';
+      return;
+    }
+    document.getElementById('obs-meta').textContent = `last ${rows.length}`;
+    feed.innerHTML = rows.slice(0, 50).map(r => {
+      const time = r.ts ? r.ts.slice(11, 19) : '—';
+      const market = r.market_slug ? r.market_slug.replace('bitcoin-', 'BTC-').slice(-25) : '—';
+      const m5 = r.momentum_5m != null ? (r.momentum_5m >= 0 ? '+' : '') + r.momentum_5m.toFixed(3) + '%' : '—';
+      const oi = r.order_imbalance != null ? (r.order_imbalance >= 0 ? '+' : '') + r.order_imbalance.toFixed(3) : '—';
+      const outcome = r.outcome || '—';
+      const outcomeColor = outcome === 'up' ? 'var(--green)' : outcome === 'down' ? 'var(--red)' : 'var(--text-dim)';
+
+      return `<div class="log-row">
+        <span class="log-time">${time}</span>
+        <span class="log-market">${market} <span style="color:${outcomeColor}">[${outcome}]</span></span>
+        <span class="log-signals">m5=${m5} OI=${oi}</span>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    feed.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+async function refresh() {
+  await Promise.all([
+    fetchStatus(),
+    fetchSummary(),
+    fetchCorrelations(),
+    fetchObservations(),
+  ]);
+}
+
+// Auto-refresh every 15s
+refresh();
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>

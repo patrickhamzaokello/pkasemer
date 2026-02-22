@@ -1,0 +1,11 @@
+2026-02-22T20:27:59Z [INFO] ============================================================
+2026-02-22T20:27:59Z [INFO] FastLoop Scheduler starting
+2026-02-22T20:27:59Z [INFO]   Mode:     collect
+2026-02-22T20:27:59Z [INFO]   Asset:    BTC 5m
+2026-02-22T20:27:59Z [INFO]   Interval: 20s
+2026-02-22T20:27:59Z [INFO]   DB:       /data/signal_research.db
+2026-02-22T20:27:59Z [INFO]   Hours:    Mon–Fri 14:30–21:00 UTC
+2026-02-22T20:27:59Z [INFO] ============================================================
+2026-02-22T20:27:59Z [INFO] Market CLOSED (Sunday) — opens in 18h 2m
+2026-02-22T20:36:11Z [INFO] Received signal 15, shutting down gracefully...
+2026-02-22T20:36:12Z [INFO] Scheduler stopped.

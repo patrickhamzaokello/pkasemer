@@ -1,0 +1,93 @@
+version: "3.9"
+
+services:
+
+  # ── Signal collector (runs during US market hours only) ───────────────────
+  collector:
+    build: .
+    container_name: fastloop-collector
+    restart: unless-stopped
+    environment:
+      FASTLOOP_MODE: dry          # collect | trade | both | dry
+      FASTLOOP_INTERVAL: "20"         # seconds between cycles
+      FASTLOOP_ASSET: BTC
+      FASTLOOP_WINDOW: 5m
+      DB_PATH: /data/signal_research.db
+      LOG_LEVEL: INFO
+      # Copy your .env file or set SIMMER_API_KEY here for trade mode
+    env_file:
+      - .env
+    volumes:
+      - fastloop-data:/data
+      - ./logs:/app/logs
+    command: python scheduler.py
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.path.exists('/data/status.json') or exit(1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ── Monitor API + Dashboard ───────────────────────────────────────────────
+  monitor:
+    build: .
+    container_name: fastloop-monitor
+    restart: unless-stopped
+    environment:
+      DB_PATH: /data/signal_research.db
+      LOG_LEVEL: INFO
+    env_file:
+      - .env
+    volumes:
+      - fastloop-data:/data
+      - ./dashboard:/app/dashboard:ro
+    ports:
+      - "5000:5000"
+    command: python monitor_api.py
+    depends_on:
+      - collector
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/status', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  fastloop-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data          # persists to ./data/ on host
+
+# ── Usage ──────────────────────────────────────────────────────────────────
+#
+# Build and start:
+#   docker compose up -d
+#
+# View logs:
+#   docker compose logs -f collector
+#   docker compose logs -f monitor
+#
+# Open dashboard:
+#   http://localhost:5000
+#
+# Switch to dry-run trading (no real trades):
+#   Set FASTLOOP_MODE=dry in this file, then: docker compose up -d collector
+#
+# Switch to live trading:
+#   Set FASTLOOP_MODE=both in this file (collect + trade simultaneously)
+#   Ensure SIMMER_API_KEY is set in .env
+#   docker compose up -d collector
+#
+# Run signal analysis (from inside collector container):
+#   docker exec fastloop-collector python signal_research.py --analyze --min-n 30
+#
+# Export data:
+#   docker exec fastloop-collector python signal_research.py --export /data/signals.csv
+#
+# Stop everything:
+#   docker compose down
+#
+# Wipe DB and start fresh:
+#   docker compose down && rm -rf ./data && docker compose up -d

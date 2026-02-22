@@ -62,7 +62,7 @@ CONFIG_SCHEMA = {
                       "help": "Price feed source (binance, coingecko)"},
     "lookback_minutes": {"default": 5, "env": "SIMMER_SPRINT_LOOKBACK", "type": int,
                          "help": "Minutes of price history for momentum calc"},
-    "min_time_remaining": {"default": 60, "env": "SIMMER_SPRINT_MIN_TIME", "type": int,
+    "min_time_remaining": {"default": 30, "env": "SIMMER_SPRINT_MIN_TIME", "type": int,
                            "help": "Skip fast_markets with less than this many seconds remaining"},
                                "max_time_remaining": {"default": 900, "env": "SIMMER_SPRINT_MAX_TIME", "type": int,
                            "help": "Skip fast_markets with less than this many seconds remaining"},
@@ -248,35 +248,104 @@ def _api_request(url, method="GET", data=None, headers=None, timeout=15):
 
 def discover_fast_market_markets(asset="BTC", window="5m"):
     """Find active fast markets on Polymarket via Gamma API."""
+    from datetime import datetime, timezone, timedelta
+
     patterns = ASSET_PATTERNS.get(asset, ASSET_PATTERNS["BTC"])
+    now = datetime.now(timezone.utc)
+
+    # Only fetch markets whose eventStartTime is within the next 30 minutes
+    # This excludes tomorrow's pre-created markets entirely
+    start_min = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    start_max = (now + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     url = (
         "https://gamma-api.polymarket.com/markets"
-        "?limit=20&closed=false&tag=crypto&order=createdAt&ascending=false"
+        f"?limit=50&closed=false&tag=crypto"
+        f"&order=endDate&ascending=true"
+        f"&startDateMin={start_min}&startDateMax={start_max}"
     )
     result = _api_request(url)
     if not result or isinstance(result, dict) and result.get("error"):
-        return []
+        # Fallback: fetch without date filter and filter manually
+        url_fallback = (
+            "https://gamma-api.polymarket.com/markets"
+            "?limit=50&closed=false&tag=crypto&order=endDate&ascending=true"
+        )
+        result = _api_request(url_fallback)
+        if not result or isinstance(result, dict) and result.get("error"):
+            return []
 
     markets = []
     for m in result:
         q = (m.get("question") or "").lower()
         slug = m.get("slug", "")
         matches_window = f"-{window}-" in slug
-        if any(p in q for p in patterns) and matches_window:
-            condition_id = m.get("conditionId", "")
-            closed = m.get("closed", False)
-            if not closed and slug:
-                # Parse end time from question (e.g., "5:30AM-5:35AM ET")
-                end_time = _parse_fast_market_end_time(m.get("question", ""))
-                markets.append({
-                    "question": m.get("question", ""),
-                    "slug": slug,
-                    "condition_id": condition_id,
-                    "end_time": end_time,
-                    "outcomes": m.get("outcomes", []),
-                    "outcome_prices": m.get("outcomePrices", "[]"),
-                    "fee_rate_bps": int(m.get("fee_rate_bps") or m.get("feeRateBps") or 0),
-                })
+        if not (any(p in q for p in patterns) and matches_window):
+            continue
+        if m.get("closed", False):
+            continue
+
+        condition_id = m.get("conditionId", "")
+
+        # Use eventStartTime if available, else endDate — both are real ISO timestamps
+        # eventStartTime = when the price observation window begins
+        # endDate        = when the market resolves (slightly after)
+        # We want markets whose price window starts within the next 30 minutes
+        raw_start = (
+            m.get("eventStartTime")
+            or m.get("startTime")
+            or m.get("endDate")
+            or m.get("endDateIso")
+        )
+        end_raw = m.get("endDate") or m.get("endDateIso")
+
+        end_time = None
+        event_start = None
+
+        if raw_start:
+            try:
+                event_start = datetime.fromisoformat(
+                    raw_start.replace("Z", "+00:00")
+                ).astimezone(timezone.utc)
+            except ValueError:
+                pass
+
+        if end_raw:
+            try:
+                end_time = datetime.fromisoformat(
+                    end_raw.replace("Z", "+00:00")
+                ).astimezone(timezone.utc)
+            except ValueError:
+                pass
+
+        # Skip markets whose price window hasn't started yet (future markets)
+        # Allow up to 30 min in the future (next window) or already started
+        if event_start:
+            mins_until_start = (event_start - now).total_seconds() / 60
+            if mins_until_start > 30:
+                continue  # too far in future — tomorrow's market
+
+        # Skip markets that ended more than 5 minutes ago
+        if end_time:
+            mins_since_end = (now - end_time).total_seconds() / 60
+            if mins_since_end > 5:
+                continue
+
+        # Fall back to regex only if we have no ISO timestamp at all
+        if end_time is None:
+            end_time = _parse_fast_market_end_time(m.get("question", ""))
+
+        markets.append({
+            "question": m.get("question", ""),
+            "slug": slug,
+            "condition_id": condition_id,
+            "end_time": end_time,
+            "event_start": event_start,
+            "outcomes": m.get("outcomes", []),
+            "outcome_prices": m.get("outcomePrices", "[]"),
+            "fee_rate_bps": int(m.get("fee_rate_bps") or m.get("feeRateBps") or 0),
+        })
+
     return markets
 
 
