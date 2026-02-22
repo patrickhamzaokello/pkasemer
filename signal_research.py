@@ -1,0 +1,656 @@
+#!/usr/bin/env python3
+"""
+FastLoop Signal Research Framework
+
+Collects and logs multi-factor signal candidates alongside actual Polymarket
+outcomes. Run this in dry-run mode to build a dataset, then analyze with
+analyze_signals.py to find what actually has predictive power.
+
+Usage:
+    python signal_research.py --collect          # Log signals + outcomes to DB
+    python signal_research.py --analyze          # Show correlation report
+    python signal_research.py --analyze --min-n 50  # Only show signals with 50+ observations
+    python signal_research.py --live             # Trade using composite score
+    python signal_research.py --export signals.csv  # Export raw data
+
+Signal candidates tracked:
+  CEX Signals (Binance):
+    - momentum_1m, momentum_5m, momentum_15m     % price change
+    - rsi_14                                      overbought/oversold
+    - volume_ratio                                current vs avg volume
+    - spread_bps                                  bid-ask spread (order book)
+    - order_imbalance                             buy pressure vs sell pressure
+    - trade_flow_ratio                            recent trades buy/sell ratio
+    - volatility_1m, volatility_5m               realized vol (std of returns)
+    - price_acceleration                          momentum of momentum
+
+  Polymarket Signals:
+    - poly_yes_price                              current YES price
+    - poly_divergence                             yes_price - 0.50
+    - poly_spread                                 best_ask - best_bid on CLOB
+    - poly_volume_24h                             recent market liquidity
+    - poly_order_imbalance                        CLOB buy vs sell depth
+    - poly_mid_vs_last                            mid price vs last trade
+
+  Derived / Combo Signals:
+    - cex_poly_lag                                momentum direction vs poly pricing
+    - momentum_consistency                        # of recent candles agreeing on direction
+    - vol_adjusted_momentum                       momentum / recent volatility
+"""
+
+import os
+import sys
+import json
+import math
+import sqlite3
+import argparse
+import time
+from datetime import datetime, timezone, timedelta
+from urllib.request import urlopen, Request
+from urllib.error import HTTPError, URLError
+
+from dotenv import load_dotenv
+load_dotenv()
+
+DB_PATH = os.path.join(os.path.dirname(__file__), "signal_research.db")
+BINANCE_WS_SNAPSHOT = "https://api.binance.com/api/v3/depth"
+BINANCE_TRADES = "https://api.binance.com/api/v3/trades"
+BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
+POLY_CLOB = "https://clob.polymarket.com"
+GAMMA_API = "https://gamma-api.polymarket.com"
+
+# ─────────────────────────────────────────────
+# DB Setup
+# ─────────────────────────────────────────────
+
+def init_db(path=DB_PATH):
+    conn = sqlite3.connect(path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS signal_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            market_slug TEXT,
+            market_condition_id TEXT,
+            seconds_remaining REAL,
+            outcome TEXT,             -- 'up' or 'down' (filled in after resolution)
+            resolved INTEGER DEFAULT 0,
+
+            -- CEX signals
+            momentum_1m REAL,
+            momentum_5m REAL,
+            momentum_15m REAL,
+            rsi_14 REAL,
+            volume_ratio REAL,
+            spread_bps REAL,
+            order_imbalance REAL,
+            trade_flow_ratio REAL,
+            volatility_1m REAL,
+            volatility_5m REAL,
+            price_acceleration REAL,
+            price_now REAL,
+
+            -- Polymarket signals
+            poly_yes_price REAL,
+            poly_divergence REAL,
+            poly_spread REAL,
+            poly_volume_24h REAL,
+            poly_order_imbalance REAL,
+
+            -- Derived
+            cex_poly_lag REAL,
+            momentum_consistency REAL,
+            vol_adjusted_momentum REAL,
+
+            -- Meta
+            traded INTEGER DEFAULT 0,
+            trade_side TEXT,
+            trade_amount REAL,
+            trade_result REAL
+        )
+    """)
+    conn.commit()
+    return conn
+
+
+# ─────────────────────────────────────────────
+# Data Fetchers
+# ─────────────────────────────────────────────
+
+def _get(url, timeout=8):
+    try:
+        req = Request(url, headers={"User-Agent": "fastloop-research/1.0"})
+        with urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+
+def fetch_binance_klines(symbol="BTCUSDT", interval="1m", limit=20):
+    url = f"{BINANCE_KLINES}?symbol={symbol}&interval={interval}&limit={limit}"
+    return _get(url)
+
+
+def fetch_binance_orderbook(symbol="BTCUSDT", limit=20):
+    url = f"{BINANCE_WS_SNAPSHOT}?symbol={symbol}&limit={limit}"
+    return _get(url)
+
+
+def fetch_binance_recent_trades(symbol="BTCUSDT", limit=100):
+    url = f"{BINANCE_TRADES}?symbol={symbol}&limit={limit}"
+    return _get(url)
+
+
+def fetch_poly_clob_orderbook(condition_id):
+    """Fetch Polymarket CLOB order book for a condition."""
+    url = f"{POLY_CLOB}/book?token_id={condition_id}"
+    return _get(url)
+
+
+def fetch_poly_market(condition_id):
+    """Fetch Polymarket market details from Gamma."""
+    url = f"{GAMMA_API}/markets?conditionId={condition_id}"
+    result = _get(url)
+    if result and isinstance(result, list) and result:
+        return result[0]
+    return None
+
+
+# ─────────────────────────────────────────────
+# Signal Calculators
+# ─────────────────────────────────────────────
+
+def calc_rsi(closes, period=14):
+    if len(closes) < period + 1:
+        return None
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        d = closes[i] - closes[i-1]
+        gains.append(max(d, 0))
+        losses.append(max(-d, 0))
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def calc_volatility(returns):
+    """Annualized realized volatility from a list of returns."""
+    if len(returns) < 2:
+        return None
+    mean = sum(returns) / len(returns)
+    variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+    return math.sqrt(variance)
+
+
+def calc_order_imbalance(bids, asks, levels=5):
+    """
+    Order book imbalance: (bid_vol - ask_vol) / (bid_vol + ask_vol)
+    Range: -1 (all ask pressure) to +1 (all bid pressure)
+    """
+    bid_vol = sum(float(b[1]) for b in bids[:levels])
+    ask_vol = sum(float(a[1]) for a in asks[:levels])
+    total = bid_vol + ask_vol
+    if total == 0:
+        return 0.0
+    return (bid_vol - ask_vol) / total
+
+
+def calc_trade_flow_ratio(trades):
+    """
+    Ratio of buy-initiated volume to total volume.
+    Binance marks isBuyerMaker: True means the buyer was maker (so seller hit the bid = sell flow).
+    """
+    buy_vol = sum(float(t["qty"]) for t in trades if not t.get("isBuyerMaker", True))
+    sell_vol = sum(float(t["qty"]) for t in trades if t.get("isBuyerMaker", True))
+    total = buy_vol + sell_vol
+    if total == 0:
+        return 0.5
+    return buy_vol / total
+
+
+def extract_cex_signals(symbol="BTCUSDT"):
+    """
+    Pull all CEX signals. Returns dict of signal_name -> value.
+    """
+    signals = {}
+
+    # Klines for momentum, RSI, volatility
+    k1 = fetch_binance_klines(symbol, "1m", 20)
+    k5 = fetch_binance_klines(symbol, "5m", 20)
+
+    if k1 and len(k1) >= 2:
+        closes_1m = [float(c[4]) for c in k1]
+        opens_1m = [float(c[1]) for c in k1]
+        volumes_1m = [float(c[5]) for c in k1]
+
+        # Momentum
+        signals["momentum_1m"] = (closes_1m[-1] - closes_1m[-2]) / closes_1m[-2] * 100
+        signals["price_now"] = closes_1m[-1]
+
+        # RSI
+        signals["rsi_14"] = calc_rsi(closes_1m)
+
+        # Volume ratio (latest vs 10-candle avg)
+        avg_vol = sum(volumes_1m[:-1]) / max(len(volumes_1m) - 1, 1)
+        signals["volume_ratio"] = volumes_1m[-1] / avg_vol if avg_vol > 0 else 1.0
+
+        # Volatility (std of 1m returns)
+        returns_1m = [(closes_1m[i] - closes_1m[i-1]) / closes_1m[i-1]
+                      for i in range(1, len(closes_1m))]
+        signals["volatility_1m"] = calc_volatility(returns_1m[-5:])
+
+        # Momentum consistency: fraction of last N candles that agree with latest direction
+        direction = 1 if signals["momentum_1m"] > 0 else -1
+        recent_moves = [1 if closes_1m[i] > closes_1m[i-1] else -1
+                        for i in range(max(1, len(closes_1m)-5), len(closes_1m))]
+        agreement = sum(1 for m in recent_moves if m == direction)
+        signals["momentum_consistency"] = agreement / len(recent_moves) if recent_moves else 0.5
+
+    if k5 and len(k5) >= 2:
+        closes_5m = [float(c[4]) for c in k5]
+        opens_5m = [float(c[1]) for c in k5]
+
+        signals["momentum_5m"] = (closes_5m[-1] - opens_5m[0]) / opens_5m[0] * 100
+
+        returns_5m = [(closes_5m[i] - closes_5m[i-1]) / closes_5m[i-1]
+                      for i in range(1, len(closes_5m))]
+        signals["volatility_5m"] = calc_volatility(returns_5m[-5:])
+
+        # Price acceleration: is momentum accelerating or decelerating?
+        if len(closes_5m) >= 3:
+            m_recent = (closes_5m[-1] - closes_5m[-2]) / closes_5m[-2] * 100
+            m_prior = (closes_5m[-2] - closes_5m[-3]) / closes_5m[-3] * 100
+            signals["price_acceleration"] = m_recent - m_prior
+
+    k15 = fetch_binance_klines(symbol, "15m", 5)
+    if k15 and len(k15) >= 2:
+        closes_15m = [float(c[4]) for c in k15]
+        opens_15m = [float(c[1]) for c in k15]
+        signals["momentum_15m"] = (closes_15m[-1] - opens_15m[0]) / opens_15m[0] * 100
+
+    # Vol-adjusted momentum
+    if signals.get("momentum_5m") and signals.get("volatility_5m") and signals["volatility_5m"] > 0:
+        signals["vol_adjusted_momentum"] = signals["momentum_5m"] / signals["volatility_5m"]
+
+    # Order book
+    ob = fetch_binance_orderbook(symbol, 20)
+    if ob and ob.get("bids") and ob.get("asks"):
+        bids = ob["bids"]
+        asks = ob["asks"]
+
+        # Spread in bps
+        best_bid = float(bids[0][0])
+        best_ask = float(asks[0][0])
+        mid = (best_bid + best_ask) / 2
+        signals["spread_bps"] = ((best_ask - best_bid) / mid) * 10000
+
+        # Order imbalance
+        signals["order_imbalance"] = calc_order_imbalance(bids, asks)
+
+    # Trade flow
+    trades = fetch_binance_recent_trades(symbol, 100)
+    if trades:
+        signals["trade_flow_ratio"] = calc_trade_flow_ratio(trades)
+
+    return signals
+
+
+def extract_poly_signals(condition_id, gamma_market=None):
+    """Pull Polymarket CLOB signals for a market."""
+    signals = {}
+
+    if gamma_market:
+        try:
+            prices = json.loads(gamma_market.get("outcomePrices", "[]"))
+            yes_price = float(prices[0]) if prices else 0.5
+            signals["poly_yes_price"] = yes_price
+            signals["poly_divergence"] = yes_price - 0.50
+            vol = gamma_market.get("volume24hr") or gamma_market.get("volumeClob")
+            signals["poly_volume_24h"] = float(vol) if vol else 0.0
+        except (ValueError, IndexError, json.JSONDecodeError):
+            pass
+
+    # CLOB order book
+    clob = fetch_poly_clob_orderbook(condition_id)
+    if clob:
+        bids = clob.get("bids", [])
+        asks = clob.get("asks", [])
+        if bids and asks:
+            try:
+                best_bid = float(bids[0].get("price", 0))
+                best_ask = float(asks[0].get("price", 1))
+                signals["poly_spread"] = best_ask - best_bid
+
+                bid_size = sum(float(b.get("size", 0)) for b in bids[:5])
+                ask_size = sum(float(a.get("size", 0)) for a in asks[:5])
+                total = bid_size + ask_size
+                signals["poly_order_imbalance"] = (bid_size - ask_size) / total if total > 0 else 0.0
+            except (ValueError, KeyError):
+                pass
+
+    return signals
+
+
+def derive_combo_signals(cex, poly):
+    """Derive cross-signal features."""
+    derived = {}
+
+    # CEX/Poly lag: momentum direction vs Polymarket pricing
+    # Positive = CEX is bullish but Poly hasn't priced it in yet (potential trade)
+    # Negative = Poly is ahead of CEX (no edge)
+    if cex.get("momentum_5m") is not None and poly.get("poly_divergence") is not None:
+        cex_direction = 1.0 if cex["momentum_5m"] > 0 else -1.0
+        poly_direction = 1.0 if poly["poly_divergence"] > 0 else -1.0
+        # Both agree = 0 lag. CEX positive, poly neutral/opposite = positive lag (opportunity)
+        derived["cex_poly_lag"] = cex["momentum_5m"] * (1.0 - poly["poly_divergence"] * 2)
+
+    return derived
+
+
+# ─────────────────────────────────────────────
+# Outcome Resolution
+# ─────────────────────────────────────────────
+
+def resolve_outcomes(conn, symbol="BTCUSDT"):
+    """
+    For unresolved observations, check if market has resolved and fill in outcome.
+    Fetches the actual market resolution from Gamma API.
+    """
+    cursor = conn.execute("""
+        SELECT id, market_condition_id, ts, seconds_remaining, price_now
+        FROM signal_observations
+        WHERE resolved = 0 AND market_condition_id IS NOT NULL
+        ORDER BY ts DESC LIMIT 50
+    """)
+    rows = cursor.fetchall()
+    resolved_count = 0
+
+    for row in rows:
+        obs_id, cond_id, ts_str, secs_remaining, price_at_obs = row
+        if not cond_id:
+            continue
+
+        # Estimate when market resolved
+        try:
+            obs_time = datetime.fromisoformat(ts_str)
+        except ValueError:
+            continue
+        resolve_time = obs_time + timedelta(seconds=float(secs_remaining or 0) + 30)
+        now = datetime.now(timezone.utc)
+
+        if now < resolve_time:
+            continue  # Not resolved yet
+
+        # Fetch market to check resolution
+        market = fetch_poly_market(cond_id)
+        if not market:
+            continue
+
+        closed = market.get("closed", False)
+        if not closed:
+            continue
+
+        # Determine outcome from winning token price
+        try:
+            prices = json.loads(market.get("outcomePrices", "[]"))
+            yes_final = float(prices[0]) if prices else 0.5
+            outcome = "up" if yes_final > 0.9 else ("down" if yes_final < 0.1 else "unclear")
+        except Exception:
+            outcome = "unclear"
+
+        conn.execute("""
+            UPDATE signal_observations
+            SET resolved = 1, outcome = ?
+            WHERE id = ?
+        """, (outcome, obs_id))
+        resolved_count += 1
+
+    conn.commit()
+    return resolved_count
+
+
+# ─────────────────────────────────────────────
+# Signal Analysis / Correlation Report
+# ─────────────────────────────────────────────
+
+SIGNAL_COLUMNS = [
+    "momentum_1m", "momentum_5m", "momentum_15m",
+    "rsi_14", "volume_ratio", "spread_bps",
+    "order_imbalance", "trade_flow_ratio",
+    "volatility_1m", "volatility_5m", "price_acceleration",
+    "poly_yes_price", "poly_divergence", "poly_spread",
+    "poly_volume_24h", "poly_order_imbalance",
+    "cex_poly_lag", "momentum_consistency", "vol_adjusted_momentum",
+    "seconds_remaining",
+]
+
+
+def analyze_signals(conn, min_n=20):
+    """
+    For each signal column, compute:
+    - Point-biserial correlation with outcome (up=1, down=0)
+    - Win rate when signal is positive vs negative
+    - Mean value for up vs down outcomes
+    """
+    cursor = conn.execute("""
+        SELECT * FROM signal_observations
+        WHERE resolved = 1 AND outcome IN ('up', 'down')
+    """)
+    rows = cursor.fetchall()
+    col_names = [d[0] for d in cursor.description]
+
+    if not rows:
+        print("No resolved observations yet. Run --collect for a while first.")
+        return
+
+    outcomes = []
+    data = {col: [] for col in SIGNAL_COLUMNS}
+
+    for row in rows:
+        rec = dict(zip(col_names, row))
+        outcome_val = 1 if rec["outcome"] == "up" else 0
+        outcomes.append(outcome_val)
+        for col in SIGNAL_COLUMNS:
+            data[col].append(rec.get(col))
+
+    print(f"\n{'─'*72}")
+    print(f"  SIGNAL CORRELATION REPORT  ({len(outcomes)} resolved observations)")
+    print(f"{'─'*72}")
+    print(f"  {'Signal':<28} {'N':>5}  {'Corr':>7}  {'WR(+)':>7}  {'WR(-)':>7}  {'Edge':>7}")
+    print(f"{'─'*72}")
+
+    results = []
+    for col in SIGNAL_COLUMNS:
+        vals = data[col]
+        paired = [(v, o) for v, o in zip(vals, outcomes) if v is not None]
+        if len(paired) < min_n:
+            continue
+        v_list = [p[0] for p in paired]
+        o_list = [p[1] for p in paired]
+
+        # Point-biserial correlation
+        n = len(v_list)
+        mean_v = sum(v_list) / n
+        mean_o = sum(o_list) / n
+        std_v = math.sqrt(sum((x - mean_v)**2 for x in v_list) / n) or 1e-9
+        std_o = math.sqrt(sum((x - mean_o)**2 for x in o_list) / n) or 1e-9
+        corr = sum((v_list[i] - mean_v) * (o_list[i] - mean_o) for i in range(n)) / (n * std_v * std_o)
+
+        # Win rates by signal direction
+        pos_wins = [o for v, o in paired if v > 0]
+        neg_wins = [o for v, o in paired if v <= 0]
+        wr_pos = sum(pos_wins) / len(pos_wins) if pos_wins else float('nan')
+        wr_neg = sum(neg_wins) / len(neg_wins) if neg_wins else float('nan')
+        edge = wr_pos - wr_neg
+
+        results.append((abs(corr), col, len(paired), corr, wr_pos, wr_neg, edge))
+
+    results.sort(reverse=True)
+    for _, col, n, corr, wr_pos, wr_neg, edge in results:
+        wr_pos_str = f"{wr_pos:.1%}" if not math.isnan(wr_pos) else "  n/a"
+        wr_neg_str = f"{wr_neg:.1%}" if not math.isnan(wr_neg) else "  n/a"
+        print(f"  {col:<28} {n:>5}  {corr:>+7.3f}  {wr_pos_str:>7}  {wr_neg_str:>7}  {edge:>+7.3f}")
+
+    print(f"{'─'*72}")
+    print(f"\n  Interpretation:")
+    print(f"    Corr > +0.10  : signal has directional predictive power")
+    print(f"    Edge > +0.05  : positive signal wins 5%+ more often than negative")
+    print(f"    Best signals for the composite score = high |corr| AND high edge\n")
+
+
+def export_csv(conn, path):
+    """Export all observations to CSV."""
+    cursor = conn.execute("SELECT * FROM signal_observations ORDER BY ts")
+    rows = cursor.fetchall()
+    cols = [d[0] for d in cursor.description]
+    import csv
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(cols)
+        writer.writerows(rows)
+    print(f"Exported {len(rows)} rows to {path}")
+
+
+# ─────────────────────────────────────────────
+# Collection Loop
+# ─────────────────────────────────────────────
+
+def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
+    """Collect one round of signal observations for the best active fast market."""
+    from fast_trader import discover_fast_market_markets, find_best_fast_market
+
+    markets = discover_fast_market_markets(asset, window)
+    if not markets:
+        print(f"[{_now()}] No active markets found")
+        return
+
+    best = find_best_fast_market(markets)
+    if not best:
+        print(f"[{_now()}] No markets with enough time remaining")
+        return
+
+    cond_id = best.get("condition_id", "")
+    now = datetime.now(timezone.utc)
+
+    # Fetch gamma market first so we can get accurate endDate
+    gamma_mkt = fetch_poly_market(cond_id) if cond_id else None
+
+    # Prefer endDate from the API (reliable ISO timestamp) over regex-parsed end_time
+    end_time = None
+    if gamma_mkt:
+        for key in ("endDate", "end_date", "endDateIso", "end_date_iso"):
+            raw = gamma_mkt.get(key)
+            if raw:
+                try:
+                    end_time = datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+                    break
+                except ValueError:
+                    pass
+    if end_time is None:
+        end_time = best.get("end_time")  # fallback to regex-parsed value
+
+    seconds_remaining = (end_time - now).total_seconds() if end_time else 0
+
+    # Fetch signals
+    cex = extract_cex_signals(symbol)
+    poly = extract_poly_signals(cond_id, gamma_mkt)
+    derived = derive_combo_signals(cex, poly)
+    all_signals = {**cex, **poly, **derived}
+
+    row = {
+        "ts": now.isoformat(),
+        "market_slug": best.get("slug", ""),
+        "market_condition_id": cond_id,
+        "seconds_remaining": seconds_remaining,
+        "price_now": all_signals.get("price_now"),  # explicit — not in SIGNAL_COLUMNS
+        **{k: all_signals.get(k) for k in SIGNAL_COLUMNS if k != "seconds_remaining"},
+    }
+
+    conn.execute("""
+        INSERT INTO signal_observations
+        (ts, market_slug, market_condition_id, seconds_remaining,
+         momentum_1m, momentum_5m, momentum_15m, rsi_14, volume_ratio,
+         spread_bps, order_imbalance, trade_flow_ratio, volatility_1m,
+         volatility_5m, price_acceleration, price_now,
+         poly_yes_price, poly_divergence, poly_spread, poly_volume_24h,
+         poly_order_imbalance, cex_poly_lag, momentum_consistency,
+         vol_adjusted_momentum)
+        VALUES
+        (:ts, :market_slug, :market_condition_id, :seconds_remaining,
+         :momentum_1m, :momentum_5m, :momentum_15m, :rsi_14, :volume_ratio,
+         :spread_bps, :order_imbalance, :trade_flow_ratio, :volatility_1m,
+         :volatility_5m, :price_acceleration, :price_now,
+         :poly_yes_price, :poly_divergence, :poly_spread, :poly_volume_24h,
+         :poly_order_imbalance, :cex_poly_lag, :momentum_consistency,
+         :vol_adjusted_momentum)
+    """, row)
+    conn.commit()
+
+    m5 = all_signals.get("momentum_5m", 0) or 0
+    poly_p = all_signals.get("poly_yes_price", 0.5) or 0.5
+    lag = all_signals.get("cex_poly_lag", 0) or 0
+    oi = all_signals.get("order_imbalance", 0) or 0
+    tfr = all_signals.get("trade_flow_ratio", 0.5) or 0.5
+    rsi = all_signals.get("rsi_14") or 0
+    time_src = "api" if end_time and gamma_mkt and any(
+        gamma_mkt.get(k) for k in ("endDate", "end_date", "endDateIso")
+    ) else "regex"
+    print(f"[{_now()}] {best['question'][:45]:45} | "
+          f"m5={m5:+.3f}% poly={poly_p:.3f} lag={lag:+.3f} "
+          f"OI={oi:+.3f} TFR={tfr:.2f} RSI={rsi:.0f} secs={seconds_remaining:.0f} [{time_src}]")
+
+
+def _now():
+    return datetime.now(timezone.utc).strftime("%H:%M:%S")
+
+
+# ─────────────────────────────────────────────
+# CLI
+# ─────────────────────────────────────────────
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="FastLoop Signal Research")
+    parser.add_argument("--collect", action="store_true",
+                        help="Collect signals continuously (Ctrl-C to stop)")
+    parser.add_argument("--analyze", action="store_true",
+                        help="Show correlation report")
+    parser.add_argument("--resolve", action="store_true",
+                        help="Resolve pending outcomes")
+    parser.add_argument("--export", metavar="FILE",
+                        help="Export observations to CSV")
+    parser.add_argument("--min-n", type=int, default=20,
+                        help="Min observations to show in report")
+    parser.add_argument("--interval", type=int, default=30,
+                        help="Collection interval in seconds (default: 30)")
+    parser.add_argument("--asset", default="BTC")
+    parser.add_argument("--window", default="5m")
+    args = parser.parse_args()
+
+    conn = init_db()
+
+    if args.resolve:
+        n = resolve_outcomes(conn)
+        print(f"Resolved {n} outcomes")
+
+    if args.export:
+        export_csv(conn, args.export)
+
+    if args.analyze:
+        resolve_outcomes(conn)
+        analyze_signals(conn, args.min_n)
+
+    if args.collect:
+        symbol = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT"}.get(args.asset, "BTCUSDT")
+        print(f"Collecting signals every {args.interval}s. Ctrl-C to stop.")
+        print(f"DB: {DB_PATH}\n")
+        try:
+            while True:
+                try:
+                    collect_one(conn, args.asset, args.window, symbol)
+                except Exception as e:
+                    print(f"[{_now()}] Error: {e}")
+                time.sleep(args.interval)
+        except KeyboardInterrupt:
+            print("\nStopped.")

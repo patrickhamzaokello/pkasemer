@@ -1,11 +1,22 @@
 {
   "entry_threshold": 0.05,
-  "min_momentum_pct": 0.5,
+  "min_momentum_pct": 0.15,
   "max_position": 5.0,
   "lookback_minutes": 5,
   "min_time_remaining": 60,
+  "max_time_remaining": 900,
   "asset": "BTC",
   "window": "5m",
   "signal_source": "binance",
-  "volume_confidence": true
+  "volume_confidence": true,
+  "daily_budget": 10.0,
+  "composite_threshold": 0.60,
+  "signal_weights": {
+    "order_imbalance": 0.25,
+    "trade_flow_ratio": 0.20,
+    "momentum_5m": 0.20,
+    "cex_poly_lag": 0.15,
+    "momentum_consistency": 0.10,
+    "vol_adjusted_momentum": 0.10
+  }
 }
