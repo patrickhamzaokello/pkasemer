@@ -22,13 +22,16 @@ Signal architecture:
   After running signal_research.py --analyze, update weights based on actual
   correlation data to improve accuracy over time.
 
-Default weights (update after empirical analysis):
-  order_imbalance       0.25   buy/sell pressure in Binance book
-  trade_flow_ratio      0.20   recent trade aggression direction
-  momentum_5m           0.20   5m price momentum
-  cex_poly_lag          0.15   CEX directional vs Poly pricing gap
-  momentum_consistency  0.10   candle agreement on direction
-  vol_adjusted_momentum 0.10   momentum per unit of volatility
+Weights calibrated from 362 resolved observations (2026-02-24):
+  btc_vs_reference      0.40   (price_now - ref) / ref — corr +0.39, edge +0.26
+  volume_ratio          0.15   elevated volume predicts direction — edge +0.22
+  momentum_5m           0.15   5m price momentum — corr +0.17, edge +0.18
+  vol_adjusted_momentum 0.10   momentum per unit vol — corr +0.19, edge +0.17
+  cex_poly_lag          0.10   CEX vs Poly repricing gap — corr +0.17
+  price_acceleration    0.05   momentum of momentum — corr +0.23
+  momentum_consistency  0.05   candle direction agreement
+  trade_flow_ratio      0.00   negative edge in data (-0.38) — excluded
+  order_imbalance       0.00   no edge in data (+0.01) — excluded
 """
 
 import os
@@ -46,13 +49,15 @@ from urllib.error import HTTPError, URLError
 # ─────────────────────────────────────────────
 
 DEFAULT_WEIGHTS = {
-    "btc_vs_reference":      0.40,  # (price_now - priceToBeat) / priceToBeat — direct outcome signal (+0.42 corr)
-    "order_imbalance":       0.00,  # negative edge in empirical data (-0.17) — excluded
-    "trade_flow_ratio":      0.15,
-    "momentum_5m":           0.20,  # +0.22 corr, increased from 0.15
-    "cex_poly_lag":          0.15,  # +0.23 corr, increased from 0.10
-    "momentum_consistency":  0.05,
-    "vol_adjusted_momentum": 0.05,
+    "btc_vs_reference":      0.40,  # corr +0.39, edge +0.26 — dominant signal
+    "volume_ratio":          0.15,  # edge +0.22 — elevated volume predicts direction
+    "momentum_5m":           0.15,  # corr +0.17, edge +0.18
+    "vol_adjusted_momentum": 0.10,  # corr +0.19, edge +0.17
+    "cex_poly_lag":          0.10,  # corr +0.17, edge +0.18
+    "price_acceleration":    0.05,  # corr +0.23
+    "momentum_consistency":  0.05,  # corr +0.06
+    "trade_flow_ratio":      0.00,  # edge -0.38 in data — excluded
+    "order_imbalance":       0.00,  # edge +0.01 in data — excluded
 }
 
 # Thresholds
@@ -138,14 +143,37 @@ def normalize_btc_vs_reference(v):
     return _sigmoid(clipped, scale=10.0)
 
 
+def normalize_volume_ratio(vr):
+    """
+    volume_ratio = latest_candle_vol / avg_vol. Centered at 1.0 (neutral).
+    > 1.0 = above-average volume = bullish signal (edge +0.22 in data).
+    At 1.5x → ~0.73. At 0.5x → ~0.27.
+    """
+    if vr is None:
+        return None
+    return _sigmoid(vr - 1.0, scale=2.0)
+
+
+def normalize_price_acceleration(pa):
+    """
+    price_acceleration = recent_5m_momentum - prior_5m_momentum (in %).
+    Positive = momentum increasing = bullish. Clip implicitly via sigmoid.
+    """
+    if pa is None:
+        return None
+    return _sigmoid(pa, scale=8.0)
+
+
 NORMALIZERS = {
     "btc_vs_reference":      normalize_btc_vs_reference,
+    "volume_ratio":          normalize_volume_ratio,
+    "momentum_5m":           normalize_momentum,
+    "vol_adjusted_momentum": normalize_vol_adjusted_momentum,
+    "cex_poly_lag":          normalize_cex_poly_lag,
+    "price_acceleration":    normalize_price_acceleration,
+    "momentum_consistency":  normalize_consistency,
     "order_imbalance":       normalize_order_imbalance,
     "trade_flow_ratio":      normalize_trade_flow,
-    "momentum_5m":           normalize_momentum,
-    "cex_poly_lag":          normalize_cex_poly_lag,
-    "momentum_consistency":  normalize_consistency,
-    "vol_adjusted_momentum": normalize_vol_adjusted_momentum,
 }
 
 
@@ -184,12 +212,12 @@ def apply_filters(cex, poly):
     if poly_spread is not None and poly_spread > MIN_POLY_SPREAD:
         return False, f"Poly spread too wide ({poly_spread:.3f} > {MIN_POLY_SPREAD})"
 
-    # Polymarket already priced in opposite direction strongly
+    # Polymarket already priced in the move — data shows edge -0.29 once divergence > 0.08
     poly_divergence = poly.get("poly_divergence", 0)
-    if m5 and m5 > 0 and poly_divergence > 0.15:
-        return False, f"Poly already very bullish ({poly_divergence:+.3f}), no edge left"
-    if m5 and m5 < 0 and poly_divergence < -0.15:
-        return False, f"Poly already very bearish ({poly_divergence:+.3f}), no edge left"
+    if m5 and m5 > 0 and poly_divergence > 0.08:
+        return False, f"Poly already priced bullish ({poly_divergence:+.3f}), no edge left"
+    if m5 and m5 < 0 and poly_divergence < -0.08:
+        return False, f"Poly already priced bearish ({poly_divergence:+.3f}), no edge left"
 
     # Low volume — signal unreliable
     if vol_ratio is not None and vol_ratio < 0.3:
@@ -213,12 +241,14 @@ def compute_composite_score(cex, poly, weights=None):
 
     signals = {
         "btc_vs_reference":      cex.get("btc_vs_reference"),
+        "volume_ratio":          cex.get("volume_ratio"),
+        "momentum_5m":           cex.get("momentum_5m"),
+        "vol_adjusted_momentum": cex.get("vol_adjusted_momentum"),
+        "cex_poly_lag":          _calc_cex_poly_lag(cex, poly),
+        "price_acceleration":    cex.get("price_acceleration"),
+        "momentum_consistency":  cex.get("momentum_consistency"),
         "order_imbalance":       cex.get("order_imbalance"),
         "trade_flow_ratio":      cex.get("trade_flow_ratio"),
-        "momentum_5m":           cex.get("momentum_5m"),
-        "cex_poly_lag":          _calc_cex_poly_lag(cex, poly),
-        "momentum_consistency":  cex.get("momentum_consistency"),
-        "vol_adjusted_momentum": cex.get("vol_adjusted_momentum"),
     }
 
     normalized = {}
