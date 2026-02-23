@@ -26,10 +26,10 @@ Weights calibrated from 362 resolved observations (2026-02-24):
   btc_vs_reference      0.40   (price_now - ref) / ref — corr +0.39, edge +0.26
   volume_ratio          0.15   elevated volume predicts direction — edge +0.22
   momentum_5m           0.15   5m price momentum — corr +0.17, edge +0.18
+  price_acceleration    0.15   momentum of momentum (independent) — corr +0.23
   vol_adjusted_momentum 0.10   momentum per unit vol — corr +0.19, edge +0.17
-  cex_poly_lag          0.10   CEX vs Poly repricing gap — corr +0.17
-  price_acceleration    0.05   momentum of momentum — corr +0.23
   momentum_consistency  0.05   candle direction agreement
+  cex_poly_lag          0.00   redundant with momentum_5m when poly_div≈0 — excluded
   trade_flow_ratio      0.00   negative edge in data (-0.38) — excluded
   order_imbalance       0.00   no edge in data (+0.01) — excluded
 """
@@ -53,9 +53,9 @@ DEFAULT_WEIGHTS = {
     "volume_ratio":          0.15,  # edge +0.22 — elevated volume predicts direction
     "momentum_5m":           0.15,  # corr +0.17, edge +0.18
     "vol_adjusted_momentum": 0.10,  # corr +0.19, edge +0.17
-    "cex_poly_lag":          0.10,  # corr +0.17, edge +0.18
-    "price_acceleration":    0.05,  # corr +0.23
+    "price_acceleration":    0.15,  # corr +0.23 — independent of momentum level
     "momentum_consistency":  0.05,  # corr +0.06
+    "cex_poly_lag":          0.00,  # redundant with momentum_5m when poly_div≈0 — excluded
     "trade_flow_ratio":      0.00,  # edge -0.38 in data — excluded
     "order_imbalance":       0.00,  # edge +0.01 in data — excluded
 }

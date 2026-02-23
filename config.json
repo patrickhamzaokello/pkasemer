@@ -15,10 +15,10 @@
     "btc_vs_reference":      0.40,
     "volume_ratio":          0.15,
     "momentum_5m":           0.15,
+    "price_acceleration":    0.15,
     "vol_adjusted_momentum": 0.10,
-    "cex_poly_lag":          0.10,
-    "price_acceleration":    0.05,
     "momentum_consistency":  0.05,
+    "cex_poly_lag":          0.00,
     "trade_flow_ratio":      0.00,
     "order_imbalance":       0.00
   }
