@@ -60,6 +60,57 @@ POLY_CLOB = "https://clob.polymarket.com"
 GAMMA_API = "https://gamma-api.polymarket.com"
 
 # ─────────────────────────────────────────────
+# Window Reference Price Cache
+# Records Binance price at first observation of each 5m window.
+# Polymarket's eventMetadata.priceToBeat is never populated via the API,
+# so we maintain our own reference to compute btc_vs_reference.
+# Stored at /data/window_refs.json (Docker) or ./window_refs.json (local).
+# ─────────────────────────────────────────────
+
+_DATA_DIR = "/data" if os.path.isdir("/data") else os.path.dirname(os.path.abspath(__file__))
+_REF_CACHE_FILE = os.path.join(_DATA_DIR, "window_refs.json")
+
+
+def _load_ref_cache():
+    try:
+        with open(_REF_CACHE_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_ref_cache(cache):
+    try:
+        os.makedirs(os.path.dirname(_REF_CACHE_FILE), exist_ok=True)
+        with open(_REF_CACHE_FILE, "w") as f:
+            json.dump(cache, f, indent=2)
+    except Exception:
+        pass
+
+
+def get_window_reference_price(slug, cex_price_now=None, window_open=False):
+    """
+    Return the cached Binance reference price for this market window slug.
+    On the first cycle after window open, records cex_price_now and returns it.
+    Returns None if the window hasn't opened yet or no price available.
+    """
+    if not slug:
+        return None
+    cache = _load_ref_cache()
+    if slug in cache:
+        return float(cache[slug])
+    if window_open and cex_price_now:
+        cache[slug] = cex_price_now
+        # Keep last 48 entries (~4 hours of 5-minute windows)
+        if len(cache) > 60:
+            for k in sorted(cache.keys())[:-48]:
+                del cache[k]
+        _save_ref_cache(cache)
+        return cex_price_now
+    return None
+
+
+# ─────────────────────────────────────────────
 # DB Setup
 # ─────────────────────────────────────────────
 
@@ -404,9 +455,9 @@ def resolve_outcomes(conn, symbol="BTCUSDT"):
     We ignore it and just check market age + closed flag.
     """
     cursor = conn.execute("""
-        SELECT id, market_condition_id, ts, seconds_remaining, price_now
+        SELECT id, market_condition_id, market_slug, ts, seconds_remaining, price_now
         FROM signal_observations
-        WHERE resolved = 0 AND market_condition_id IS NOT NULL
+        WHERE resolved = 0
         ORDER BY ts ASC LIMIT 100
     """)
     rows = cursor.fetchall()
@@ -414,8 +465,8 @@ def resolve_outcomes(conn, symbol="BTCUSDT"):
     skipped_open = 0
 
     for row in rows:
-        obs_id, cond_id, ts_str, secs_remaining, price_at_obs = row
-        if not cond_id:
+        obs_id, cond_id, slug, ts_str, secs_remaining, price_at_obs = row
+        if not slug and not cond_id:
             continue
 
         # Only attempt resolution if observation is at least 10 minutes old
@@ -428,7 +479,20 @@ def resolve_outcomes(conn, symbol="BTCUSDT"):
             skipped_open += 1
             continue
 
-        market = fetch_poly_market(cond_id)
+        # Prefer slug-based lookup via events endpoint — conditionId lookup returns
+        # wrong markets (Polymarket API bug with fast-market condition IDs).
+        market = None
+        if slug:
+            data = _get(f"{GAMMA_API}/events?slug={slug}")
+            if data and isinstance(data, list) and data:
+                mkts = data[0].get("markets") or []
+                if mkts:
+                    market = mkts[0]
+
+        # Fallback to conditionId only if slug lookup failed
+        if market is None and cond_id:
+            market = fetch_poly_market(cond_id)
+
         if not market:
             continue
 
@@ -671,12 +735,22 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
         return
 
     seconds_remaining = (end_time - now).total_seconds()
-    price_to_beat = best.get("price_to_beat")
+    event_start = best.get("event_start")
+    window_open = bool(event_start and now >= event_start)
 
-    # best dict already contains fresh poly data from the events API call in
-    # discover_fast_market_markets — no additional API fetch needed
+    # Fetch CEX signals first — we need price_now to populate the reference cache
     cex = extract_cex_signals(symbol)
     poly = extract_poly_signals(best)
+
+    # price_to_beat: our cached Binance price at first observation after window opens.
+    # Polymarket's eventMetadata.priceToBeat is never set via the API, so we record
+    # our own reference on the first cycle after startTime passes.
+    price_to_beat = get_window_reference_price(
+        best.get("slug", ""),
+        cex_price_now=cex.get("price_now"),
+        window_open=window_open,
+    )
+
     derived = derive_combo_signals(cex, poly, price_to_beat)
     all_signals = {**cex, **poly, **derived}
 

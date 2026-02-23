@@ -25,7 +25,7 @@ from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, quote
 from composite_signal import get_composite_signal
-from signal_research import extract_cex_signals, extract_poly_signals
+from signal_research import extract_cex_signals, extract_poly_signals, get_window_reference_price
 import time
 from datetime import datetime, timezone
 
@@ -368,15 +368,16 @@ def find_best_fast_market(markets):
             if secs_until_start > 0:
                 window_open = False  # window not yet open, but within 15 min
 
-        # Score: prefer open windows with substantial time remaining
-        # Windows with > 120s remaining score higher than near-expiry ones
-        # Pending windows (not yet open) score slightly lower than active ones
+        # Score: strongly prefer markets whose window is already open.
+        # priceToBeat (from Chainlink) is only set once the window starts,
+        # so we MUST be in an active window to get the btc_vs_reference signal.
+        # Pre-window markets are a fallback only — never beat an active window.
         if window_open and remaining > 120:
-            score = remaining  # more time = better, up to a point
+            score = remaining + 600  # large bonus: active window always beats pre-window
         elif window_open:
-            score = remaining * 0.5  # less than 2 min — deprioritise
+            score = remaining * 0.5  # in-window but almost expired — low priority
         else:
-            score = remaining * 0.8  # window opening soon — decent
+            score = remaining * 0.8  # pre-window fallback — no priceToBeat yet
 
         candidates.append((score, m))
 
@@ -639,9 +640,15 @@ def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=Fal
     # bestBid, bestAsk, spread) — no secondary fetch or CLOB call needed
     poly_signals = extract_poly_signals(best)
 
-    # btc_vs_reference: how far is BTC from the window's reference price?
-    # Positive = Up is currently winning. Most direct signal for this market type.
-    price_to_beat = best.get("price_to_beat")
+    # btc_vs_reference: how far is BTC from the window's opening reference price?
+    # We cache our own Binance price at first window observation (API never provides priceToBeat).
+    event_start = best.get("event_start")
+    window_open = bool(event_start and datetime.now(timezone.utc) >= event_start)
+    price_to_beat = get_window_reference_price(
+        best.get("slug", ""),
+        cex_price_now=cex_signals.get("price_now"),
+        window_open=window_open,
+    )
     if price_to_beat and cex_signals.get("price_now"):
         cex_signals["btc_vs_reference"] = (
             (cex_signals["price_now"] - price_to_beat) / price_to_beat * 100
