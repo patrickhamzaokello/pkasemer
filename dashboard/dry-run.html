@@ -39,17 +39,13 @@
   .panel-header { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
   .panel-title { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
   .panel-meta { font-size: 10px; color: var(--text-dim); }
-  
-  /* Table Styles */
-  .table-scroll-container { max-height: 400px; overflow-y: auto; position: relative; }
   table { width: 100%; border-collapse: collapse; font-size: 11px; }
-  th { position: sticky; top: 0; background: var(--surface); z-index: 10; padding: 7px 10px; text-align: left; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); border-bottom: 1px solid var(--border); font-weight: 400; }
+  th { padding: 7px 10px; text-align: left; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); border-bottom: 1px solid var(--border); font-weight: 400; }
   th.right { text-align: right; }
   td { padding: 6px 10px; border-bottom: 1px solid rgba(26,35,50,0.5); }
   td.right { text-align: right; }
   tr:hover td { background: rgba(255,255,255,0.02); }
   tr:last-child td { border-bottom: none; }
-  
   .tag { display: inline-block; padding: 1px 6px; border-radius: 2px; font-size: 9px; letter-spacing: 0.5px; text-transform: uppercase; font-weight: 700; }
   .tag.yes { background: rgba(0,230,118,0.12); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
   .tag.no  { background: rgba(255,61,87,0.12);  color: var(--red);   border: 1px solid rgba(255,61,87,0.3); }
@@ -160,6 +156,7 @@
 
   <div class="main">
 
+    <!-- Score Banner -->
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">&#9679; Live Composite Signal</div>
@@ -189,6 +186,7 @@
         </div>
       </div>
 
+      <!-- Signal breakdown -->
       <div style="padding:8px 0">
         <div style="display:grid;grid-template-columns:140px 60px 60px 40px 1fr;gap:8px;padding:5px 14px;font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border)">
           <span>Signal</span><span style="text-align:right">Raw</span><span style="text-align:right">Norm</span><span style="text-align:right">Wt</span><span>Contribution</span>
@@ -197,6 +195,7 @@
       </div>
     </div>
 
+    <!-- Score History Chart -->
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">Score History</div>
@@ -207,16 +206,16 @@
       </div>
     </div>
 
+    <!-- Would-Trade Log -->
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">Would-Trade Log</div>
         <div class="panel-meta" id="wt-meta">threshold crossings</div>
       </div>
-      <div class="table-scroll-container" id="wt-table-wrap">
-        <div class="loading"><span class="spinner"></span>loading...</div>
-      </div>
+      <div id="wt-table-wrap"><div class="loading"><span class="spinner"></span>loading...</div></div>
     </div>
 
+    <!-- Prediction vs Outcome -->
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">Prediction vs Outcome</div>
@@ -240,9 +239,7 @@
           <div style="font-size:18px;font-weight:700;color:var(--text-bright)" id="big-resolved">—</div>
         </div>
       </div>
-      <div class="table-scroll-container" id="pred-table-wrap">
-        <div class="loading"><span class="spinner"></span>waiting for resolved predictions...</div>
-      </div>
+      <div id="pred-table-wrap"><div class="loading"><span class="spinner"></span>waiting for resolved predictions...</div></div>
     </div>
 
   </div>
@@ -281,6 +278,7 @@ async function fetchComposite() {
     const shouldTrade = d.should_trade;
     const filter = d.filter_reason;
 
+    // Score big display
     const bigEl = document.getElementById('score-big');
     bigEl.textContent = score.toFixed(4);
     bigEl.style.color = score > THRESHOLD ? 'var(--green)' : score < (1 - THRESHOLD) ? 'var(--red)' : 'var(--text-dim)';
@@ -288,6 +286,7 @@ async function fetchComposite() {
     document.getElementById('score-secs').textContent =
       d.seconds_remaining ? `${Math.round(d.seconds_remaining)}s remaining` : '';
 
+    // Gauge
     const pct = Math.round(score * 100);
     const fill = document.getElementById('gauge-fill');
     fill.style.width = pct + '%';
@@ -295,6 +294,7 @@ async function fetchComposite() {
 
     document.getElementById('conf-label').textContent = `confidence: ${(d.confidence * 100).toFixed(0)}%`;
 
+    // Side
     const sideEl = document.getElementById('score-side');
     if (shouldTrade && side === 'yes') { sideEl.textContent = '▲ BUY YES'; sideEl.style.color = 'var(--green)'; }
     else if (shouldTrade && side === 'no') { sideEl.textContent = '▼ BUY NO'; sideEl.style.color = 'var(--red)'; }
@@ -305,6 +305,7 @@ async function fetchComposite() {
 
     document.getElementById('comp-market').textContent = d.market_slug ? d.market_slug.split('-').slice(-1)[0] + ' · ' + new Date(d.ts).toUTCString().slice(17,25) + ' UTC' : '—';
 
+    // Breakdown
     const bd = d.breakdown || {};
     const activeSignals = Object.entries(WEIGHTS).filter(([,w]) => w > 0);
     const rows = activeSignals.map(([name, weight]) => {
@@ -337,6 +338,7 @@ async function fetchScoreHistory() {
     const rows = await r.json();
     if (!rows.length) return;
 
+    // Update sidebar stats
     const total = rows.length;
     const wouldTrade = rows.filter(r => r.should_trade).length;
     document.getElementById('ss-cycles').textContent = total;
@@ -345,6 +347,7 @@ async function fetchScoreHistory() {
     const avgScore = rows.reduce((s, r) => s + r.score, 0) / total;
     document.getElementById('ss-avg').textContent = avgScore.toFixed(3);
 
+    // Top block reason
     const blocks = rows.filter(r => !r.should_trade && r.filter_reason).map(r => r.filter_reason);
     if (blocks.length) {
       const freq = {};
@@ -358,6 +361,7 @@ async function fetchScoreHistory() {
 
     document.getElementById('hist-meta').textContent = `${total} cycles`;
 
+    // Draw SVG history
     const svg = document.getElementById('hist-svg');
     const W = 900, H = 100, PAD = 6;
     const n = rows.length;
@@ -385,10 +389,12 @@ async function fetchScoreHistory() {
       <text x="4" y="${thLoY + 10}" fill="rgba(255,61,87,0.5)" font-size="8">SELL</text>
     `;
 
+    // Would-trade log table
     const wtWrap = document.getElementById('wt-table-wrap');
-    const trades = [...rows].reverse().filter(r => r.should_trade).slice(0, 50); // Increased slice for scroll demo
+    const trades = [...rows].reverse().filter(r => r.should_trade).slice(0, 30);
     document.getElementById('wt-meta').textContent = `${wouldTrade} crossings in last ${total} cycles`;
 
+    // Sidebar weights (always populate regardless of trade count)
     const wBars = document.getElementById('weights-bars');
     wBars.innerHTML = Object.entries(WEIGHTS).filter(([,w]) => w > 0).map(([name, w]) => `
       <div class="wt-bar-row">
@@ -456,6 +462,7 @@ async function fetchPredictions() {
       document.getElementById('big-yes-wr').textContent = acc.yes_wr != null ? (acc.yes_wr * 100).toFixed(1) + '%' : '—';
       document.getElementById('big-no-wr').textContent = acc.no_wr != null ? (acc.no_wr * 100).toFixed(1) + '%' : '—';
       document.getElementById('big-resolved').textContent = acc.total || 0;
+      // Sidebar
       document.getElementById('acc-total').textContent = acc.total || 0;
       document.getElementById('acc-wr').textContent = wr;
       document.getElementById('acc-wr').style.color = wrColor;
