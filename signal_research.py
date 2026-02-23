@@ -89,14 +89,18 @@ def init_db(path=DB_PATH):
             price_acceleration REAL,
             price_now REAL,
 
-            -- Polymarket signals
-            poly_yes_price REAL,
+            -- Market reference
+            price_to_beat REAL,       -- Chainlink BTC price at window start (from eventMetadata)
+
+            -- Polymarket signals (sourced from Gamma API, no CLOB needed)
+            poly_yes_price REAL,      -- lastTradePrice from API
             poly_divergence REAL,
-            poly_spread REAL,
+            poly_spread REAL,         -- bestAsk - bestBid from API
             poly_volume_24h REAL,
             poly_order_imbalance REAL,
 
             -- Derived
+            btc_vs_reference REAL,    -- (price_now - price_to_beat) / price_to_beat * 100
             cex_poly_lag REAL,
             momentum_consistency REAL,
             vol_adjusted_momentum REAL,
@@ -108,6 +112,12 @@ def init_db(path=DB_PATH):
             trade_result REAL
         )
     """)
+    # Migrate existing DBs that predate these columns
+    for col, typedef in [("price_to_beat", "REAL"), ("btc_vs_reference", "REAL")]:
+        try:
+            conn.execute(f"ALTER TABLE signal_observations ADD COLUMN {col} {typedef}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.commit()
     return conn
 
@@ -297,59 +307,81 @@ def extract_cex_signals(symbol="BTCUSDT"):
     return signals
 
 
-def extract_poly_signals(condition_id, gamma_market=None):
-    """Pull Polymarket CLOB signals for a market."""
-    signals = {}
+def extract_poly_signals(market_data):
+    """
+    Extract Polymarket signals from a market dict (Gamma events API format).
 
-    if gamma_market:
+    Uses live fields directly from the API — no CLOB call needed:
+      lastTradePrice  → poly_yes_price  (most current traded price)
+      bestBid/bestAsk → poly_spread     (live order book spread)
+      spread          → poly_spread     (fallback if bestBid/bestAsk absent)
+      volumeClob      → poly_volume_24h
+    """
+    signals = {}
+    if not market_data:
+        return signals
+
+    # Live price: lastTradePrice is the most current signal.
+    # Fall back to bestBid/bestAsk midpoint, then outcomePrices (stale — avoid).
+    last_trade = market_data.get("lastTradePrice")
+    best_bid   = market_data.get("bestBid")
+    best_ask   = market_data.get("bestAsk")
+
+    yes_price = None
+    if last_trade is not None:
         try:
-            prices = json.loads(gamma_market.get("outcomePrices", "[]"))
-            yes_price = float(prices[0]) if prices else 0.5
-            signals["poly_yes_price"] = yes_price
-            signals["poly_divergence"] = yes_price - 0.50
-            vol = gamma_market.get("volume24hr") or gamma_market.get("volumeClob")
-            signals["poly_volume_24h"] = float(vol) if vol else 0.0
-        except (ValueError, IndexError, json.JSONDecodeError):
+            yes_price = float(last_trade)
+        except (ValueError, TypeError):
             pass
 
-    # CLOB order book — authoritative source for live price
-    clob = fetch_poly_clob_orderbook(condition_id)
-    if clob:
-        bids = clob.get("bids", [])
-        asks = clob.get("asks", [])
-        if bids and asks:
-            try:
-                best_bid = float(bids[0].get("price", 0))
-                best_ask = float(asks[0].get("price", 1))
-                signals["poly_spread"] = best_ask - best_bid
+    if yes_price is None and best_bid is not None and best_ask is not None:
+        try:
+            yes_price = (float(best_bid) + float(best_ask)) / 2
+        except (ValueError, TypeError):
+            pass
 
-                # CLOB midpoint overrides Gamma API outcomePrices (which is stale)
-                mid_price = (best_bid + best_ask) / 2
-                signals["poly_yes_price"] = mid_price
-                signals["poly_divergence"] = mid_price - 0.50
+    if yes_price is not None:
+        signals["poly_yes_price"] = yes_price
+        signals["poly_divergence"] = yes_price - 0.50
 
-                bid_size = sum(float(b.get("size", 0)) for b in bids[:5])
-                ask_size = sum(float(a.get("size", 0)) for a in asks[:5])
-                total = bid_size + ask_size
-                signals["poly_order_imbalance"] = (bid_size - ask_size) / total if total > 0 else 0.0
-            except (ValueError, KeyError):
-                pass
+    # Spread: prefer bestBid/bestAsk, fall back to spread field
+    if best_bid is not None and best_ask is not None:
+        try:
+            signals["poly_spread"] = float(best_ask) - float(best_bid)
+        except (ValueError, TypeError):
+            pass
+    elif market_data.get("spread") is not None:
+        try:
+            signals["poly_spread"] = float(market_data["spread"])
+        except (ValueError, TypeError):
+            pass
+
+    # Volume
+    vol = market_data.get("volumeClob") or market_data.get("volume24hr")
+    if vol is not None:
+        try:
+            signals["poly_volume_24h"] = float(vol)
+        except (ValueError, TypeError):
+            signals["poly_volume_24h"] = 0.0
 
     return signals
 
 
-def derive_combo_signals(cex, poly):
+def derive_combo_signals(cex, poly, price_to_beat=None):
     """Derive cross-signal features."""
     derived = {}
 
-    # CEX/Poly lag: momentum direction vs Polymarket pricing
-    # Positive = CEX is bullish but Poly hasn't priced it in yet (potential trade)
-    # Negative = Poly is ahead of CEX (no edge)
+    # CEX/Poly lag: how much of the CEX signal is NOT yet in Polymarket pricing
     if cex.get("momentum_5m") is not None and poly.get("poly_divergence") is not None:
-        cex_direction = 1.0 if cex["momentum_5m"] > 0 else -1.0
-        poly_direction = 1.0 if poly["poly_divergence"] > 0 else -1.0
-        # Both agree = 0 lag. CEX positive, poly neutral/opposite = positive lag (opportunity)
         derived["cex_poly_lag"] = cex["momentum_5m"] * (1.0 - poly["poly_divergence"] * 2)
+
+    # BTC vs reference: (current_price - window_start_price) / window_start_price * 100
+    # This is the direct answer to "is Bitcoin up or down since the window started?"
+    # Positive = Up is currently winning. Most predictive signal available.
+    if price_to_beat and cex.get("price_now"):
+        derived["btc_vs_reference"] = (
+            (cex["price_now"] - price_to_beat) / price_to_beat * 100
+        )
 
     return derived
 
@@ -482,7 +514,7 @@ SIGNAL_COLUMNS = [
     "volatility_1m", "volatility_5m", "price_acceleration",
     "poly_yes_price", "poly_divergence", "poly_spread",
     "poly_volume_24h", "poly_order_imbalance",
-    "cex_poly_lag", "momentum_consistency", "vol_adjusted_momentum",
+    "btc_vs_reference", "cex_poly_lag", "momentum_consistency", "vol_adjusted_momentum",
     "seconds_remaining",
 ]
 
@@ -639,32 +671,22 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
         return
 
     seconds_remaining = (end_time - now).total_seconds()
+    price_to_beat = best.get("price_to_beat")
 
-    # Fetch gamma market for poly signals
-    gamma_mkt = fetch_poly_market(cond_id) if cond_id else None
-
-    # ── CLOB FIX: extract YES token ID from clobTokenIds ──────────────────
-    clob_token_id = cond_id  # fallback
-    if gamma_mkt:
-        try:
-            token_ids = json.loads(gamma_mkt.get("clobTokenIds", "[]"))
-            if token_ids:
-                clob_token_id = token_ids[0]  # index 0 = YES token
-        except (json.JSONDecodeError, IndexError, TypeError):
-            pass
-    # ──────────────────────────────────────────────────────────────────────
-
+    # best dict already contains fresh poly data from the events API call in
+    # discover_fast_market_markets — no additional API fetch needed
     cex = extract_cex_signals(symbol)
-    poly = extract_poly_signals(clob_token_id, gamma_mkt)  # <-- use token, not cond_id
-    derived = derive_combo_signals(cex, poly)
+    poly = extract_poly_signals(best)
+    derived = derive_combo_signals(cex, poly, price_to_beat)
     all_signals = {**cex, **poly, **derived}
 
     row = {
         "ts": now.isoformat(),
         "market_slug": best.get("slug", ""),
-        "market_condition_id": cond_id,  # keep storing conditionId for resolution
+        "market_condition_id": cond_id,
         "seconds_remaining": seconds_remaining,
         "price_now": all_signals.get("price_now"),
+        "price_to_beat": price_to_beat,
         **{k: all_signals.get(k) for k in SIGNAL_COLUMNS if k != "seconds_remaining"},
     }
 
@@ -673,31 +695,32 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
         (ts, market_slug, market_condition_id, seconds_remaining,
          momentum_1m, momentum_5m, momentum_15m, rsi_14, volume_ratio,
          spread_bps, order_imbalance, trade_flow_ratio, volatility_1m,
-         volatility_5m, price_acceleration, price_now,
+         volatility_5m, price_acceleration, price_now, price_to_beat,
          poly_yes_price, poly_divergence, poly_spread, poly_volume_24h,
-         poly_order_imbalance, cex_poly_lag, momentum_consistency,
-         vol_adjusted_momentum)
+         poly_order_imbalance, btc_vs_reference, cex_poly_lag,
+         momentum_consistency, vol_adjusted_momentum)
         VALUES
         (:ts, :market_slug, :market_condition_id, :seconds_remaining,
          :momentum_1m, :momentum_5m, :momentum_15m, :rsi_14, :volume_ratio,
          :spread_bps, :order_imbalance, :trade_flow_ratio, :volatility_1m,
-         :volatility_5m, :price_acceleration, :price_now,
+         :volatility_5m, :price_acceleration, :price_now, :price_to_beat,
          :poly_yes_price, :poly_divergence, :poly_spread, :poly_volume_24h,
-         :poly_order_imbalance, :cex_poly_lag, :momentum_consistency,
-         :vol_adjusted_momentum)
+         :poly_order_imbalance, :btc_vs_reference, :cex_poly_lag,
+         :momentum_consistency, :vol_adjusted_momentum)
     """, row)
     conn.commit()
 
     m5 = all_signals.get("momentum_5m", 0) or 0
     poly_p = all_signals.get("poly_yes_price", 0.5) or 0.5
-    lag = all_signals.get("cex_poly_lag", 0) or 0
     oi = all_signals.get("order_imbalance", 0) or 0
     tfr = all_signals.get("trade_flow_ratio", 0.5) or 0.5
     rsi = all_signals.get("rsi_14") or 0
-    clob_ok = "✓" if clob_token_id != cond_id else "✗"
+    vs_ref = all_signals.get("btc_vs_reference")
+    vs_ref_str = f"{vs_ref:+.3f}%" if vs_ref is not None else "n/a"
+    ptb_str = f"{price_to_beat:.2f}" if price_to_beat else "n/a"
     print(f"[{_now()}] {best['question'][:45]:45} | "
-          f"m5={m5:+.3f}% poly={poly_p:.3f} lag={lag:+.3f} "
-          f"OI={oi:+.3f} TFR={tfr:.2f} RSI={rsi:.0f} secs={seconds_remaining:.0f} clob={clob_ok} tokenid={clob_token_id}")
+          f"m5={m5:+.3f}% poly={poly_p:.3f} vs_ref={vs_ref_str} "
+          f"OI={oi:+.3f} TFR={tfr:.2f} RSI={rsi:.0f} ptb={ptb_str} secs={seconds_remaining:.0f}")
 
 
 def _now():

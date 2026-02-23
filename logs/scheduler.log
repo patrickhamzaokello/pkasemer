@@ -545,3 +545,93 @@
 2026-02-23T17:08:37Z [INFO] [cycle 1] OPEN — closes in 231m (21:00 UTC)
 2026-02-23T17:08:44Z [INFO] Received signal 15, shutting down gracefully...
 2026-02-23T17:08:45Z [INFO] Scheduler stopped.
+2026-02-23T17:08:55Z [INFO] ============================================================
+2026-02-23T17:08:55Z [INFO] FastLoop Scheduler starting
+2026-02-23T17:08:55Z [INFO]   Mode:     collect
+2026-02-23T17:08:55Z [INFO]   Asset:    BTC 5m
+2026-02-23T17:08:55Z [INFO]   Interval: 20s
+2026-02-23T17:08:55Z [INFO]   DB:       /data/signal_research.db
+2026-02-23T17:08:55Z [INFO]   Hours:    Mon–Fri 14:30–21:00 UTC
+2026-02-23T17:08:55Z [INFO] ============================================================
+2026-02-23T17:08:55Z [INFO] [cycle 1] OPEN — closes in 231m (21:00 UTC)
+2026-02-23T17:09:19Z [INFO] [cycle 2] OPEN — closes in 231m (21:00 UTC)
+2026-02-23T17:09:42Z [INFO] [cycle 3] OPEN — closes in 230m (21:00 UTC)
+2026-02-23T17:10:05Z [INFO] [cycle 4] OPEN — closes in 230m (21:00 UTC)
+2026-02-23T17:10:28Z [INFO] [cycle 5] OPEN — closes in 230m (21:00 UTC)
+2026-02-23T17:10:51Z [INFO] [cycle 6] OPEN — closes in 229m (21:00 UTC)
+2026-02-23T17:11:14Z [INFO] [cycle 7] OPEN — closes in 229m (21:00 UTC)
+2026-02-23T17:11:37Z [INFO] [cycle 8] OPEN — closes in 228m (21:00 UTC)
+2026-02-23T17:11:59Z [INFO] [cycle 9] OPEN — closes in 228m (21:00 UTC)
+2026-02-23T17:12:23Z [INFO] [cycle 10] OPEN — closes in 228m (21:00 UTC)
+2026-02-23T17:12:45Z [INFO] [cycle 11] OPEN — closes in 227m (21:00 UTC)
+2026-02-23T17:13:08Z [INFO] [cycle 12] OPEN — closes in 227m (21:00 UTC)
+2026-02-23T17:13:31Z [INFO] [cycle 13] OPEN — closes in 226m (21:00 UTC)
+2026-02-23T17:13:53Z [INFO] [cycle 14] OPEN — closes in 226m (21:00 UTC)
+2026-02-23T17:14:17Z [INFO] [cycle 15] OPEN — closes in 226m (21:00 UTC)
+2026-02-23T17:14:40Z [INFO] [cycle 16] OPEN — closes in 225m (21:00 UTC)
+2026-02-23T17:15:02Z [INFO] [cycle 17] OPEN — closes in 225m (21:00 UTC)
+2026-02-23T17:15:26Z [INFO] [cycle 18] OPEN — closes in 225m (21:00 UTC)
+2026-02-23T17:15:48Z [INFO] [cycle 19] OPEN — closes in 224m (21:00 UTC)
+2026-02-23T17:16:12Z [INFO] [cycle 20] OPEN — closes in 224m (21:00 UTC)
+2026-02-23T17:16:35Z [INFO] [cycle 21] OPEN — closes in 223m (21:00 UTC)
+2026-02-23T17:16:58Z [INFO] [cycle 22] OPEN — closes in 223m (21:00 UTC)
+2026-02-23T17:17:22Z [INFO] [cycle 23] OPEN — closes in 223m (21:00 UTC)
+2026-02-23T17:17:45Z [INFO] [cycle 24] OPEN — closes in 222m (21:00 UTC)
+2026-02-23T17:18:08Z [INFO] [cycle 25] OPEN — closes in 222m (21:00 UTC)
+2026-02-23T17:18:31Z [INFO] [cycle 26] OPEN — closes in 221m (21:00 UTC)
+2026-02-23T17:18:54Z [INFO] [cycle 27] OPEN — closes in 221m (21:00 UTC)
+2026-02-23T17:19:17Z [INFO] [cycle 28] OPEN — closes in 221m (21:00 UTC)
+2026-02-23T17:19:27Z [INFO] Resolved 31 outcomes
+2026-02-23T17:19:47Z [INFO] [cycle 29] OPEN — closes in 220m (21:00 UTC)
+2026-02-23T17:20:10Z [INFO] [cycle 30] OPEN — closes in 220m (21:00 UTC)
+2026-02-23T17:20:39Z [INFO] [cycle 31] OPEN — closes in 219m (21:00 UTC)
+2026-02-23T17:21:03Z [INFO] [cycle 32] OPEN — closes in 219m (21:00 UTC)
+2026-02-23T17:21:41Z [INFO] [cycle 33] OPEN — closes in 218m (21:00 UTC)
+2026-02-23T17:22:17Z [INFO] [cycle 34] OPEN — closes in 218m (21:00 UTC)
+2026-02-23T17:23:04Z [INFO] [cycle 35] OPEN — closes in 217m (21:00 UTC)
+2026-02-23T17:23:48Z [INFO] [cycle 36] OPEN — closes in 216m (21:00 UTC)
+2026-02-23T17:24:28Z [INFO] [cycle 37] OPEN — closes in 216m (21:00 UTC)
+2026-02-23T17:24:43Z [INFO] Received signal 15, shutting down gracefully...
+2026-02-23T17:24:44Z [INFO] Scheduler stopped.
+2026-02-23T17:24:48Z [INFO] ============================================================
+2026-02-23T17:24:48Z [INFO] FastLoop Scheduler starting
+2026-02-23T17:24:48Z [INFO]   Mode:     collect
+2026-02-23T17:24:48Z [INFO]   Asset:    BTC 5m
+2026-02-23T17:24:48Z [INFO]   Interval: 20s
+2026-02-23T17:24:48Z [INFO]   DB:       /data/signal_research.db
+2026-02-23T17:24:48Z [INFO]   Hours:    Mon–Fri 14:30–21:00 UTC
+2026-02-23T17:24:48Z [INFO] ============================================================
+2026-02-23T17:24:48Z [INFO] [cycle 1] OPEN — closes in 215m (21:00 UTC)
+2026-02-23T17:25:14Z [INFO] [cycle 2] OPEN — closes in 215m (21:00 UTC)
+2026-02-23T17:25:38Z [INFO] [cycle 3] OPEN — closes in 214m (21:00 UTC)
+2026-02-23T17:26:04Z [INFO] [cycle 4] OPEN — closes in 214m (21:00 UTC)
+2026-02-23T17:26:45Z [INFO] [cycle 5] OPEN — closes in 213m (21:00 UTC)
+2026-02-23T17:27:24Z [INFO] [cycle 6] OPEN — closes in 213m (21:00 UTC)
+2026-02-23T17:27:51Z [INFO] [cycle 7] OPEN — closes in 212m (21:00 UTC)
+2026-02-23T17:28:16Z [INFO] [cycle 8] OPEN — closes in 212m (21:00 UTC)
+2026-02-23T17:28:53Z [INFO] [cycle 9] OPEN — closes in 211m (21:00 UTC)
+2026-02-23T17:29:20Z [INFO] [cycle 10] OPEN — closes in 211m (21:00 UTC)
+2026-02-23T17:29:59Z [INFO] [cycle 11] OPEN — closes in 210m (21:00 UTC)
+2026-02-23T17:30:50Z [INFO] [cycle 12] OPEN — closes in 209m (21:00 UTC)
+2026-02-23T17:31:15Z [INFO] [cycle 13] OPEN — closes in 209m (21:00 UTC)
+2026-02-23T17:31:40Z [INFO] [cycle 14] OPEN — closes in 208m (21:00 UTC)
+2026-02-23T17:32:21Z [INFO] [cycle 15] OPEN — closes in 208m (21:00 UTC)
+2026-02-23T17:32:48Z [INFO] [cycle 16] OPEN — closes in 207m (21:00 UTC)
+2026-02-23T17:33:26Z [INFO] [cycle 17] OPEN — closes in 207m (21:00 UTC)
+2026-02-23T17:33:57Z [INFO] [cycle 18] OPEN — closes in 206m (21:00 UTC)
+2026-02-23T17:34:28Z [INFO] [cycle 19] OPEN — closes in 206m (21:00 UTC)
+2026-02-23T17:35:11Z [INFO] [cycle 20] OPEN — closes in 205m (21:00 UTC)
+2026-02-23T17:36:46Z [INFO] Resolved 39 outcomes
+2026-02-23T17:37:06Z [INFO] [cycle 21] OPEN — closes in 203m (21:00 UTC)
+2026-02-23T17:37:33Z [INFO] [cycle 22] OPEN — closes in 202m (21:00 UTC)
+2026-02-23T17:38:04Z [INFO] [cycle 23] OPEN — closes in 202m (21:00 UTC)
+2026-02-23T17:38:47Z [INFO] [cycle 24] OPEN — closes in 201m (21:00 UTC)
+2026-02-23T17:39:23Z [INFO] [cycle 25] OPEN — closes in 201m (21:00 UTC)
+2026-02-23T17:39:47Z [INFO] [cycle 26] OPEN — closes in 200m (21:00 UTC)
+2026-02-23T17:40:34Z [INFO] [cycle 27] OPEN — closes in 199m (21:00 UTC)
+2026-02-23T17:41:07Z [INFO] [cycle 28] OPEN — closes in 199m (21:00 UTC)
+2026-02-23T17:41:39Z [INFO] [cycle 29] OPEN — closes in 198m (21:00 UTC)
+2026-02-23T17:42:29Z [INFO] [cycle 30] OPEN — closes in 198m (21:00 UTC)
+2026-02-23T17:43:00Z [INFO] [cycle 31] OPEN — closes in 197m (21:00 UTC)
+2026-02-23T17:43:35Z [INFO] [cycle 32] OPEN — closes in 196m (21:00 UTC)
+2026-02-23T17:43:58Z [INFO] [cycle 33] OPEN — closes in 196m (21:00 UTC)

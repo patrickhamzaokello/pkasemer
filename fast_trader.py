@@ -25,7 +25,7 @@ from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, quote
 from composite_signal import get_composite_signal
-from signal_research import extract_cex_signals, extract_poly_signals, fetch_poly_market
+from signal_research import extract_cex_signals, extract_poly_signals
 import time
 from datetime import datetime, timezone
 
@@ -310,14 +310,23 @@ def discover_fast_market_markets(asset="BTC", window="5m"):
             )
 
             markets.append({
-                "question":       m.get("question") or event.get("title") or "",
-                "slug":           slug,
-                "condition_id":   m.get("conditionId", ""),
-                "end_time":       end_time,
-                "event_start":    event_start,
-                "outcomes":       m.get("outcomes", []),
-                "outcome_prices": m.get("outcomePrices", "[]"),
-                "fee_rate_bps":   fee_bps,
+                "question":        m.get("question") or event.get("title") or "",
+                "slug":            slug,
+                "condition_id":    m.get("conditionId", ""),
+                "end_time":        end_time,
+                "event_start":     event_start,
+                "outcomes":        m.get("outcomes", []),
+                "outcome_prices":  m.get("outcomePrices", "[]"),
+                "fee_rate_bps":    fee_bps,
+                # Live price fields (used directly — no CLOB or secondary fetch needed)
+                "lastTradePrice":  m.get("lastTradePrice"),
+                "bestBid":         m.get("bestBid"),
+                "bestAsk":         m.get("bestAsk"),
+                "spread":          m.get("spread"),
+                "volumeClob":      m.get("volumeClob"),
+                "volume24hr":      m.get("volume24hr"),
+                # Reference price at window start (from Chainlink via eventMetadata)
+                "price_to_beat":   (event.get("eventMetadata") or {}).get("priceToBeat"),
             })
 
     return markets
@@ -626,23 +635,28 @@ def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=Fal
         log("📊 Summary: Signal fetch failed", force=True)
         return
 
-    gamma_market = fetch_poly_market(best.get("condition_id", ""))
-    # CLOB requires YES token ID, not condition ID — extract from clobTokenIds
-    clob_token_id = best.get("condition_id", "")
-    if gamma_market:
-        try:
-            token_ids = json.loads(gamma_market.get("clobTokenIds", "[]"))
-            if token_ids:
-                clob_token_id = token_ids[0]
-        except (json.JSONDecodeError, IndexError, TypeError):
-            pass
-    poly_signals = extract_poly_signals(clob_token_id, gamma_market)
+    # best dict already has live price data from the events API (lastTradePrice,
+    # bestBid, bestAsk, spread) — no secondary fetch or CLOB call needed
+    poly_signals = extract_poly_signals(best)
 
+    # btc_vs_reference: how far is BTC from the window's reference price?
+    # Positive = Up is currently winning. Most direct signal for this market type.
+    price_to_beat = best.get("price_to_beat")
+    if price_to_beat and cex_signals.get("price_now"):
+        cex_signals["btc_vs_reference"] = (
+            (cex_signals["price_now"] - price_to_beat) / price_to_beat * 100
+        )
+
+    vs_ref = cex_signals.get("btc_vs_reference")
+    vs_ref_str = f"{vs_ref:+.3f}%" if vs_ref is not None else "n/a"
+    ptb_str = f"{price_to_beat:.2f}" if price_to_beat else "n/a"
     log(f"  m5={cex_signals.get('momentum_5m', 0):+.3f}%  "
+        f"vs_ref={vs_ref_str}  "
+        f"poly={poly_signals.get('poly_yes_price', 0.5):.3f}  "
         f"OI={cex_signals.get('order_imbalance', 0):+.3f}  "
         f"TFR={cex_signals.get('trade_flow_ratio', 0.5):.2f}  "
         f"RSI={cex_signals.get('rsi_14', 0):.0f}  "
-        f"poly={poly_signals.get('poly_yes_price', 0.5):.3f}")
+        f"ptb={ptb_str}")
 
     # ── Step 4: Composite signal ──────────────────────────────────────────────
     log(f"\n🧠 Computing composite signal...")

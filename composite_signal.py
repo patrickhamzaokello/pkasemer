@@ -46,12 +46,13 @@ from urllib.error import HTTPError, URLError
 # ─────────────────────────────────────────────
 
 DEFAULT_WEIGHTS = {
-    "order_imbalance":       0.25,
-    "trade_flow_ratio":      0.20,
-    "momentum_5m":           0.20,
-    "cex_poly_lag":          0.15,
-    "momentum_consistency":  0.10,
-    "vol_adjusted_momentum": 0.10,
+    "btc_vs_reference":      0.30,  # (price_now - priceToBeat) / priceToBeat — direct outcome signal
+    "order_imbalance":       0.20,
+    "trade_flow_ratio":      0.15,
+    "momentum_5m":           0.15,
+    "cex_poly_lag":          0.10,
+    "momentum_consistency":  0.05,
+    "vol_adjusted_momentum": 0.05,
 }
 
 # Thresholds
@@ -125,7 +126,20 @@ def normalize_vol_adjusted_momentum(vam):
     return _sigmoid(vam, scale=1.0)
 
 
+def normalize_btc_vs_reference(v):
+    """
+    (current_btc_price - priceToBeat) / priceToBeat * 100
+    Positive = Up is currently winning. Clip to ±0.30%, then sigmoid.
+    At ±0.10% → ~0.73/0.27. At ±0.30% → ~0.95/0.05.
+    """
+    if v is None:
+        return None
+    clipped = max(-0.30, min(0.30, v))
+    return _sigmoid(clipped, scale=10.0)
+
+
 NORMALIZERS = {
+    "btc_vs_reference":      normalize_btc_vs_reference,
     "order_imbalance":       normalize_order_imbalance,
     "trade_flow_ratio":      normalize_trade_flow,
     "momentum_5m":           normalize_momentum,
@@ -198,6 +212,7 @@ def compute_composite_score(cex, poly, weights=None):
         weights = DEFAULT_WEIGHTS
 
     signals = {
+        "btc_vs_reference":      cex.get("btc_vs_reference"),
         "order_imbalance":       cex.get("order_imbalance"),
         "trade_flow_ratio":      cex.get("trade_flow_ratio"),
         "momentum_5m":           cex.get("momentum_5m"),
@@ -339,7 +354,7 @@ if __name__ == "__main__":
     if args.condition_id:
         print(f"Fetching Poly signals for {args.condition_id}...")
         gamma_mkt = fetch_poly_market(args.condition_id)
-        poly = extract_poly_signals(args.condition_id, gamma_mkt)
+        poly = extract_poly_signals(gamma_mkt) if gamma_mkt else {}
     else:
         print("No --condition-id provided, using empty Poly signals")
 
