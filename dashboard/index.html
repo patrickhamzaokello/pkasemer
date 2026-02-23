@@ -396,6 +396,129 @@
   ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 
+  /* ── Live Window Panel ───────────────────────────────── */
+  .live-window {
+    background: var(--surface);
+    border: 1px solid var(--border-bright);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .lw-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,230,118,0.04);
+  }
+  .lw-title {
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--green);
+  }
+  .lw-window-name {
+    font-size: 11px;
+    color: var(--text-bright);
+    font-weight: 500;
+  }
+  .lw-countdown {
+    font-family: var(--display);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--amber);
+    letter-spacing: -1px;
+    min-width: 70px;
+    text-align: right;
+  }
+  .lw-countdown.urgent { color: var(--red); }
+  .lw-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto;
+    gap: 0;
+  }
+  .lw-metric {
+    padding: 10px 14px;
+    border-right: 1px solid var(--border);
+  }
+  .lw-metric:last-child { border-right: none; }
+  .lw-metric-label {
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+  .lw-metric-value {
+    font-size: 20px;
+    font-weight: 700;
+    font-family: var(--display);
+    line-height: 1;
+  }
+  .lw-metric-sub { font-size: 10px; color: var(--text-dim); margin-top: 3px; }
+  .lw-signals {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    border-top: 1px solid var(--border);
+  }
+  .lw-sig {
+    padding: 7px 10px;
+    border-right: 1px solid var(--border);
+    text-align: center;
+  }
+  .lw-sig:last-child { border-right: none; }
+  .lw-sig-name { font-size: 9px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+  .lw-sig-val { font-size: 13px; font-weight: 500; margin-top: 2px; }
+
+  /* ── Sparkline Chart ─────────────────────────────────── */
+  .spark-wrap {
+    border-top: 1px solid var(--border);
+    padding: 0;
+    position: relative;
+    height: 72px;
+    overflow: hidden;
+    background: rgba(0,0,0,0.2);
+  }
+  .spark-wrap svg { display: block; width: 100%; height: 100%; }
+  .spark-label {
+    position: absolute;
+    top: 4px; left: 10px;
+    font-size: 9px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    pointer-events: none;
+  }
+  .spark-val {
+    position: absolute;
+    top: 4px; right: 10px;
+    font-size: 10px;
+    font-weight: 500;
+    pointer-events: none;
+  }
+
+  /* ── Window History Table ────────────────────────────── */
+  .wh-outcome-pill {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 2px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .wh-outcome-pill.up { background: rgba(0,230,118,0.12); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+  .wh-outcome-pill.down { background: rgba(255,61,87,0.12); color: var(--red); border: 1px solid rgba(255,61,87,0.3); }
+  .wh-outcome-pill.pending { background: rgba(74,96,128,0.2); color: var(--text-dim); border: 1px solid var(--border); }
+  .wh-ref-bar {
+    display: inline-block;
+    height: 6px;
+    min-width: 2px;
+    border-radius: 1px;
+    vertical-align: middle;
+    margin-right: 4px;
+  }
+
   /* Spinner */
   .spinner {
     display: inline-block;
@@ -515,6 +638,50 @@
   <!-- Main -->
   <div class="main">
 
+    <!-- Live Window Panel -->
+    <div class="live-window" id="live-window">
+      <div class="lw-header">
+        <div class="lw-title">&#9679; Live Window</div>
+        <div class="lw-window-name" id="lw-name">—</div>
+        <div class="lw-countdown" id="lw-countdown">—</div>
+      </div>
+      <div class="lw-body">
+        <div class="lw-metric">
+          <div class="lw-metric-label">BTC Price</div>
+          <div class="lw-metric-value" id="lw-price" style="color:var(--text-bright)">—</div>
+          <div class="lw-metric-sub" id="lw-ptb">ref: —</div>
+        </div>
+        <div class="lw-metric">
+          <div class="lw-metric-label">vs Reference</div>
+          <div class="lw-metric-value" id="lw-vsref" style="color:var(--text-dim)">—</div>
+          <div class="lw-metric-sub" id="lw-vsref-sub">BTC vs window open price</div>
+        </div>
+        <div class="lw-metric">
+          <div class="lw-metric-label">Poly YES</div>
+          <div class="lw-metric-value" id="lw-poly" style="color:var(--text-bright)">—</div>
+          <div class="lw-metric-sub" id="lw-poly-sub">market implied prob</div>
+        </div>
+        <div class="lw-metric" style="border-right:none;min-width:120px">
+          <div class="lw-metric-label">Secs Left</div>
+          <div class="lw-metric-value" id="lw-secs" style="color:var(--text-dim)">—</div>
+          <div class="lw-metric-sub" id="lw-obs-age">last obs: —</div>
+        </div>
+      </div>
+      <div class="lw-signals">
+        <div class="lw-sig"><div class="lw-sig-name">m5</div><div class="lw-sig-val" id="ls-m5">—</div></div>
+        <div class="lw-sig"><div class="lw-sig-name">m1</div><div class="lw-sig-val" id="ls-m1">—</div></div>
+        <div class="lw-sig"><div class="lw-sig-name">RSI</div><div class="lw-sig-val" id="ls-rsi">—</div></div>
+        <div class="lw-sig"><div class="lw-sig-name">OI</div><div class="lw-sig-val" id="ls-oi">—</div></div>
+        <div class="lw-sig"><div class="lw-sig-name">TFR</div><div class="lw-sig-val" id="ls-tfr">—</div></div>
+        <div class="lw-sig"><div class="lw-sig-name">Vol</div><div class="lw-sig-val" id="ls-vol">—</div></div>
+      </div>
+      <div class="spark-wrap">
+        <span class="spark-label">btc vs ref — current window</span>
+        <span class="spark-val" id="spark-current">—</span>
+        <svg id="spark-svg" viewBox="0 0 800 72" preserveAspectRatio="none"></svg>
+      </div>
+    </div>
+
     <!-- Stats strip -->
     <div class="stats-strip">
       <div class="stat-card green-top">
@@ -555,13 +722,13 @@
       </div>
     </div>
 
-    <!-- Recent observations log -->
+    <!-- Window History -->
     <div class="panel">
       <div class="panel-header">
-        <div class="panel-title">Recent Observations</div>
-        <div class="panel-meta" id="obs-meta">last 20</div>
+        <div class="panel-title">Window History</div>
+        <div class="panel-meta" id="wh-meta">last 20 windows</div>
       </div>
-      <div class="log-feed" id="log-feed">
+      <div id="wh-table-wrap">
         <div class="loading"><span class="spinner"></span>loading...</div>
       </div>
     </div>
@@ -762,35 +929,252 @@ async function fetchCorrelations() {
   }
 }
 
-async function fetchObservations() {
-  const feed = document.getElementById('log-feed');
+// ── helpers ──────────────────────────────────────────────
+function fmtPct(v, dec=3) {
+  if (v == null) return '—';
+  return (v >= 0 ? '+' : '') + v.toFixed(dec) + '%';
+}
+function pctColor(v, threshold=0.01) {
+  if (v == null) return 'var(--text-dim)';
+  return v > threshold ? 'var(--green)' : v < -threshold ? 'var(--red)' : 'var(--cyan)';
+}
+function slugToTime(slug) {
+  // btc-updown-5m-1771869300 → "17:55 – 18:00 UTC"
+  const ts = parseInt((slug || '').split('-').pop());
+  if (!ts) return slug || '—';
+  const start = new Date(ts * 1000);
+  const end   = new Date((ts + 300) * 1000);
+  const fmt = d => `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+  return `${fmt(start)} – ${fmt(end)} UTC`;
+}
+
+// ── Live Window ───────────────────────────────────────────
+let _lwSecsBase = null, _lwSecsAt = null;
+
+async function fetchCurrent() {
   try {
-    const r = await fetch(`${API}/api/observations`);
+    const r = await fetch(`${API}/api/current`);
+    const d = await r.json();
+    if (d.error) return;
+
+    // Window name & countdown base
+    document.getElementById('lw-name').textContent = slugToTime(d.market_slug);
+    _lwSecsBase = d.seconds_remaining;
+    _lwSecsAt   = Date.now();
+
+    // BTC price
+    const priceEl = document.getElementById('lw-price');
+    priceEl.textContent = d.price_now ? '$' + d.price_now.toLocaleString('en-US',{maximumFractionDigits:0}) : '—';
+
+    const ptb = d.price_to_beat;
+    document.getElementById('lw-ptb').textContent = ptb
+      ? `ref $${ptb.toLocaleString('en-US',{maximumFractionDigits:0})}` : 'ref: awaiting window';
+
+    // vs reference
+    const vr = d.btc_vs_reference;
+    const vrEl = document.getElementById('lw-vsref');
+    vrEl.textContent = fmtPct(vr, 4);
+    vrEl.style.color = pctColor(vr, 0.02);
+    document.getElementById('lw-vsref-sub').textContent =
+      vr == null ? 'awaiting window open' : (Math.abs(vr) < 0.02 ? 'flat — no clear edge' : (vr > 0 ? '▲ BTC above opening price' : '▼ BTC below opening price'));
+
+    // Poly
+    const poly = d.poly_yes_price;
+    const polyEl = document.getElementById('lw-poly');
+    polyEl.textContent = poly != null ? poly.toFixed(3) : '—';
+    polyEl.style.color = poly > 0.55 ? 'var(--green)' : poly < 0.45 ? 'var(--red)' : 'var(--text-bright)';
+    document.getElementById('lw-poly-sub').textContent =
+      poly != null ? `${(poly*100).toFixed(1)}% implied UP` : 'market implied prob';
+
+    // Secs
+    const secsEl = document.getElementById('lw-secs');
+    secsEl.textContent = d.seconds_remaining != null ? Math.round(d.seconds_remaining) + 's' : '—';
+    secsEl.style.color = d.seconds_remaining < 60 ? 'var(--red)' : d.seconds_remaining < 120 ? 'var(--amber)' : 'var(--text-dim)';
+    // obs age
+    const age = d.ts ? Math.round((Date.now() - new Date(d.ts).getTime()) / 1000) : null;
+    document.getElementById('lw-obs-age').textContent = age != null ? `obs ${age}s ago` : '—';
+
+    // Mini signals
+    function sigVal(v, dec=3, suffix='') {
+      return v != null ? (v >= 0 ? '+' : '') + v.toFixed(dec) + suffix : '—';
+    }
+    function sigColor(v, pos=0.05, neg=-0.05) {
+      if (v == null) return 'var(--text-dim)';
+      return v > pos ? 'var(--green)' : v < neg ? 'var(--red)' : 'var(--text)';
+    }
+    const m5El = document.getElementById('ls-m5');
+    m5El.textContent = sigVal(d.momentum_5m, 3, '%');
+    m5El.style.color = sigColor(d.momentum_5m, 0.1, -0.1);
+
+    const m1El = document.getElementById('ls-m1');
+    m1El.textContent = sigVal(d.momentum_1m, 3, '%');
+    m1El.style.color = sigColor(d.momentum_1m, 0.05, -0.05);
+
+    const rsiEl = document.getElementById('ls-rsi');
+    rsiEl.textContent = d.rsi_14 != null ? d.rsi_14.toFixed(0) : '—';
+    rsiEl.style.color = d.rsi_14 > 65 ? 'var(--red)' : d.rsi_14 < 35 ? 'var(--green)' : 'var(--text)';
+
+    const oiEl = document.getElementById('ls-oi');
+    oiEl.textContent = sigVal(d.order_imbalance);
+    oiEl.style.color = sigColor(d.order_imbalance, 0.1, -0.1);
+
+    const tfrEl = document.getElementById('ls-tfr');
+    tfrEl.textContent = d.trade_flow_ratio != null ? d.trade_flow_ratio.toFixed(2) : '—';
+    tfrEl.style.color = d.trade_flow_ratio > 0.6 ? 'var(--green)' : d.trade_flow_ratio < 0.4 ? 'var(--red)' : 'var(--text)';
+
+    const volEl = document.getElementById('ls-vol');
+    volEl.textContent = d.volume_ratio != null ? d.volume_ratio.toFixed(2) + 'x' : '—';
+    volEl.style.color = d.volume_ratio > 1.5 ? 'var(--green)' : d.volume_ratio < 0.5 ? 'var(--red)' : 'var(--text)';
+
+  } catch(e) {}
+}
+
+// Live countdown ticker (runs every second, no API call)
+setInterval(() => {
+  if (_lwSecsBase == null) return;
+  const elapsed = (Date.now() - _lwSecsAt) / 1000;
+  const secs = Math.max(0, Math.round(_lwSecsBase - elapsed));
+  const cd = document.getElementById('lw-countdown');
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  cd.textContent = `${m}:${String(s).padStart(2,'0')}`;
+  cd.className = 'lw-countdown' + (secs < 60 ? ' urgent' : '');
+  // also update the secs box
+  const secsEl = document.getElementById('lw-secs');
+  secsEl.textContent = secs + 's';
+  secsEl.style.color = secs < 60 ? 'var(--red)' : secs < 120 ? 'var(--amber)' : 'var(--text-dim)';
+}, 1000);
+
+// ── Sparkline ─────────────────────────────────────────────
+async function fetchSparkline() {
+  try {
+    const r  = await fetch(`${API}/api/sparkline`);
     const rows = await r.json();
-    if (rows.error || !rows.length) {
-      feed.innerHTML = '<div class="empty"><div class="empty-title">No observations yet</div>Collector starting up — first data arrives in ~20 seconds.</div>';
+    const svg  = document.getElementById('spark-svg');
+    const W = 800, H = 72, PAD = 4;
+    const CLIP = 0.4; // ±0.4% display range
+
+    if (!rows.length) { svg.innerHTML = ''; return; }
+
+    const pts = rows.map(r => r.btc_vs_reference).filter(v => v != null);
+    if (!pts.length) { svg.innerHTML = ''; return; }
+
+    const latest = pts[pts.length - 1];
+    const sparkValEl = document.getElementById('spark-current');
+    sparkValEl.textContent = fmtPct(latest, 4);
+    sparkValEl.style.color = pctColor(latest, 0.02);
+
+    // y=0 sits at vertical center
+    const toY = v => {
+      const clamped = Math.max(-CLIP, Math.min(CLIP, v));
+      return H/2 - (clamped / CLIP) * (H/2 - PAD);
+    };
+    const n = pts.length;
+    const toX = i => (n < 2) ? W/2 : PAD + (i / (n-1)) * (W - PAD*2);
+
+    const polyPoints = pts.map((v,i) => `${toX(i)},${toY(v)}`).join(' ');
+    const zeroY = toY(0);
+
+    // Build area fill path (above or below zero)
+    let areaPath = `M ${toX(0)},${zeroY}`;
+    pts.forEach((v,i) => areaPath += ` L ${toX(i)},${toY(v)}`);
+    areaPath += ` L ${toX(n-1)},${zeroY} Z`;
+
+    const lineColor = latest > 0.02 ? '#00e676' : latest < -0.02 ? '#ff3d57' : '#00bcd4';
+    const fillColor = latest > 0.02 ? 'rgba(0,230,118,0.08)' : latest < -0.02 ? 'rgba(255,61,87,0.08)' : 'rgba(0,188,212,0.06)';
+
+    svg.innerHTML = `
+      <defs>
+        <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${lineColor}" stop-opacity="0.3"/>
+          <stop offset="100%" stop-color="${lineColor}" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <!-- grid lines -->
+      <line x1="0" y1="${toY(0.2)}" x2="${W}" y2="${toY(0.2)}" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+      <line x1="0" y1="${toY(-0.2)}" x2="${W}" y2="${toY(-0.2)}" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+      <text x="4" y="${toY(0.2)-2}" fill="rgba(255,255,255,0.2)" font-size="8">+0.2%</text>
+      <text x="4" y="${toY(-0.2)+9}" fill="rgba(255,255,255,0.2)" font-size="8">-0.2%</text>
+      <!-- zero line -->
+      <line x1="0" y1="${zeroY}" x2="${W}" y2="${zeroY}" stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="4,4"/>
+      <!-- area fill -->
+      <path d="${areaPath}" fill="${fillColor}"/>
+      <!-- line -->
+      <polyline points="${polyPoints}" fill="none" stroke="${lineColor}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+      <!-- latest dot -->
+      <circle cx="${toX(n-1)}" cy="${toY(latest)}" r="3" fill="${lineColor}" opacity="0.9"/>
+    `;
+  } catch(e) {}
+}
+
+// ── Window History ────────────────────────────────────────
+async function fetchWindowHistory() {
+  const wrap = document.getElementById('wh-table-wrap');
+  try {
+    const r = await fetch(`${API}/api/window-history`);
+    const rows = await r.json();
+    if (!rows.length) {
+      wrap.innerHTML = '<div class="empty"><div class="empty-title">No window data yet</div>Collecting now...</div>';
       return;
     }
-    document.getElementById('obs-meta').textContent = `last ${rows.length}`;
-    feed.innerHTML = rows.slice(0, 50).map(r => {
-      const time = r.ts ? r.ts.slice(11, 19) : '—';
-      const market = r.market_slug ? r.market_slug.replace('btc-updown-5m-', 'BTC#') : '—';
-      const m5 = r.momentum_5m != null ? (r.momentum_5m >= 0 ? '+' : '') + r.momentum_5m.toFixed(3) + '%' : '—';
-      const vsRef = r.btc_vs_reference != null
-        ? (r.btc_vs_reference >= 0 ? '+' : '') + r.btc_vs_reference.toFixed(3) + '%'
-        : '—';
-      const vsRefColor = r.btc_vs_reference > 0.01 ? 'var(--green)' : r.btc_vs_reference < -0.01 ? 'var(--red)' : 'var(--cyan)';
-      const outcome = r.outcome || '—';
-      const outcomeColor = outcome === 'up' ? 'var(--green)' : outcome === 'down' ? 'var(--red)' : 'var(--text-dim)';
+    document.getElementById('wh-meta').textContent = `${rows.length} windows`;
 
-      return `<div class="log-row">
-        <span class="log-time">${time}</span>
-        <span class="log-market">${market} <span style="color:${outcomeColor}">[${outcome}]</span></span>
-        <span class="log-signals">m5=${m5} ref=<span style="color:${vsRefColor}">${vsRef}</span></span>
-      </div>`;
-    }).join('');
+    const maxAbs = Math.max(...rows.map(w => Math.abs(w.avg_vs_ref || 0)), 0.01);
+
+    wrap.innerHTML = `<table>
+      <thead><tr>
+        <th>Window (UTC)</th>
+        <th class="right">Outcome</th>
+        <th class="right">Obs</th>
+        <th>BTC vs Ref (avg)</th>
+        <th class="right">m5 avg</th>
+        <th class="right">Final Poly</th>
+        <th class="right">Ref Price</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(w => {
+          const time = slugToTime(w.market_slug);
+          const outcome = w.outcome;
+          const pillCls = outcome === 'up' ? 'up' : outcome === 'down' ? 'down' : 'pending';
+          const pillLabel = outcome === 'up' ? '▲ UP' : outcome === 'down' ? '▼ DN' : '…';
+
+          const vr = w.avg_vs_ref;
+          const barW = vr != null ? Math.round(Math.abs(vr) / maxAbs * 60) : 0;
+          const barColor = vr > 0.01 ? '#00e676' : vr < -0.01 ? '#ff3d57' : '#4a6080';
+          const vrStr = fmtPct(vr, 3);
+          const vrColor = pctColor(vr, 0.01);
+
+          const m5 = w.avg_m5;
+          const m5Str = fmtPct(m5, 3);
+          const m5Color = pctColor(m5, 0.05);
+
+          const poly = w.final_poly;
+          const polyStr = poly != null ? poly.toFixed(3) : '—';
+          const polyColor = poly > 0.55 ? 'var(--green)' : poly < 0.45 ? 'var(--red)' : 'var(--text)';
+
+          const ptb = w.price_to_beat;
+          const ptbStr = ptb ? '$' + Math.round(ptb).toLocaleString() : '—';
+
+          return `<tr>
+            <td style="color:var(--text)">${time}</td>
+            <td class="right"><span class="wh-outcome-pill ${pillCls}">${pillLabel}</span></td>
+            <td class="right" style="color:var(--text-dim)">${w.obs_count}</td>
+            <td>
+              <span class="wh-ref-bar" style="width:${barW}px;background:${barColor}"></span>
+              <span style="color:${vrColor}">${vrStr}</span>
+              <span style="color:var(--text-dim);font-size:9px;margin-left:4px">
+                [${fmtPct(w.min_vs_ref,2)}, ${fmtPct(w.max_vs_ref,2)}]
+              </span>
+            </td>
+            <td class="right" style="color:${m5Color}">${m5Str}</td>
+            <td class="right" style="color:${polyColor}">${polyStr}</td>
+            <td class="right" style="color:var(--text-dim)">${ptbStr}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
   } catch(e) {
-    feed.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+    wrap.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
   }
 }
 
@@ -799,7 +1183,9 @@ async function refresh() {
     fetchStatus(),
     fetchSummary(),
     fetchCorrelations(),
-    fetchObservations(),
+    fetchCurrent(),
+    fetchSparkline(),
+    fetchWindowHistory(),
   ]);
 }
 

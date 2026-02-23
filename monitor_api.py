@@ -180,6 +180,82 @@ def summary():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/current")
+def current():
+    """Latest observation for the live window panel."""
+    try:
+        conn = get_db()
+        row = conn.execute("""
+            SELECT ts, market_slug, seconds_remaining, outcome,
+                   momentum_5m, momentum_1m, rsi_14, order_imbalance,
+                   trade_flow_ratio, poly_yes_price, poly_divergence,
+                   btc_vs_reference, price_now, price_to_beat,
+                   vol_adjusted_momentum, cex_poly_lag, volatility_5m,
+                   momentum_consistency, volume_ratio
+            FROM signal_observations
+            ORDER BY id DESC LIMIT 1
+        """).fetchone()
+        conn.close()
+        if not row:
+            return jsonify({"error": "No data yet"})
+        return jsonify(dict(row))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/sparkline")
+def sparkline():
+    """btc_vs_reference time series for the current window (for mini chart)."""
+    try:
+        conn = get_db()
+        latest = conn.execute(
+            "SELECT market_slug FROM signal_observations ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not latest or not latest[0]:
+            return jsonify([])
+        slug = latest[0]
+        rows = conn.execute("""
+            SELECT ts, btc_vs_reference, poly_yes_price, momentum_5m
+            FROM signal_observations
+            WHERE market_slug = ?
+            ORDER BY id ASC
+        """, (slug,)).fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/window-history")
+def window_history():
+    """One row per market window — last 20 windows with aggregated signals and outcome."""
+    try:
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT
+                market_slug,
+                MIN(ts) as start_ts,
+                COUNT(*) as obs_count,
+                MAX(outcome) as outcome,
+                ROUND(AVG(btc_vs_reference), 4) as avg_vs_ref,
+                ROUND(MAX(btc_vs_reference), 4) as max_vs_ref,
+                ROUND(MIN(btc_vs_reference), 4) as min_vs_ref,
+                ROUND(AVG(momentum_5m), 4) as avg_m5,
+                ROUND(MAX(poly_yes_price), 4) as final_poly,
+                ROUND(AVG(rsi_14), 1) as avg_rsi,
+                MAX(price_to_beat) as price_to_beat
+            FROM signal_observations
+            WHERE market_slug IS NOT NULL AND market_slug != ''
+            GROUP BY market_slug
+            ORDER BY MAX(ts) DESC
+            LIMIT 20
+        """).fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def serve_dashboard(path):
