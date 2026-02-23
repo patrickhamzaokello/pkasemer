@@ -164,7 +164,15 @@ def init_db(path=DB_PATH):
         )
     """)
     # Migrate existing DBs that predate these columns
-    for col, typedef in [("price_to_beat", "REAL"), ("btc_vs_reference", "REAL")]:
+    for col, typedef in [
+        ("price_to_beat", "REAL"),
+        ("btc_vs_reference", "REAL"),
+        ("signal_score", "REAL"),
+        ("signal_side", "TEXT"),
+        ("signal_confidence", "REAL"),
+        ("would_trade", "INTEGER"),
+        ("filter_reason", "TEXT"),
+    ]:
         try:
             conn.execute(f"ALTER TABLE signal_observations ADD COLUMN {col} {typedef}")
         except sqlite3.OperationalError:
@@ -766,7 +774,7 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
         **{k: all_signals.get(k) for k in SIGNAL_COLUMNS if k != "seconds_remaining"},
     }
 
-    conn.execute("""
+    cursor = conn.execute("""
         INSERT INTO signal_observations
         (ts, market_slug, market_condition_id, seconds_remaining,
          momentum_1m, momentum_5m, momentum_15m, rsi_14, volume_ratio,
@@ -784,19 +792,60 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
          :poly_order_imbalance, :btc_vs_reference, :cex_poly_lag,
          :momentum_consistency, :vol_adjusted_momentum)
     """, row)
+    obs_id = cursor.lastrowid
+
+    # Compute composite signal and store prediction alongside the observation
+    try:
+        from composite_signal import get_composite_signal
+        cex_for_sig = {k: all_signals.get(k) for k in [
+            "momentum_5m", "rsi_14", "volume_ratio", "order_imbalance",
+            "trade_flow_ratio", "volatility_5m", "price_acceleration",
+            "btc_vs_reference", "cex_poly_lag", "momentum_consistency",
+            "vol_adjusted_momentum",
+        ]}
+        poly_for_sig = {
+            "poly_yes_price": all_signals.get("poly_yes_price"),
+            "poly_divergence": all_signals.get("poly_divergence"),
+            "poly_spread": all_signals.get("poly_spread"),
+        }
+        sig = get_composite_signal(cex_for_sig, poly_for_sig)
+        conn.execute("""
+            UPDATE signal_observations
+            SET signal_score = ?, signal_side = ?, signal_confidence = ?,
+                would_trade = ?, filter_reason = ?
+            WHERE id = ?
+        """, (
+            round(sig["score"], 6),
+            sig.get("side"),
+            round(sig["confidence"], 6),
+            1 if sig["should_trade"] else 0,
+            sig.get("filter_reason"),
+            obs_id,
+        ))
+    except Exception:
+        pass
+
     conn.commit()
 
     m5 = all_signals.get("momentum_5m", 0) or 0
     poly_p = all_signals.get("poly_yes_price", 0.5) or 0.5
-    oi = all_signals.get("order_imbalance", 0) or 0
-    tfr = all_signals.get("trade_flow_ratio", 0.5) or 0.5
-    rsi = all_signals.get("rsi_14") or 0
     vs_ref = all_signals.get("btc_vs_reference")
-    vs_ref_str = f"{vs_ref:+.3f}%" if vs_ref is not None else "n/a"
-    ptb_str = f"{price_to_beat:.2f}" if price_to_beat else "n/a"
-    print(f"[{_now()}] {best['question'][:45]:45} | "
-          f"m5={m5:+.3f}% poly={poly_p:.3f} vs_ref={vs_ref_str} "
-          f"OI={oi:+.3f} TFR={tfr:.2f} RSI={rsi:.0f} ptb={ptb_str} secs={seconds_remaining:.0f}")
+    vol_r = all_signals.get("volume_ratio", 1.0) or 1.0
+    vs_ref_str = f"{vs_ref:+.4f}%" if vs_ref is not None else "n/a"
+
+    # Build signal score line for log
+    try:
+        score_str = f"score={sig['score']:.3f} → {(sig.get('side') or 'neutral').upper()}"
+        if sig["should_trade"]:
+            score_str += f" (conf={sig['confidence']:.2f}) WOULD_TRADE"
+        elif sig.get("filter_reason"):
+            score_str += f" | {sig['filter_reason']}"
+    except Exception:
+        score_str = ""
+
+    print(f"[{_now()}] {best.get('slug','')[-19:]:19} {seconds_remaining:4.0f}s | "
+          f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} vol={vol_r:.2f}x | "
+          f"{score_str}")
 
 
 def _now():

@@ -538,34 +538,18 @@ def calculate_position_size(max_size, smart_sizing=False):
 
 def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=False,
                               smart_sizing=False, quiet=False):
+    now_str = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    mode_tag = "[DRY]" if dry_run else "[LIVE]"
 
     def log(msg, force=False):
         if not quiet or force:
             print(msg)
 
-    log("⚡ Simmer FastLoop Trading Skill")
-    log("=" * 50)
-
-    if dry_run:
-        log("\n  [DRY RUN] No trades will be executed. Use --live to enable trading.")
-
-    daily_spend = _load_daily_spend(__file__)
-
-    log(f"\n⚙️  Configuration:")
-    log(f"  Asset:            {ASSET}")
-    log(f"  Window:           {WINDOW}")
-    log(f"  Entry threshold:  {ENTRY_THRESHOLD}")
-    log(f"  Min momentum:     {MIN_MOMENTUM_PCT}%")
-    log(f"  Max position:     ${MAX_POSITION_USD:.2f}")
-    log(f"  Signal source:    {SIGNAL_SOURCE}")
-    log(f"  Lookback:         {LOOKBACK_MINUTES} minutes")
-    log(f"  Min time left:    {MIN_TIME_REMAINING}s")
-    log(f"  Volume weighting: {'✓' if VOLUME_CONFIDENCE else '✗'}")
-    log(f"  Daily budget:     ${DAILY_BUDGET:.2f} (${daily_spend['spent']:.2f} spent, {daily_spend['trades']} trades)")
-
     if show_config:
-        log(f"\n  Config file: {_get_config_path(__file__)}")
-        log(f"  Edit config.json directly or use --set key=value")
+        daily_spend = _load_daily_spend(__file__)
+        print(f"Config: {_get_config_path(__file__)}")
+        print(f"  asset={ASSET}  window={WINDOW}  max_pos=${MAX_POSITION_USD:.2f}  "
+              f"budget=${DAILY_BUDGET:.2f} (${daily_spend['spent']:.2f} spent)")
         return
 
     # Validate API key early
@@ -573,75 +557,52 @@ def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=Fal
 
     # ── Positions view ────────────────────────────────────────────────────────
     if positions_only:
-        log("\n📊 Sprint Positions:")
         positions = get_positions()
         fast_positions = [p for p in positions if "up or down" in (p.get("question","") or "").lower()]
         if not fast_positions:
-            log("  No open fast market positions")
+            print("  No open fast market positions")
         else:
             for pos in fast_positions:
-                log(f"  • {pos.get('question','Unknown')[:60]}")
-                log(f"    YES: {pos.get('shares_yes',0):.1f} | NO: {pos.get('shares_no',0):.1f} | P&L: ${pos.get('pnl',0):.2f}")
+                print(f"  {pos.get('question','')[:55]:55} YES={pos.get('shares_yes',0):.1f} "
+                      f"NO={pos.get('shares_no',0):.1f} P&L=${pos.get('pnl',0):.2f}")
         return
 
-    if smart_sizing:
-        portfolio = get_portfolio()
-        if portfolio and not portfolio.get("error"):
-            log(f"\n💰 Balance: ${portfolio.get('balance_usdc', 0):.2f}")
+    daily_spend = _load_daily_spend(__file__)
 
     # ── Step 1: Discover markets ──────────────────────────────────────────────
-    log(f"\n🔍 Discovering {ASSET} fast markets...")
     markets = discover_fast_market_markets(ASSET, WINDOW)
-    log(f"  Found {len(markets)} active fast markets")
-
     if not markets:
-        log("  No active fast markets found")
-        log("📊 Summary: No markets available", force=True)
+        print(f"{mode_tag} {now_str} | no active {ASSET} markets")
         return
 
     # ── Step 2: Pick best market ──────────────────────────────────────────────
     best = find_best_fast_market(markets)
     if not best:
-        log(f"  No markets with >{MIN_TIME_REMAINING}s remaining")
-        log("📊 Summary: No tradeable markets (too close to expiry)", force=True)
+        print(f"{mode_tag} {now_str} | no market with >{MIN_TIME_REMAINING}s left")
         return
 
     end_time  = best.get("end_time")
     remaining = (end_time - datetime.now(timezone.utc)).total_seconds() if end_time else 0
+    slug_short = best.get("slug", "")[-19:]
 
-    log(f"\n🎯 Selected: {best['question']}")
-    log(f"  Expires in: {remaining:.0f}s")
-
-    # Parse current market odds
     try:
         prices = json.loads(best.get("outcome_prices", "[]"))
         market_yes_price = float(prices[0]) if prices else 0.5
     except (json.JSONDecodeError, IndexError, ValueError):
         market_yes_price = 0.5
 
-    log(f"  Current YES price: ${market_yes_price:.3f}")
-
     fee_rate_bps = best.get("fee_rate_bps", 0)
     fee_rate     = fee_rate_bps / 10000
-    if fee_rate > 0:
-        log(f"  Fee rate: {fee_rate:.0%}")
 
     # ── Step 3: Collect signals ───────────────────────────────────────────────
-    log(f"\n📈 Collecting signals ({ASSET})...")
     symbol = ASSET_SYMBOLS.get(ASSET, "BTCUSDT")
-
     cex_signals = extract_cex_signals(symbol)
     if not cex_signals:
-        log("  ❌ Failed to fetch CEX data", force=True)
-        log("📊 Summary: Signal fetch failed", force=True)
+        print(f"{mode_tag} {now_str} | {slug_short} {remaining:.0f}s | ERROR: CEX fetch failed")
         return
 
-    # best dict already has live price data from the events API (lastTradePrice,
-    # bestBid, bestAsk, spread) — no secondary fetch or CLOB call needed
     poly_signals = extract_poly_signals(best)
 
-    # btc_vs_reference: how far is BTC from the window's opening reference price?
-    # We cache our own Binance price at first window observation (API never provides priceToBeat).
     event_start = best.get("event_start")
     window_open = bool(event_start and datetime.now(timezone.utc) >= event_start)
     price_to_beat = get_window_reference_price(
@@ -655,33 +616,26 @@ def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=Fal
         )
 
     vs_ref = cex_signals.get("btc_vs_reference")
-    vs_ref_str = f"{vs_ref:+.3f}%" if vs_ref is not None else "n/a"
-    ptb_str = f"{price_to_beat:.2f}" if price_to_beat else "n/a"
-    log(f"  m5={cex_signals.get('momentum_5m', 0):+.3f}%  "
-        f"vs_ref={vs_ref_str}  "
-        f"poly={poly_signals.get('poly_yes_price', 0.5):.3f}  "
-        f"OI={cex_signals.get('order_imbalance', 0):+.3f}  "
-        f"TFR={cex_signals.get('trade_flow_ratio', 0.5):.2f}  "
-        f"RSI={cex_signals.get('rsi_14', 0):.0f}  "
-        f"ptb={ptb_str}")
+    vs_ref_str = f"{vs_ref:+.4f}%" if vs_ref is not None else "n/a"
+    m5 = cex_signals.get("momentum_5m", 0) or 0
+    vol_r = cex_signals.get("volume_ratio", 1.0) or 1.0
+    rsi = cex_signals.get("rsi_14", 0) or 0
+    poly_p = poly_signals.get("poly_yes_price", 0.5) or 0.5
 
     # ── Step 4: Composite signal ──────────────────────────────────────────────
-    log(f"\n🧠 Computing composite signal...")
     signal = get_composite_signal(cex_signals, poly_signals, config=cfg)
-
     score      = signal["score"]
     confidence = signal["confidence"]
-    log(f"  Score:      {score:.4f}")
-    log(f"  Confidence: {confidence:.4f}")
 
     if not signal["should_trade"]:
-        reason = signal.get("filter_reason", "score within neutral band")
-        log(f"  ⏸️  No trade: {reason}")
-        log(f"📊 Summary: No trade — {reason}", force=True)
+        reason = signal.get("filter_reason", "neutral band")
+        print(f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+              f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} vol={vol_r:.2f}x | "
+              f"score={score:.3f} BLOCK: {reason}")
         return
 
-    side         = signal["side"]          # 'yes' or 'no'
-    position_pct = signal["position_pct"]  # 0–1 scale
+    side         = signal["side"]
+    position_pct = signal["position_pct"]
 
     # ── Fee-aware EV check ────────────────────────────────────────────────────
     entry_price = market_yes_price if side == "yes" else (1 - market_yes_price)
@@ -690,72 +644,62 @@ def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=Fal
         breakeven_wr  = entry_price / (win_profit + entry_price)
         implied_wr    = score if side == "yes" else (1 - score)
         if implied_wr < breakeven_wr + 0.03:
-            log(f"  ⏸️  Fee-adjusted EV negative "
-                f"(implied WR {implied_wr:.1%} < breakeven {breakeven_wr:.1%})")
-            log("📊 Summary: No trade — fees eat the edge", force=True)
+            print(f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+                  f"score={score:.3f} → {side.upper()} BLOCK: fee EV negative "
+                  f"(implied={implied_wr:.1%} < breakeven={breakeven_wr:.1%})")
             return
 
     # ── Position sizing ───────────────────────────────────────────────────────
     position_size = calculate_position_size(MAX_POSITION_USD * position_pct, smart_sizing)
-
     remaining_budget = DAILY_BUDGET - daily_spend["spent"]
+
     if remaining_budget <= 0:
-        log(f"  ⏸️  Daily budget exhausted (${daily_spend['spent']:.2f}/${DAILY_BUDGET:.2f})")
-        log("📊 Summary: No trade — daily budget exhausted", force=True)
+        print(f"{mode_tag} {now_str} | {slug_short} | BLOCK: daily budget exhausted "
+              f"(${daily_spend['spent']:.2f}/${DAILY_BUDGET:.2f})")
         return
     if position_size > remaining_budget:
         position_size = remaining_budget
-        log(f"  Budget cap: capped at ${position_size:.2f}")
     if position_size < 0.50:
-        log(f"  ⏸️  Position ${position_size:.2f} < $0.50 minimum")
-        log("📊 Summary: No trade — position too small", force=True)
+        print(f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+              f"score={score:.3f} → {side.upper()} BLOCK: size ${position_size:.2f} < $0.50 min")
         return
     if entry_price > 0 and (MIN_SHARES_PER_ORDER * entry_price) > position_size:
-        log(f"  ⚠️  ${position_size:.2f} too small for {MIN_SHARES_PER_ORDER} shares @ ${entry_price:.2f}")
-        log("📊 Summary: No trade — below minimum order size", force=True)
+        print(f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+              f"score={score:.3f} → {side.upper()} BLOCK: "
+              f"${position_size:.2f} < {MIN_SHARES_PER_ORDER}x${entry_price:.2f} min")
         return
-
-    log(f"\n  ✅ Signal: {side.upper()}  score={score:.4f}  "
-        f"confidence={confidence:.2f}  size=${position_size:.2f}", force=True)
 
     # ── Step 5: Import & execute ──────────────────────────────────────────────
-    log(f"\n🔗 Importing to Simmer...", force=True)
+    print(f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+          f"m5={m5:+.3f}% vs_ref={vs_ref_str} vol={vol_r:.2f}x | "
+          f"score={score:.3f} conf={confidence:.2f} → {side.upper()} ${position_size:.2f}", flush=True)
+
     market_id, import_error = import_fast_market_market(best["slug"])
-
     if not market_id:
-        log(f"  ❌ Import failed: {import_error}", force=True)
-        log("📊 Summary: Import failed", force=True)
+        print(f"  ERROR import failed: {import_error}", flush=True)
         return
-
-    log(f"  ✅ Market ID: {market_id[:16]}...", force=True)
 
     traded = False
     if dry_run:
         est_shares = position_size / entry_price if entry_price > 0 else 0
-        log(f"  [DRY RUN] Would buy {side.upper()} ${position_size:.2f} "
-            f"(~{est_shares:.1f} shares @ ${entry_price:.3f})", force=True)
-        traded = True  # count dry-run as "attempted"
+        print(f"  [DRY RUN] Would buy {side.upper()} ${position_size:.2f} "
+              f"(~{est_shares:.1f} shares @ ${entry_price:.3f})", flush=True)
+        traded = True
     else:
-        log(f"  Executing {side.upper()} trade for ${position_size:.2f}...", force=True)
         result = execute_trade(market_id, side, position_size)
-
         if result and result.get("success"):
             shares   = result.get("shares_bought") or result.get("shares") or 0
             trade_id = result.get("trade_id")
-            log(f"  ✅ Bought {shares:.1f} {side.upper()} shares @ ${entry_price:.3f}", force=True)
+            print(f"  TRADED {shares:.1f} {side.upper()} shares @ ${entry_price:.3f}", flush=True)
             traded = True
-
-            # Update daily spend
             daily_spend["spent"]  += position_size
             daily_spend["trades"] += 1
             _save_daily_spend(__file__, daily_spend)
-
-            # Trade journal
             if trade_id and JOURNAL_AVAILABLE:
                 log_trade(
                     trade_id=trade_id,
                     source=TRADE_SOURCE,
-                    thesis=f"{side.upper()} signal: score={score:.3f} confidence={confidence:.3f}",
+                    thesis=f"{side.upper()} score={score:.3f} conf={confidence:.3f}",
                     confidence=round(confidence, 2),
                     asset=ASSET,
                     momentum_pct=round(cex_signals.get("momentum_5m", 0), 3),
@@ -763,16 +707,8 @@ def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=Fal
                     signal_source=SIGNAL_SOURCE,
                 )
         else:
-            error = result.get("error", "Unknown error") if result else "No response"
-            log(f"  ❌ Trade failed: {error}", force=True)
-
-    # ── Summary ───────────────────────────────────────────────────────────────
-    action = "DRY RUN" if dry_run else ("TRADED" if traded else "FAILED")
-    print(f"\n📊 Summary:")
-    print(f"  Market:  {best['question'][:55]}")
-    print(f"  Signal:  {side.upper()}  score={score:.4f}  conf={confidence:.3f}")
-    print(f"  Price:   YES ${market_yes_price:.3f}  |  entry @ ${entry_price:.3f}")
-    print(f"  Action:  {action}  ${position_size:.2f}")
+            error = result.get("error", "Unknown") if result else "no response"
+            print(f"  ERROR trade failed: {error}", flush=True)
 
 
 # =============================================================================

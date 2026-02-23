@@ -130,11 +130,21 @@
 
     <div class="sidebar-section">
       <div class="section-label">Session Stats</div>
-      <div class="stat-row"><span class="stat-label">cycles scored</span><span class="stat-val amber" id="ss-cycles">—</span></div>
-      <div class="stat-row"><span class="stat-label">would-trade</span><span class="stat-val green" id="ss-would">—</span></div>
+      <div class="stat-row"><span class="stat-label">cycles scored</span><span class="stat-val" style="color:var(--amber)" id="ss-cycles">—</span></div>
+      <div class="stat-row"><span class="stat-label">would-trade</span><span class="stat-val" style="color:var(--green)" id="ss-would">—</span></div>
       <div class="stat-row"><span class="stat-label">trade rate</span><span class="stat-val" id="ss-rate">—</span></div>
       <div class="stat-row"><span class="stat-label">avg score</span><span class="stat-val" id="ss-avg">—</span></div>
       <div class="stat-row"><span class="stat-label">top block</span><span class="stat-val" id="ss-block" style="font-size:9px;max-width:120px;text-align:right;word-break:break-word">—</span></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-label">Prediction Accuracy</div>
+      <div class="stat-row"><span class="stat-label">resolved preds</span><span class="stat-val" id="acc-total">—</span></div>
+      <div class="stat-row"><span class="stat-label">win rate</span><span class="stat-val" id="acc-wr" style="font-weight:700">—</span></div>
+      <div class="stat-row"><span class="stat-label">YES correct</span><span class="stat-val" id="acc-yes">—</span></div>
+      <div class="stat-row"><span class="stat-label">NO correct</span><span class="stat-val" id="acc-no">—</span></div>
+      <div class="stat-row"><span class="stat-label">avg score ✓</span><span class="stat-val" style="color:var(--green)" id="acc-sc">—</span></div>
+      <div class="stat-row"><span class="stat-label">avg score ✗</span><span class="stat-val" style="color:var(--red)" id="acc-sw">—</span></div>
     </div>
 
     <div class="sidebar-section">
@@ -203,6 +213,33 @@
         <div class="panel-meta" id="wt-meta">threshold crossings</div>
       </div>
       <div id="wt-table-wrap"><div class="loading"><span class="spinner"></span>loading...</div></div>
+    </div>
+
+    <!-- Prediction vs Outcome -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Prediction vs Outcome</div>
+        <div class="panel-meta" id="pred-meta">resolved predictions</div>
+      </div>
+      <div id="accuracy-strip" style="display:flex;border-bottom:1px solid var(--border)">
+        <div style="flex:1;padding:12px 16px;text-align:center;border-right:1px solid var(--border)">
+          <div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">Win Rate</div>
+          <div style="font-family:var(--display);font-size:24px;font-weight:800;color:var(--text-bright)" id="big-wr">—</div>
+        </div>
+        <div style="flex:1;padding:12px 16px;text-align:center;border-right:1px solid var(--border)">
+          <div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">YES Accuracy</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)" id="big-yes-wr">—</div>
+        </div>
+        <div style="flex:1;padding:12px 16px;text-align:center;border-right:1px solid var(--border)">
+          <div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">NO Accuracy</div>
+          <div style="font-size:18px;font-weight:700;color:var(--red)" id="big-no-wr">—</div>
+        </div>
+        <div style="flex:1;padding:12px 16px;text-align:center">
+          <div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">Resolved</div>
+          <div style="font-size:18px;font-weight:700;color:var(--text-bright)" id="big-resolved">—</div>
+        </div>
+      </div>
+      <div id="pred-table-wrap"><div class="loading"><span class="spinner"></span>waiting for resolved predictions...</div></div>
     </div>
 
   </div>
@@ -357,6 +394,17 @@ async function fetchScoreHistory() {
     const trades = [...rows].reverse().filter(r => r.should_trade).slice(0, 30);
     document.getElementById('wt-meta').textContent = `${wouldTrade} crossings in last ${total} cycles`;
 
+    // Sidebar weights (always populate regardless of trade count)
+    const wBars = document.getElementById('weights-bars');
+    wBars.innerHTML = Object.entries(WEIGHTS).filter(([,w]) => w > 0).map(([name, w]) => `
+      <div class="wt-bar-row">
+        <div class="wt-bar-label">
+          <span style="color:var(--text-dim)">${name}</span>
+          <span style="color:var(--amber)">${(w * 100).toFixed(0)}%</span>
+        </div>
+        <div class="wt-bar-track"><div class="wt-bar-fill" style="width:${w * 100}%"></div></div>
+      </div>`).join('');
+
     if (!trades.length) {
       wtWrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-dim)">
         <div style="font-size:13px;color:var(--text);margin-bottom:6px">No threshold crossings yet</div>
@@ -368,7 +416,7 @@ async function fetchScoreHistory() {
     wtWrap.innerHTML = `<table>
       <thead><tr>
         <th>Time (UTC)</th><th>Window</th><th>Signal</th><th class="right">Score</th>
-        <th class="right">vs Ref</th><th class="right">Secs</th><th class="right">Outcome</th>
+        <th class="right">vs Ref</th><th class="right">vol</th><th class="right">Secs</th><th class="right">Outcome</th>
       </tr></thead>
       <tbody>${trades.map(row => {
         const t = row.ts ? row.ts.slice(11,19) : '—';
@@ -378,35 +426,110 @@ async function fetchScoreHistory() {
         const vsRef = row.btc_vs_reference;
         const vsStr = vsRef != null ? (vsRef >= 0 ? '+' : '') + vsRef.toFixed(3) + '%' : '—';
         const vsColor = vsRef > 0.02 ? 'var(--green)' : vsRef != null && vsRef < -0.02 ? 'var(--red)' : 'var(--text-dim)';
+        const vol = row.volume_ratio;
+        const volStr = vol != null ? vol.toFixed(2) + 'x' : '—';
         const outcome = row.outcome;
-        const outcomeStr = outcome === 'up' ? '▲' : outcome === 'down' ? '▼' : row.resolved ? '?' : '…';
+        const outcomeStr = outcome === 'up' ? '▲ up' : outcome === 'down' ? '▼ down' : row.resolved ? '?' : '…';
         const outcomeColor = outcome === 'up' ? 'var(--green)' : outcome === 'down' ? 'var(--red)' : 'var(--text-dim)';
         return `<tr>
           <td style="color:var(--text-dim)">${t}</td>
           <td style="color:var(--text);font-size:10px">${slug.split('-').slice(-1)[0]}</td>
           <td><span class="wt-pill ${pillCls}">${pillLabel}</span></td>
-          <td class="right" style="color:var(--cyan)">${row.score.toFixed(4)}</td>
+          <td class="right" style="color:var(--cyan)">${row.score != null ? row.score.toFixed(4) : '—'}</td>
           <td class="right" style="color:${vsColor}">${vsStr}</td>
+          <td class="right" style="color:var(--text-dim)">${volStr}</td>
           <td class="right" style="color:var(--text-dim)">${row.seconds_remaining ? Math.round(row.seconds_remaining) + 's' : '—'}</td>
           <td class="right" style="color:${outcomeColor};font-weight:700">${outcomeStr}</td>
         </tr>`;
       }).join('')}</tbody></table>`;
+  } catch(e) {}
+}
 
-    // Sidebar weights
-    const wBars = document.getElementById('weights-bars');
-    wBars.innerHTML = Object.entries(WEIGHTS).filter(([,w]) => w > 0).map(([name, w]) => `
-      <div class="wt-bar-row">
-        <div class="wt-bar-label">
-          <span style="color:var(--text-dim)">${name}</span>
-          <span style="color:var(--amber)">${(w * 100).toFixed(0)}%</span>
-        </div>
-        <div class="wt-bar-track"><div class="wt-bar-fill" style="width:${w * 100}%"></div></div>
-      </div>`).join('');
+async function fetchPredictions() {
+  try {
+    const [predR, accR] = await Promise.all([
+      fetch(`${API}/api/predictions`),
+      fetch(`${API}/api/accuracy`),
+    ]);
+    const preds = await predR.json();
+    const acc   = await accR.json();
+
+    if (acc && !acc.error) {
+      const wr = acc.win_rate != null ? (acc.win_rate * 100).toFixed(1) + '%' : '—';
+      const wrColor = acc.win_rate > 0.55 ? 'var(--green)' : acc.win_rate < 0.45 ? 'var(--red)' : 'var(--amber)';
+      document.getElementById('big-wr').textContent = wr;
+      document.getElementById('big-wr').style.color = wrColor;
+      document.getElementById('big-yes-wr').textContent = acc.yes_wr != null ? (acc.yes_wr * 100).toFixed(1) + '%' : '—';
+      document.getElementById('big-no-wr').textContent = acc.no_wr != null ? (acc.no_wr * 100).toFixed(1) + '%' : '—';
+      document.getElementById('big-resolved').textContent = acc.total || 0;
+      // Sidebar
+      document.getElementById('acc-total').textContent = acc.total || 0;
+      document.getElementById('acc-wr').textContent = wr;
+      document.getElementById('acc-wr').style.color = wrColor;
+      document.getElementById('acc-yes').textContent = acc.yes_wr != null ? `${acc.yes_correct}/${acc.yes_total} (${(acc.yes_wr*100).toFixed(0)}%)` : '—';
+      document.getElementById('acc-no').textContent = acc.no_wr != null ? `${acc.no_correct}/${acc.no_total} (${(acc.no_wr*100).toFixed(0)}%)` : '—';
+      document.getElementById('acc-sc').textContent = acc.avg_score_correct != null ? acc.avg_score_correct.toFixed(3) : '—';
+      document.getElementById('acc-sw').textContent = acc.avg_score_wrong != null ? acc.avg_score_wrong.toFixed(3) : '—';
+    }
+
+    const wrap = document.getElementById('pred-table-wrap');
+    const meta = document.getElementById('pred-meta');
+
+    if (!preds || preds.error || !preds.length) {
+      wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-dim)">
+        <div style="font-size:13px;color:var(--text);margin-bottom:6px">No predictions yet</div>
+        Predictions appear once the model scores above threshold. Markets resolve ~5 minutes after window ends.
+      </div>`;
+      meta.textContent = '0 predictions';
+      return;
+    }
+
+    const resolved = preds.filter(p => p.outcome && p.outcome !== 'unclear');
+    meta.textContent = `${preds.length} predictions · ${resolved.length} resolved`;
+
+    wrap.innerHTML = `<table>
+      <thead><tr>
+        <th>Time (UTC)</th><th>Window</th><th>Prediction</th>
+        <th class="right">Score</th><th class="right">Conf</th>
+        <th class="right">vs Ref</th><th class="right">m5</th>
+        <th>Outcome</th><th>Correct?</th>
+      </tr></thead>
+      <tbody>${preds.map(row => {
+        const t = row.ts ? row.ts.slice(11,19) : '—';
+        const slug = (row.market_slug || '').split('-').slice(-1)[0] || '—';
+        const pillCls = row.side === 'yes' ? 'yes' : 'no';
+        const pillLabel = row.side === 'yes' ? '▲ YES' : '▼ NO';
+        const score = row.score != null ? row.score.toFixed(3) : '—';
+        const conf = row.confidence != null ? (row.confidence * 100).toFixed(0) + '%' : '—';
+        const vsRef = row.btc_vs_reference;
+        const vsStr = vsRef != null ? (vsRef >= 0 ? '+' : '') + vsRef.toFixed(3) + '%' : '—';
+        const vsColor = vsRef > 0.02 ? 'var(--green)' : vsRef != null && vsRef < -0.02 ? 'var(--red)' : 'var(--text-dim)';
+        const m5 = row.momentum_5m;
+        const m5Str = m5 != null ? (m5 >= 0 ? '+' : '') + m5.toFixed(3) + '%' : '—';
+        const m5Color = m5 > 0.05 ? 'var(--green)' : m5 != null && m5 < -0.05 ? 'var(--red)' : 'var(--text-dim)';
+        const outcome = row.outcome;
+        const outcomeStr = outcome === 'up' ? '▲ up' : outcome === 'down' ? '▼ down' : row.resolved ? 'unclear' : '…';
+        const outcomeColor = outcome === 'up' ? 'var(--green)' : outcome === 'down' ? 'var(--red)' : 'var(--text-dim)';
+        const correct = row.correct;
+        const correctStr = correct === true ? '✓' : correct === false ? '✗' : '—';
+        const correctColor = correct === true ? 'var(--green)' : correct === false ? 'var(--red)' : 'var(--text-dim)';
+        return `<tr>
+          <td style="color:var(--text-dim)">${t}</td>
+          <td style="font-size:10px">${slug}</td>
+          <td><span class="wt-pill ${pillCls}">${pillLabel}</span></td>
+          <td class="right" style="color:var(--cyan)">${score}</td>
+          <td class="right" style="color:var(--text-dim)">${conf}</td>
+          <td class="right" style="color:${vsColor}">${vsStr}</td>
+          <td class="right" style="color:${m5Color}">${m5Str}</td>
+          <td style="color:${outcomeColor};font-weight:700">${outcomeStr}</td>
+          <td style="color:${correctColor};font-weight:900;font-size:14px;text-align:center">${correctStr}</td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
   } catch(e) {}
 }
 
 async function refresh() {
-  await Promise.all([fetchComposite(), fetchScoreHistory()]);
+  await Promise.all([fetchComposite(), fetchScoreHistory(), fetchPredictions()]);
 }
 
 refresh();

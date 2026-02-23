@@ -213,7 +213,7 @@ def main():
         log.info(f"[cycle {cycle}] {scheduler_status_str(now)}")
 
         # Run based on mode
-        if MODE in ("collect", "both"):
+        if MODE in ("collect", "both", "dry"):
             ok = run_collector()
             last_action = f"collect {'ok' if ok else 'err'} @ {now.strftime('%H:%M:%S')}"
 

@@ -5,7 +5,12 @@
       "Bash(docker stop:*)",
       "Bash(docker start:*)",
       "Bash(docker.exe ps:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(python:*)",
+      "Bash(docker info:*)",
+      "Bash(docker:*)",
+      "Bash(docker -H npipe:////./pipe/dockerDesktopLinuxEngine info)",
+      "Bash(docker context ls)"
     ]
   }
 }

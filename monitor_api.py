@@ -316,51 +316,134 @@ def composite_live():
 
 @app.route("/api/score-history")
 def score_history():
-    """Last 100 observations with computed composite scores (chronological)."""
+    """Last 100 observations with stored signal scores (chronological)."""
     try:
         conn = get_db()
         rows = conn.execute("""
             SELECT ts, market_slug, seconds_remaining,
-                   momentum_5m, rsi_14, volume_ratio, order_imbalance,
-                   trade_flow_ratio, volatility_5m, price_acceleration,
-                   btc_vs_reference, cex_poly_lag, momentum_consistency,
-                   vol_adjusted_momentum, poly_yes_price, poly_divergence,
-                   outcome, resolved, traded
+                   signal_score, signal_side, signal_confidence,
+                   would_trade, filter_reason,
+                   outcome, resolved, btc_vs_reference, poly_yes_price,
+                   momentum_5m, volume_ratio
             FROM signal_observations ORDER BY id DESC LIMIT 100
         """).fetchall()
         conn.close()
-        import sys as _sys
-        _sys.path.insert(0, "/app")
-        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from composite_signal import get_composite_signal
         result = []
         for row in rows:
             d = dict(row)
-            cex = {k: d.get(k) for k in [
-                "momentum_5m", "rsi_14", "volume_ratio", "order_imbalance",
-                "trade_flow_ratio", "volatility_5m", "price_acceleration",
-                "btc_vs_reference", "cex_poly_lag", "momentum_consistency",
-                "vol_adjusted_momentum",
-            ]}
-            poly = {
-                "poly_yes_price": d.get("poly_yes_price"),
-                "poly_divergence": d.get("poly_divergence"),
-                "poly_spread": None,
-            }
-            sig = get_composite_signal(cex, poly)
+            score = d.get("signal_score")
+            side = d.get("signal_side")
             result.append({
                 "ts": d["ts"],
-                "market_slug": d["market_slug"],
+                "market_slug": d.get("market_slug"),
                 "seconds_remaining": d.get("seconds_remaining"),
-                "score": round(sig["score"], 4),
-                "should_trade": sig["should_trade"],
-                "side": sig["side"],
-                "filter_reason": sig["filter_reason"],
+                "score": round(score, 4) if score is not None else None,
+                "should_trade": bool(d.get("would_trade")),
+                "side": side,
+                "filter_reason": d.get("filter_reason"),
                 "outcome": d.get("outcome"),
                 "resolved": d.get("resolved"),
                 "btc_vs_reference": d.get("btc_vs_reference"),
+                "poly_yes_price": d.get("poly_yes_price"),
+                "momentum_5m": d.get("momentum_5m"),
+                "volume_ratio": d.get("volume_ratio"),
             })
         return jsonify(result[::-1])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/predictions")
+def predictions():
+    """Observations where would_trade=1 with outcomes for accuracy tracking."""
+    try:
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT ts, market_slug, seconds_remaining,
+                   signal_score, signal_side, signal_confidence, filter_reason,
+                   outcome, resolved, btc_vs_reference, poly_yes_price,
+                   momentum_5m, volume_ratio
+            FROM signal_observations
+            WHERE would_trade = 1
+            ORDER BY id DESC LIMIT 200
+        """).fetchall()
+        conn.close()
+        result = []
+        for row in rows:
+            d = dict(row)
+            score = d.get("signal_score")
+            side = d.get("signal_side")
+            outcome = d.get("outcome")
+            # correct = prediction direction matches outcome
+            correct = None
+            if side and outcome in ("up", "down"):
+                predicted_up = side == "yes"
+                actual_up = outcome == "up"
+                correct = predicted_up == actual_up
+            result.append({
+                "ts": d["ts"],
+                "market_slug": d.get("market_slug"),
+                "seconds_remaining": d.get("seconds_remaining"),
+                "score": round(score, 4) if score is not None else None,
+                "side": side,
+                "confidence": round(d["signal_confidence"], 4) if d.get("signal_confidence") is not None else None,
+                "outcome": outcome,
+                "resolved": d.get("resolved"),
+                "correct": correct,
+                "btc_vs_reference": d.get("btc_vs_reference"),
+                "poly_yes_price": d.get("poly_yes_price"),
+                "momentum_5m": d.get("momentum_5m"),
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/accuracy")
+def accuracy():
+    """Prediction accuracy summary: win rate, correct count, by signal side."""
+    try:
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT signal_side, signal_score, outcome
+            FROM signal_observations
+            WHERE would_trade = 1 AND resolved = 1 AND outcome IN ('up','down')
+        """).fetchall()
+        conn.close()
+        total = len(rows)
+        if total == 0:
+            return jsonify({"total": 0, "win_rate": None, "yes_wr": None, "no_wr": None})
+        correct = sum(
+            1 for r in rows
+            if (r[0] == "yes" and r[2] == "up") or (r[0] == "no" and r[2] == "down")
+        )
+        yes_rows = [r for r in rows if r[0] == "yes"]
+        no_rows  = [r for r in rows if r[0] == "no"]
+        yes_correct = sum(1 for r in yes_rows if r[2] == "up")
+        no_correct  = sum(1 for r in no_rows  if r[2] == "down")
+        avg_score_correct = (
+            sum(r[1] for r in rows
+                if (r[0]=="yes" and r[2]=="up") or (r[0]=="no" and r[2]=="down"))
+            / correct if correct else None
+        )
+        avg_score_wrong = (
+            sum(r[1] for r in rows
+                if not ((r[0]=="yes" and r[2]=="up") or (r[0]=="no" and r[2]=="down")))
+            / (total - correct) if total > correct else None
+        )
+        return jsonify({
+            "total": total,
+            "correct": correct,
+            "win_rate": round(correct / total, 4),
+            "yes_total": len(yes_rows),
+            "yes_correct": yes_correct,
+            "yes_wr": round(yes_correct / len(yes_rows), 4) if yes_rows else None,
+            "no_total": len(no_rows),
+            "no_correct": no_correct,
+            "no_wr": round(no_correct / len(no_rows), 4) if no_rows else None,
+            "avg_score_correct": round(avg_score_correct, 4) if avg_score_correct else None,
+            "avg_score_wrong": round(avg_score_wrong, 4) if avg_score_wrong else None,
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
