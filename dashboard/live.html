@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FastLoop — Live Trading</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080b0f; --surface: #0d1117; --border: #1a2332; --border-bright: #243347;
+    --text: #c8d6e8; --text-dim: #4a6080; --text-bright: #e8f0f8;
+    --green: #00e676; --red: #ff3d57; --amber: #ffb300; --blue: #2196f3; --cyan: #00bcd4;
+    --mono: 'JetBrains Mono', monospace; --display: 'Syne', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 12px; min-height: 100vh; overflow-x: hidden; }
+  body::before { content: ''; position: fixed; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px); pointer-events: none; z-index: 1000; }
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 100; }
+  .logo { font-family: var(--display); font-size: 18px; font-weight: 800; letter-spacing: -0.5px; color: var(--text-bright); }
+  .logo span { color: var(--green); }
+  .header-right { display: flex; align-items: center; gap: 20px; }
+  .last-update { color: var(--text-dim); font-size: 10px; }
+  .refresh-btn { background: none; border: 1px solid var(--border-bright); color: var(--text-dim); padding: 3px 8px; font-family: var(--mono); font-size: 10px; cursor: pointer; border-radius: 2px; transition: all 0.15s; }
+  .refresh-btn:hover { border-color: var(--green); color: var(--green); }
+  .nav { display: flex; gap: 2px; padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .nav-link { padding: 8px 16px; font-size: 11px; letter-spacing: 0.5px; color: var(--text-dim); text-decoration: none; border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s; margin-bottom: -1px; }
+  .nav-link:hover { color: var(--text-bright); }
+  .nav-link.active { color: var(--text-bright); border-bottom-color: var(--blue); }
+  .main { padding: 16px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; height: calc(100vh - 82px); }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 2px; overflow: hidden; }
+  .panel-header { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .panel-title { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+  .panel-meta { font-size: 10px; color: var(--text-dim); }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th { padding: 7px 10px; text-align: left; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); border-bottom: 1px solid var(--border); font-weight: 400; }
+  th.right { text-align: right; }
+  td { padding: 7px 10px; border-bottom: 1px solid rgba(26,35,50,0.5); }
+  td.right { text-align: right; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  tr:last-child td { border-bottom: none; }
+  ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: var(--bg); } ::-webkit-scrollbar-thumb { background: var(--border-bright); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner { display: inline-block; width: 10px; height: 10px; border: 1.5px solid var(--border-bright); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
+  .loading { color: var(--text-dim); font-size: 11px; padding: 24px; text-align: center; }
+
+  /* P&L Strip */
+  .pnl-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+  .pnl-card { background: var(--surface); border: 1px solid var(--border); padding: 14px; border-radius: 2px; position: relative; overflow: hidden; }
+  .pnl-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
+  .pnl-card.green-top::before { background: var(--green); }
+  .pnl-card.red-top::before { background: var(--red); }
+  .pnl-card.amber-top::before { background: var(--amber); }
+  .pnl-card.blue-top::before { background: var(--blue); }
+  .pnl-card.cyan-top::before { background: var(--cyan); }
+  .pnl-card.dim-top::before { background: var(--border-bright); }
+  .pnl-label { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
+  .pnl-value { font-family: var(--display); font-size: 24px; font-weight: 700; line-height: 1; color: var(--text-bright); }
+  .pnl-sub { font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+
+  /* Trade side pill */
+  .side-pill { display: inline-block; padding: 2px 8px; border-radius: 2px; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  .side-pill.yes { background: rgba(0,230,118,0.12); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+  .side-pill.no  { background: rgba(255,61,87,0.12);  color: var(--red);   border: 1px solid rgba(255,61,87,0.3); }
+
+  /* P&L chart */
+  .pnl-chart-wrap { height: 120px; background: rgba(0,0,0,0.2); overflow: hidden; }
+  .pnl-chart-wrap svg { display: block; width: 100%; height: 100%; }
+
+  /* Empty state */
+  .empty { padding: 48px 24px; text-align: center; }
+  .empty-icon { font-size: 32px; margin-bottom: 12px; opacity: 0.3; }
+  .empty-title { font-size: 14px; color: var(--text); margin-bottom: 8px; font-family: var(--display); }
+  .empty-sub { font-size: 11px; color: var(--text-dim); line-height: 1.6; }
+  .empty-cmd { display: inline-block; margin-top: 12px; padding: 6px 14px; background: rgba(33,150,243,0.1); border: 1px solid rgba(33,150,243,0.3); border-radius: 2px; color: var(--blue); font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">Fast<span>Loop</span> <span style="font-size:11px;color:var(--text-dim);font-family:var(--mono);font-weight:400">/ live trading</span></div>
+  <div class="header-right">
+    <span class="last-update" id="last-update">—</span>
+    <button class="refresh-btn" onclick="refresh()">↺ refresh</button>
+  </div>
+</div>
+
+<nav class="nav">
+  <a href="index.html" class="nav-link">Monitor</a>
+  <a href="dry-run.html" class="nav-link">Signal Lab</a>
+  <a href="live.html" class="nav-link active">Live Trading</a>
+</nav>
+
+<div class="main">
+
+  <!-- P&L Strip -->
+  <div class="pnl-strip">
+    <div class="pnl-card green-top">
+      <div class="pnl-label">Today P&L</div>
+      <div class="pnl-value" id="today-pnl" style="color:var(--text-dim)">—</div>
+      <div class="pnl-sub" id="today-trades">0 trades today</div>
+    </div>
+    <div class="pnl-card dim-top">
+      <div class="pnl-label">Total P&L</div>
+      <div class="pnl-value" id="total-pnl" style="color:var(--text-dim)">—</div>
+      <div class="pnl-sub" id="total-trades">all time</div>
+    </div>
+    <div class="pnl-card blue-top">
+      <div class="pnl-label">Win Rate</div>
+      <div class="pnl-value" id="win-rate" style="color:var(--text-dim)">—</div>
+      <div class="pnl-sub" id="win-rate-sub">resolved trades</div>
+    </div>
+    <div class="pnl-card amber-top">
+      <div class="pnl-label">Daily Budget</div>
+      <div class="pnl-value" id="budget-used" style="color:var(--text-dim)">—</div>
+      <div class="pnl-sub" id="budget-pct">of $5.00 limit</div>
+    </div>
+    <div class="pnl-card cyan-top">
+      <div class="pnl-label">Open Positions</div>
+      <div class="pnl-value" id="open-pos" style="color:var(--text-dim)">—</div>
+      <div class="pnl-sub">awaiting resolution</div>
+    </div>
+    <div class="pnl-card dim-top">
+      <div class="pnl-label">Avg per Trade</div>
+      <div class="pnl-value" id="avg-pnl" style="color:var(--text-dim)">—</div>
+      <div class="pnl-sub">resolved only</div>
+    </div>
+  </div>
+
+  <!-- P&L Chart -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Cumulative P&L</div>
+      <div class="panel-meta" id="chart-meta">—</div>
+    </div>
+    <div class="pnl-chart-wrap">
+      <svg id="pnl-svg" viewBox="0 0 900 120" preserveAspectRatio="none"></svg>
+    </div>
+  </div>
+
+  <!-- Trade History -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Trade History</div>
+      <div class="panel-meta" id="trades-meta">—</div>
+    </div>
+    <div id="trades-wrap">
+      <div class="loading"><span class="spinner"></span>loading trades...</div>
+    </div>
+  </div>
+
+  <!-- Open Positions -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Open Positions</div>
+      <div class="panel-meta" id="open-meta">awaiting resolution</div>
+    </div>
+    <div id="open-wrap">
+      <div class="loading"><span class="spinner"></span>loading...</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = window.location.origin;
+
+function fmtPnl(v) {
+  if (v == null) return '—';
+  return (v >= 0 ? '+$' : '-$') + Math.abs(v).toFixed(2);
+}
+function pnlColor(v) {
+  if (v == null) return 'var(--text-dim)';
+  return v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-dim)';
+}
+
+async function fetchPnl() {
+  try {
+    const r = await fetch(`${API}/api/pnl-summary`);
+    const d = await r.json();
+    if (d.error) return;
+
+    const todayEl = document.getElementById('today-pnl');
+    todayEl.textContent = fmtPnl(d.today_pnl);
+    todayEl.style.color = pnlColor(d.today_pnl);
+    document.getElementById('today-trades').textContent = `${d.today_trades} trade${d.today_trades !== 1 ? 's' : ''} today`;
+
+    const totalEl = document.getElementById('total-pnl');
+    totalEl.textContent = fmtPnl(d.total_pnl);
+    totalEl.style.color = pnlColor(d.total_pnl);
+    document.getElementById('total-trades').textContent = `${d.total_trades} total trades`;
+
+    const wrEl = document.getElementById('win-rate');
+    if (d.win_rate != null) {
+      wrEl.textContent = Math.round(d.win_rate * 100) + '%';
+      wrEl.style.color = d.win_rate > 0.55 ? 'var(--green)' : d.win_rate < 0.45 ? 'var(--red)' : 'var(--amber)';
+      document.getElementById('win-rate-sub').textContent = `${d.resolved_trades} resolved`;
+    } else {
+      wrEl.textContent = '—';
+      document.getElementById('win-rate-sub').textContent = 'no resolved trades yet';
+    }
+
+    document.getElementById('last-update').textContent = `updated ${new Date().toUTCString().slice(17,25)} UTC`;
+  } catch(e) {}
+}
+
+async function fetchTrades() {
+  try {
+    const r = await fetch(`${API}/api/trades`);
+    const rows = await r.json();
+
+    const openRows = rows.filter(t => !t.resolved || t.outcome == null);
+    const closedRows = rows.filter(t => t.resolved && t.outcome);
+
+    document.getElementById('open-pos').textContent = openRows.length || '0';
+
+    // Budget (estimate from today's trades)
+    const today = new Date().toISOString().slice(0, 10);
+    const todayAmt = rows.filter(t => t.ts && t.ts.startsWith(today))
+      .reduce((s, t) => s + (t.trade_amount || 0), 0);
+    const budgetEl = document.getElementById('budget-used');
+    budgetEl.textContent = `$${todayAmt.toFixed(2)}`;
+    budgetEl.style.color = todayAmt > 4 ? 'var(--red)' : todayAmt > 2.5 ? 'var(--amber)' : 'var(--green)';
+    document.getElementById('budget-pct').textContent = `${Math.round(todayAmt / 5 * 100)}% of $5.00 limit`;
+
+    // Avg per trade
+    const resolved = rows.filter(t => t.trade_result != null);
+    if (resolved.length) {
+      const avg = resolved.reduce((s, t) => s + t.trade_result, 0) / resolved.length;
+      const avgEl = document.getElementById('avg-pnl');
+      avgEl.textContent = fmtPnl(avg);
+      avgEl.style.color = pnlColor(avg);
+    }
+
+    // P&L chart (cumulative)
+    drawPnlChart(closedRows.slice().reverse());
+
+    document.getElementById('trades-meta').textContent = `${rows.length} total · ${openRows.length} open`;
+
+    // Trade history table
+    const wrap = document.getElementById('trades-wrap');
+    if (!rows.length) {
+      wrap.innerHTML = `<div class="empty">
+        <div class="empty-icon">◎</div>
+        <div class="empty-title">No trades recorded yet</div>
+        <div class="empty-sub">Set FASTLOOP_MODE to <strong>trade</strong> or <strong>both</strong> in docker-compose.yml to start executing trades.</div>
+        <div class="empty-cmd">FASTLOOP_MODE=both</div>
+      </div>`;
+      document.getElementById('open-wrap').innerHTML = `<div class="loading" style="padding:20px;color:var(--text-dim)">No open positions</div>`;
+      return;
+    }
+
+    wrap.innerHTML = `<table>
+      <thead><tr>
+        <th>Time (UTC)</th><th>Window</th><th>Side</th>
+        <th class="right">Amount</th><th class="right">vs Ref</th>
+        <th class="right">Poly</th><th class="right">Outcome</th><th class="right">P&L</th>
+      </tr></thead>
+      <tbody>${rows.map(t => {
+        const time = t.ts ? t.ts.slice(11, 19) : '—';
+        const slug = t.market_slug ? t.market_slug.split('-').slice(-1)[0] : '—';
+        const side = t.trade_side || '—';
+        const pillCls = side === 'yes' ? 'yes' : 'no';
+        const pillLabel = side === 'yes' ? '▲ YES' : '▼ NO';
+        const amount = t.trade_amount ? `$${t.trade_amount.toFixed(2)}` : '—';
+        const vsRef = t.btc_vs_reference;
+        const vsStr = vsRef != null ? (vsRef >= 0 ? '+' : '') + vsRef.toFixed(3) + '%' : '—';
+        const vsColor = vsRef > 0.02 ? 'var(--green)' : vsRef != null && vsRef < -0.02 ? 'var(--red)' : 'var(--text-dim)';
+        const poly = t.poly_yes_price ? t.poly_yes_price.toFixed(3) : '—';
+        const outcome = t.outcome;
+        const outStr = outcome === 'up' ? '▲ UP' : outcome === 'down' ? '▼ DN' : '…';
+        const outColor = outcome === 'up' ? 'var(--green)' : outcome === 'down' ? 'var(--red)' : 'var(--text-dim)';
+        const pnl = t.trade_result;
+        const pnlStr = pnl != null ? fmtPnl(pnl) : '—';
+        const pnlColor2 = pnlColor(pnl);
+        return `<tr>
+          <td style="color:var(--text-dim)">${time}</td>
+          <td style="color:var(--text);font-size:10px">${slug}</td>
+          <td><span class="side-pill ${pillCls}">${pillLabel}</span></td>
+          <td class="right">${amount}</td>
+          <td class="right" style="color:${vsColor}">${vsStr}</td>
+          <td class="right" style="color:var(--text)">${poly}</td>
+          <td class="right" style="color:${outColor};font-weight:700">${outStr}</td>
+          <td class="right" style="color:${pnlColor2};font-weight:500">${pnlStr}</td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+
+    // Open positions
+    const openWrap = document.getElementById('open-wrap');
+    if (!openRows.length) {
+      openWrap.innerHTML = `<div class="loading" style="padding:16px;color:var(--text-dim)">No open positions</div>`;
+    } else {
+      openWrap.innerHTML = `<table>
+        <thead><tr>
+          <th>Time (UTC)</th><th>Window</th><th>Side</th>
+          <th class="right">Amount</th><th class="right">BTC vs Ref</th><th class="right">Secs</th>
+        </tr></thead>
+        <tbody>${openRows.map(t => {
+          const time = t.ts ? t.ts.slice(11, 19) : '—';
+          const slug = t.market_slug ? t.market_slug.split('-').slice(-1)[0] : '—';
+          const side = t.trade_side || '—';
+          const pillCls = side === 'yes' ? 'yes' : 'no';
+          const pillLabel = side === 'yes' ? '▲ YES' : '▼ NO';
+          const amount = t.trade_amount ? `$${t.trade_amount.toFixed(2)}` : '—';
+          const vsRef = t.btc_vs_reference;
+          const vsStr = vsRef != null ? (vsRef >= 0 ? '+' : '') + vsRef.toFixed(3) + '%' : '—';
+          const vsColor = vsRef > 0.02 ? 'var(--green)' : vsRef != null && vsRef < -0.02 ? 'var(--red)' : 'var(--text-dim)';
+          const secs = t.seconds_remaining ? Math.round(t.seconds_remaining) + 's' : '—';
+          return `<tr>
+            <td style="color:var(--text-dim)">${time}</td>
+            <td style="color:var(--text);font-size:10px">${slug}</td>
+            <td><span class="side-pill ${pillCls}">${pillLabel}</span></td>
+            <td class="right">${amount}</td>
+            <td class="right" style="color:${vsColor}">${vsStr}</td>
+            <td class="right" style="color:var(--text-dim)">${secs}</td>
+          </tr>`;
+        }).join('')}</tbody></table>`;
+    }
+  } catch(e) {}
+}
+
+function drawPnlChart(closedTrades) {
+  const svg = document.getElementById('pnl-svg');
+  if (!closedTrades.length) {
+    svg.innerHTML = `<text x="450" y="65" text-anchor="middle" fill="rgba(255,255,255,0.1)" font-size="12" font-family="monospace">no resolved trades yet</text>`;
+    document.getElementById('chart-meta').textContent = 'no data';
+    return;
+  }
+  const W = 900, H = 120, PAD = 10;
+  let cumulative = 0;
+  const pts = closedTrades.map((t, i) => {
+    cumulative += t.trade_result || 0;
+    return { x: i, y: cumulative };
+  });
+  const minY = Math.min(0, ...pts.map(p => p.y));
+  const maxY = Math.max(0, ...pts.map(p => p.y));
+  const rangeY = maxY - minY || 0.01;
+  const n = pts.length;
+  const toX = i => PAD + (i / Math.max(n - 1, 1)) * (W - PAD * 2);
+  const toY = v => H - PAD - ((v - minY) / rangeY) * (H - PAD * 2);
+  const zeroY = toY(0);
+  const lineColor = cumulative >= 0 ? '#00e676' : '#ff3d57';
+  const polyPts = pts.map((p, i) => `${toX(i)},${toY(p.y)}`).join(' ');
+  let area = `M ${toX(0)},${zeroY}`;
+  pts.forEach((p, i) => area += ` L ${toX(i)},${toY(p.y)}`);
+  area += ` L ${toX(n - 1)},${zeroY} Z`;
+  svg.innerHTML = `
+    <line x1="0" y1="${zeroY}" x2="${W}" y2="${zeroY}" stroke="rgba(255,255,255,0.1)" stroke-width="1" stroke-dasharray="4,4"/>
+    <path d="${area}" fill="${cumulative >= 0 ? 'rgba(0,230,118,0.07)' : 'rgba(255,61,87,0.07)'}"/>
+    <polyline points="${polyPts}" fill="none" stroke="${lineColor}" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="${toX(n - 1)}" cy="${toY(pts[n-1].y)}" r="3.5" fill="${lineColor}"/>
+    <text x="${W - PAD}" y="${toY(pts[n-1].y) - 5}" text-anchor="end" fill="${lineColor}" font-size="10" font-family="monospace">${fmtPnl(cumulative)}</text>
+  `;
+  document.getElementById('chart-meta').textContent = `${n} resolved trades · cumulative ${fmtPnl(cumulative)}`;
+}
+
+async function refresh() {
+  await Promise.all([fetchPnl(), fetchTrades()]);
+}
+
+refresh();
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>

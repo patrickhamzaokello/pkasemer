@@ -127,7 +127,7 @@
     grid-template-columns: 260px 1fr;
     grid-template-rows: auto 1fr;
     gap: 0;
-    height: calc(100vh - 45px);
+    height: calc(100vh - 82px);
   }
 
   /* Sidebar */
@@ -533,6 +533,27 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   .loading { color: var(--text-dim); font-size: 11px; padding: 20px; text-align: center; }
+
+  /* Nav */
+  .nav {
+    display: flex;
+    gap: 2px;
+    padding: 0 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-link {
+    padding: 8px 16px;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+    margin-bottom: -1px;
+  }
+  .nav-link:hover { color: var(--text-bright); }
+  .nav-link.active { color: var(--text-bright); border-bottom-color: var(--green); }
 </style>
 </head>
 <body>
@@ -548,6 +569,12 @@
     <button class="refresh-btn" onclick="refresh()">↺ refresh</button>
   </div>
 </div>
+
+<nav class="nav">
+  <a href="index.html" class="nav-link active">Monitor</a>
+  <a href="dry-run.html" class="nav-link">Signal Lab</a>
+  <a href="live.html" class="nav-link">Live Trading</a>
+</nav>
 
 <div class="layout">
 

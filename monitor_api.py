@@ -256,6 +256,162 @@ def window_history():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/composite")
+def composite_live():
+    """Compute composite signal score from latest observation."""
+    try:
+        conn = get_db()
+        row = conn.execute("""
+            SELECT ts, market_slug, seconds_remaining,
+                   momentum_5m, rsi_14, volume_ratio, order_imbalance,
+                   trade_flow_ratio, volatility_5m, price_acceleration,
+                   btc_vs_reference, cex_poly_lag, momentum_consistency,
+                   vol_adjusted_momentum, poly_yes_price, poly_divergence,
+                   price_now, price_to_beat
+            FROM signal_observations ORDER BY id DESC LIMIT 1
+        """).fetchone()
+        conn.close()
+        if not row:
+            return jsonify({"error": "No data yet"})
+        d = dict(row)
+        cex = {k: d.get(k) for k in [
+            "momentum_5m", "rsi_14", "volume_ratio", "order_imbalance",
+            "trade_flow_ratio", "volatility_5m", "price_acceleration",
+            "btc_vs_reference", "cex_poly_lag", "momentum_consistency",
+            "vol_adjusted_momentum",
+        ]}
+        poly = {
+            "poly_yes_price": d.get("poly_yes_price"),
+            "poly_divergence": d.get("poly_divergence"),
+            "poly_spread": None,
+        }
+        import sys as _sys
+        _sys.path.insert(0, "/app")
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from composite_signal import get_composite_signal
+        signal = get_composite_signal(cex, poly)
+        return jsonify({
+            "ts": d["ts"],
+            "market_slug": d["market_slug"],
+            "seconds_remaining": d["seconds_remaining"],
+            "price_now": d.get("price_now"),
+            "price_to_beat": d.get("price_to_beat"),
+            "score": round(signal["score"], 4),
+            "confidence": round(signal["confidence"], 4),
+            "should_trade": signal["should_trade"],
+            "side": signal["side"],
+            "filter_reason": signal["filter_reason"],
+            "breakdown": {
+                k: {
+                    "raw": v.get("raw"),
+                    "normalized": round(v["normalized"], 4) if v.get("normalized") is not None else None,
+                    "weight": v.get("weight", 0),
+                }
+                for k, v in signal["breakdown"].items()
+            },
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/score-history")
+def score_history():
+    """Last 100 observations with computed composite scores (chronological)."""
+    try:
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT ts, market_slug, seconds_remaining,
+                   momentum_5m, rsi_14, volume_ratio, order_imbalance,
+                   trade_flow_ratio, volatility_5m, price_acceleration,
+                   btc_vs_reference, cex_poly_lag, momentum_consistency,
+                   vol_adjusted_momentum, poly_yes_price, poly_divergence,
+                   outcome, resolved, traded
+            FROM signal_observations ORDER BY id DESC LIMIT 100
+        """).fetchall()
+        conn.close()
+        import sys as _sys
+        _sys.path.insert(0, "/app")
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from composite_signal import get_composite_signal
+        result = []
+        for row in rows:
+            d = dict(row)
+            cex = {k: d.get(k) for k in [
+                "momentum_5m", "rsi_14", "volume_ratio", "order_imbalance",
+                "trade_flow_ratio", "volatility_5m", "price_acceleration",
+                "btc_vs_reference", "cex_poly_lag", "momentum_consistency",
+                "vol_adjusted_momentum",
+            ]}
+            poly = {
+                "poly_yes_price": d.get("poly_yes_price"),
+                "poly_divergence": d.get("poly_divergence"),
+                "poly_spread": None,
+            }
+            sig = get_composite_signal(cex, poly)
+            result.append({
+                "ts": d["ts"],
+                "market_slug": d["market_slug"],
+                "seconds_remaining": d.get("seconds_remaining"),
+                "score": round(sig["score"], 4),
+                "should_trade": sig["should_trade"],
+                "side": sig["side"],
+                "filter_reason": sig["filter_reason"],
+                "outcome": d.get("outcome"),
+                "resolved": d.get("resolved"),
+                "btc_vs_reference": d.get("btc_vs_reference"),
+            })
+        return jsonify(result[::-1])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/trades")
+def trades():
+    """Observations where a trade was logged (traded=1)."""
+    try:
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT ts, market_slug, trade_side, trade_amount, trade_result,
+                   outcome, resolved, btc_vs_reference, momentum_5m,
+                   poly_yes_price, seconds_remaining, price_to_beat, price_now
+            FROM signal_observations
+            WHERE traded = 1
+            ORDER BY id DESC LIMIT 200
+        """).fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/pnl-summary")
+def pnl_summary():
+    """Aggregate P&L stats from logged trades."""
+    try:
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT ts, trade_side, trade_amount, trade_result, outcome, resolved
+            FROM signal_observations WHERE traded = 1
+        """).fetchall()
+        conn.close()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        total_pnl = sum(r[3] for r in rows if r[3] is not None)
+        today_rows = [r for r in rows if r[0] and r[0][:10] == today]
+        today_pnl = sum(r[3] for r in today_rows if r[3] is not None)
+        resolved = [r for r in rows if r[4] in ("up","down") and r[3] is not None]
+        wins = sum(1 for r in resolved if r[3] > 0)
+        return jsonify({
+            "total_trades": len(rows),
+            "total_pnl": round(total_pnl, 4),
+            "today_trades": len(today_rows),
+            "today_pnl": round(today_pnl, 4),
+            "win_rate": round(wins / len(resolved), 4) if resolved else None,
+            "resolved_trades": len(resolved),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def serve_dashboard(path):

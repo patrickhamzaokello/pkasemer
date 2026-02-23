@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FastLoop — Signal Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080b0f; --surface: #0d1117; --border: #1a2332; --border-bright: #243347;
+    --text: #c8d6e8; --text-dim: #4a6080; --text-bright: #e8f0f8;
+    --green: #00e676; --red: #ff3d57; --amber: #ffb300; --blue: #2196f3; --cyan: #00bcd4;
+    --mono: 'JetBrains Mono', monospace; --display: 'Syne', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 12px; min-height: 100vh; overflow-x: hidden; }
+  body::before { content: ''; position: fixed; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px); pointer-events: none; z-index: 1000; }
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 100; }
+  .logo { font-family: var(--display); font-size: 18px; font-weight: 800; letter-spacing: -0.5px; color: var(--text-bright); }
+  .logo span { color: var(--green); }
+  .header-right { display: flex; align-items: center; gap: 20px; }
+  .last-update { color: var(--text-dim); font-size: 10px; }
+  .refresh-btn { background: none; border: 1px solid var(--border-bright); color: var(--text-dim); padding: 3px 8px; font-family: var(--mono); font-size: 10px; cursor: pointer; border-radius: 2px; transition: all 0.15s; }
+  .refresh-btn:hover { border-color: var(--green); color: var(--green); }
+  .nav { display: flex; gap: 2px; padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .nav-link { padding: 8px 16px; font-size: 11px; letter-spacing: 0.5px; color: var(--text-dim); text-decoration: none; border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s; margin-bottom: -1px; }
+  .nav-link:hover { color: var(--text-bright); }
+  .nav-link.active { color: var(--text-bright); border-bottom-color: var(--amber); }
+  .layout { display: grid; grid-template-columns: 240px 1fr; height: calc(100vh - 82px); }
+  .sidebar { border-right: 1px solid var(--border); overflow-y: auto; background: var(--surface); }
+  .sidebar-section { border-bottom: 1px solid var(--border); padding: 14px 16px; }
+  .section-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 10px; }
+  .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; }
+  .stat-label { color: var(--text-dim); font-size: 11px; }
+  .stat-val { color: var(--text-bright); font-size: 11px; font-weight: 500; }
+  .main { overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 2px; overflow: hidden; }
+  .panel-header { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .panel-title { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+  .panel-meta { font-size: 10px; color: var(--text-dim); }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th { padding: 7px 10px; text-align: left; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); border-bottom: 1px solid var(--border); font-weight: 400; }
+  th.right { text-align: right; }
+  td { padding: 6px 10px; border-bottom: 1px solid rgba(26,35,50,0.5); }
+  td.right { text-align: right; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  tr:last-child td { border-bottom: none; }
+  .tag { display: inline-block; padding: 1px 6px; border-radius: 2px; font-size: 9px; letter-spacing: 0.5px; text-transform: uppercase; font-weight: 700; }
+  .tag.yes { background: rgba(0,230,118,0.12); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+  .tag.no  { background: rgba(255,61,87,0.12);  color: var(--red);   border: 1px solid rgba(255,61,87,0.3); }
+  .tag.skip { background: rgba(74,96,128,0.15); color: var(--text-dim); border: 1px solid var(--border); }
+  ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: var(--bg); } ::-webkit-scrollbar-thumb { background: var(--border-bright); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner { display: inline-block; width: 10px; height: 10px; border: 1.5px solid var(--border-bright); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
+  .loading { color: var(--text-dim); font-size: 11px; padding: 24px; text-align: center; }
+
+  /* Score Banner */
+  .score-banner { padding: 20px 24px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 24px; border-bottom: 1px solid var(--border); }
+  .score-big { font-family: var(--display); font-size: 52px; font-weight: 800; line-height: 1; letter-spacing: -2px; min-width: 140px; }
+  .score-gauge-wrap { flex: 1; }
+  .score-gauge-label { display: flex; justify-content: space-between; font-size: 9px; color: var(--text-dim); margin-bottom: 5px; }
+  .score-gauge-track { position: relative; height: 8px; background: var(--border); border-radius: 4px; overflow: visible; }
+  .score-gauge-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+  .score-gauge-threshold { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--amber); border-radius: 1px; opacity: 0.8; }
+  .score-gauge-threshold-lo { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--amber); border-radius: 1px; opacity: 0.8; }
+  .score-decision { text-align: right; min-width: 120px; }
+  .score-side { font-family: var(--display); font-size: 22px; font-weight: 800; }
+  .score-conf { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+  .score-filter { font-size: 10px; color: var(--text-dim); margin-top: 4px; max-width: 200px; text-align: right; line-height: 1.4; }
+
+  /* Breakdown bars */
+  .breakdown-row { display: grid; grid-template-columns: 140px 60px 60px 40px 1fr; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid rgba(26,35,50,0.4); font-size: 10px; }
+  .breakdown-row:last-child { border-bottom: none; }
+  .breakdown-name { color: var(--text); }
+  .breakdown-raw { color: var(--text-dim); text-align: right; }
+  .breakdown-norm { text-align: right; }
+  .breakdown-wt { color: var(--text-dim); text-align: right; font-size: 9px; }
+  .breakdown-bar-track { height: 5px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .breakdown-bar-fill { height: 100%; border-radius: 2px; transition: width 0.4s; }
+
+  /* Score history */
+  .history-svg-wrap { height: 100px; overflow: hidden; background: rgba(0,0,0,0.2); }
+  .history-svg-wrap svg { display: block; width: 100%; height: 100%; }
+
+  /* Would-trade log */
+  .wt-pill { display: inline-block; padding: 2px 7px; border-radius: 2px; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  .wt-pill.yes { background: rgba(0,230,118,0.12); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+  .wt-pill.no  { background: rgba(255,61,87,0.12);  color: var(--red);   border: 1px solid rgba(255,61,87,0.3); }
+  .wt-pill.skip { background: rgba(74,96,128,0.12); color: var(--text-dim); border: 1px solid var(--border); }
+
+  /* Sidebar weight bars */
+  .wt-bar-row { margin: 4px 0; }
+  .wt-bar-label { display: flex; justify-content: space-between; margin-bottom: 2px; font-size: 10px; }
+  .wt-bar-track { height: 3px; background: var(--border); border-radius: 1px; overflow: hidden; }
+  .wt-bar-fill { height: 100%; background: var(--amber); border-radius: 1px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">Fast<span>Loop</span> <span style="font-size:11px;color:var(--text-dim);font-family:var(--mono);font-weight:400">/ signal lab</span></div>
+  <div class="header-right">
+    <span class="last-update" id="last-update">—</span>
+    <button class="refresh-btn" onclick="refresh()">↺ refresh</button>
+  </div>
+</div>
+
+<nav class="nav">
+  <a href="index.html" class="nav-link">Monitor</a>
+  <a href="dry-run.html" class="nav-link active">Signal Lab</a>
+  <a href="live.html" class="nav-link">Live Trading</a>
+</nav>
+
+<div class="layout">
+  <div class="sidebar">
+
+    <div class="sidebar-section">
+      <div class="section-label">Active Weights</div>
+      <div id="weights-bars"><div class="loading" style="padding:10px"><span class="spinner"></span></div></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-label">Thresholds</div>
+      <div class="stat-row"><span class="stat-label">entry (BUY)</span><span class="stat-val" style="color:var(--green)" id="th-hi">0.570</span></div>
+      <div class="stat-row"><span class="stat-label">entry (SELL)</span><span class="stat-val" style="color:var(--red)" id="th-lo">0.430</span></div>
+      <div class="stat-row"><span class="stat-label">min momentum</span><span class="stat-val">±0.05%</span></div>
+      <div class="stat-row"><span class="stat-label">poly div gate</span><span class="stat-val">±0.08</span></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-label">Session Stats</div>
+      <div class="stat-row"><span class="stat-label">cycles scored</span><span class="stat-val amber" id="ss-cycles">—</span></div>
+      <div class="stat-row"><span class="stat-label">would-trade</span><span class="stat-val green" id="ss-would">—</span></div>
+      <div class="stat-row"><span class="stat-label">trade rate</span><span class="stat-val" id="ss-rate">—</span></div>
+      <div class="stat-row"><span class="stat-label">avg score</span><span class="stat-val" id="ss-avg">—</span></div>
+      <div class="stat-row"><span class="stat-label">top block</span><span class="stat-val" id="ss-block" style="font-size:9px;max-width:120px;text-align:right;word-break:break-word">—</span></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-label">Clock</div>
+      <div class="stat-row"><span class="stat-label">UTC</span><span class="stat-val" style="color:var(--cyan)" id="utc-clock">—</span></div>
+    </div>
+
+  </div>
+
+  <div class="main">
+
+    <!-- Score Banner -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">&#9679; Live Composite Signal</div>
+        <div class="panel-meta" id="comp-market">—</div>
+      </div>
+      <div class="score-banner">
+        <div>
+          <div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px">Composite Score</div>
+          <div class="score-big" id="score-big" style="color:var(--text-dim)">—</div>
+          <div style="font-size:10px;color:var(--text-dim);margin-top:4px" id="score-secs">—</div>
+        </div>
+        <div class="score-gauge-wrap">
+          <div class="score-gauge-label"><span>0.0 bearish</span><span>0.5 neutral</span><span>bullish 1.0</span></div>
+          <div class="score-gauge-track" id="gauge-track">
+            <div class="score-gauge-fill" id="gauge-fill" style="width:50%;background:var(--text-dim)"></div>
+            <div class="score-gauge-threshold" id="gauge-th-hi" style="left:57%"></div>
+            <div class="score-gauge-threshold-lo" id="gauge-th-lo" style="left:43%"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text-dim);margin-top:4px">
+            <span>SELL if &lt; 0.43</span><span id="conf-label">—</span><span>BUY if &gt; 0.57</span>
+          </div>
+        </div>
+        <div class="score-decision">
+          <div class="score-side" id="score-side" style="color:var(--text-dim)">—</div>
+          <div class="score-conf" id="score-conf">confidence: —</div>
+          <div class="score-filter" id="score-filter"></div>
+        </div>
+      </div>
+
+      <!-- Signal breakdown -->
+      <div style="padding:8px 0">
+        <div style="display:grid;grid-template-columns:140px 60px 60px 40px 1fr;gap:8px;padding:5px 14px;font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border)">
+          <span>Signal</span><span style="text-align:right">Raw</span><span style="text-align:right">Norm</span><span style="text-align:right">Wt</span><span>Contribution</span>
+        </div>
+        <div id="breakdown-rows"><div class="loading"><span class="spinner"></span>loading...</div></div>
+      </div>
+    </div>
+
+    <!-- Score History Chart -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Score History</div>
+        <div class="panel-meta" id="hist-meta">last 100 cycles</div>
+      </div>
+      <div class="history-svg-wrap">
+        <svg id="hist-svg" viewBox="0 0 900 100" preserveAspectRatio="none"></svg>
+      </div>
+    </div>
+
+    <!-- Would-Trade Log -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Would-Trade Log</div>
+        <div class="panel-meta" id="wt-meta">threshold crossings</div>
+      </div>
+      <div id="wt-table-wrap"><div class="loading"><span class="spinner"></span>loading...</div></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+
+const WEIGHTS = {
+  btc_vs_reference: 0.40, volume_ratio: 0.15, momentum_5m: 0.15,
+  price_acceleration: 0.15, vol_adjusted_momentum: 0.10, momentum_consistency: 0.05,
+};
+const THRESHOLD = 0.57;
+
+setInterval(() => {
+  const n = new Date();
+  document.getElementById('utc-clock').textContent =
+    `${String(n.getUTCHours()).padStart(2,'0')}:${String(n.getUTCMinutes()).padStart(2,'0')}:${String(n.getUTCSeconds()).padStart(2,'0')} UTC`;
+}, 1000);
+
+function fmtRaw(name, v) {
+  if (v == null) return 'n/a';
+  if (name.includes('momentum') || name.includes('reference') || name.includes('acceleration')) return (v >= 0 ? '+' : '') + v.toFixed(3) + '%';
+  if (name === 'volume_ratio') return v.toFixed(2) + 'x';
+  return (v >= 0 ? '+' : '') + v.toFixed(4);
+}
+
+async function fetchComposite() {
+  try {
+    const r = await fetch(`${API}/api/composite`);
+    const d = await r.json();
+    if (d.error) return;
+
+    const score = d.score;
+    const side = d.side;
+    const shouldTrade = d.should_trade;
+    const filter = d.filter_reason;
+
+    // Score big display
+    const bigEl = document.getElementById('score-big');
+    bigEl.textContent = score.toFixed(4);
+    bigEl.style.color = score > THRESHOLD ? 'var(--green)' : score < (1 - THRESHOLD) ? 'var(--red)' : 'var(--text-dim)';
+
+    document.getElementById('score-secs').textContent =
+      d.seconds_remaining ? `${Math.round(d.seconds_remaining)}s remaining` : '';
+
+    // Gauge
+    const pct = Math.round(score * 100);
+    const fill = document.getElementById('gauge-fill');
+    fill.style.width = pct + '%';
+    fill.style.background = score > THRESHOLD ? 'var(--green)' : score < (1 - THRESHOLD) ? 'var(--red)' : 'var(--text-dim)';
+
+    document.getElementById('conf-label').textContent = `confidence: ${(d.confidence * 100).toFixed(0)}%`;
+
+    // Side
+    const sideEl = document.getElementById('score-side');
+    if (shouldTrade && side === 'yes') { sideEl.textContent = '▲ BUY YES'; sideEl.style.color = 'var(--green)'; }
+    else if (shouldTrade && side === 'no') { sideEl.textContent = '▼ BUY NO'; sideEl.style.color = 'var(--red)'; }
+    else { sideEl.textContent = '— NO TRADE'; sideEl.style.color = 'var(--text-dim)'; }
+
+    document.getElementById('score-conf').textContent = `confidence: ${(d.confidence * 100).toFixed(1)}%`;
+    document.getElementById('score-filter').textContent = filter || '';
+
+    document.getElementById('comp-market').textContent = d.market_slug ? d.market_slug.split('-').slice(-1)[0] + ' · ' + new Date(d.ts).toUTCString().slice(17,25) + ' UTC' : '—';
+
+    // Breakdown
+    const bd = d.breakdown || {};
+    const activeSignals = Object.entries(WEIGHTS).filter(([,w]) => w > 0);
+    const rows = activeSignals.map(([name, weight]) => {
+      const info = bd[name] || {};
+      const raw = info.raw;
+      const norm = info.normalized;
+      const contrib = norm != null ? (norm - 0.5) * weight : null;
+      const barPct = norm != null ? Math.round(Math.abs(norm - 0.5) / 0.5 * 100) : 0;
+      const barColor = norm != null ? (norm > 0.5 ? 'var(--green)' : 'var(--red)') : 'var(--text-dim)';
+      const normColor = norm == null ? 'var(--text-dim)' : norm > 0.55 ? 'var(--green)' : norm < 0.45 ? 'var(--red)' : 'var(--text)';
+      return `<div class="breakdown-row">
+        <span class="breakdown-name">${name}</span>
+        <span class="breakdown-raw">${fmtRaw(name, raw)}</span>
+        <span class="breakdown-norm" style="color:${normColor}">${norm != null ? norm.toFixed(3) : '—'}</span>
+        <span class="breakdown-wt">${(weight * 100).toFixed(0)}%</span>
+        <div class="breakdown-bar-track">
+          <div class="breakdown-bar-fill" style="width:${barPct}%;background:${barColor}"></div>
+        </div>
+      </div>`;
+    }).join('');
+    document.getElementById('breakdown-rows').innerHTML = rows || '<div class="loading">no data</div>';
+
+    document.getElementById('last-update').textContent = `updated ${new Date().toUTCString().slice(17,25)} UTC`;
+  } catch(e) {}
+}
+
+async function fetchScoreHistory() {
+  try {
+    const r = await fetch(`${API}/api/score-history`);
+    const rows = await r.json();
+    if (!rows.length) return;
+
+    // Update sidebar stats
+    const total = rows.length;
+    const wouldTrade = rows.filter(r => r.should_trade).length;
+    document.getElementById('ss-cycles').textContent = total;
+    document.getElementById('ss-would').textContent = wouldTrade;
+    document.getElementById('ss-rate').textContent = total > 0 ? Math.round(wouldTrade / total * 100) + '%' : '—';
+    const avgScore = rows.reduce((s, r) => s + r.score, 0) / total;
+    document.getElementById('ss-avg').textContent = avgScore.toFixed(3);
+
+    // Top block reason
+    const blocks = rows.filter(r => !r.should_trade && r.filter_reason).map(r => r.filter_reason);
+    if (blocks.length) {
+      const freq = {};
+      blocks.forEach(b => {
+        const key = b.split('(')[0].trim();
+        freq[key] = (freq[key] || 0) + 1;
+      });
+      const top = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
+      document.getElementById('ss-block').textContent = top ? top[0] : '—';
+    }
+
+    document.getElementById('hist-meta').textContent = `${total} cycles`;
+
+    // Draw SVG history
+    const svg = document.getElementById('hist-svg');
+    const W = 900, H = 100, PAD = 6;
+    const n = rows.length;
+    const toX = i => PAD + (i / Math.max(n - 1, 1)) * (W - PAD * 2);
+    const toY = s => H - PAD - (s * (H - PAD * 2));
+
+    const thHiY = toY(THRESHOLD);
+    const thLoY = toY(1 - THRESHOLD);
+    const pts = rows.map((r, i) => `${toX(i)},${toY(r.score)}`).join(' ');
+
+    const dots = rows.filter(r => r.should_trade).map((r, _, arr) => {
+      const idx = rows.indexOf(r);
+      const color = r.side === 'yes' ? '#00e676' : '#ff3d57';
+      return `<circle cx="${toX(idx)}" cy="${toY(r.score)}" r="3" fill="${color}" opacity="0.8"/>`;
+    }).join('');
+
+    svg.innerHTML = `
+      <rect x="0" y="${thLoY}" width="${W}" height="${thHiY - thLoY}" fill="rgba(255,255,255,0.02)"/>
+      <line x1="0" y1="${thHiY}" x2="${W}" y2="${thHiY}" stroke="rgba(0,230,118,0.3)" stroke-width="1" stroke-dasharray="4,4"/>
+      <line x1="0" y1="${thLoY}" x2="${W}" y2="${thLoY}" stroke="rgba(255,61,87,0.3)" stroke-width="1" stroke-dasharray="4,4"/>
+      <line x1="0" y1="${toY(0.5)}" x2="${W}" y2="${toY(0.5)}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <polyline points="${pts}" fill="none" stroke="var(--cyan)" stroke-width="1.5" stroke-linejoin="round" opacity="0.7"/>
+      ${dots}
+      <text x="4" y="${thHiY - 3}" fill="rgba(0,230,118,0.5)" font-size="8">BUY</text>
+      <text x="4" y="${thLoY + 10}" fill="rgba(255,61,87,0.5)" font-size="8">SELL</text>
+    `;
+
+    // Would-trade log table
+    const wtWrap = document.getElementById('wt-table-wrap');
+    const trades = [...rows].reverse().filter(r => r.should_trade).slice(0, 30);
+    document.getElementById('wt-meta').textContent = `${wouldTrade} crossings in last ${total} cycles`;
+
+    if (!trades.length) {
+      wtWrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-dim)">
+        <div style="font-size:13px;color:var(--text);margin-bottom:6px">No threshold crossings yet</div>
+        Score has not exceeded ${THRESHOLD} — model is filtering. Check filter reasons above.
+      </div>`;
+      return;
+    }
+
+    wtWrap.innerHTML = `<table>
+      <thead><tr>
+        <th>Time (UTC)</th><th>Window</th><th>Signal</th><th class="right">Score</th>
+        <th class="right">vs Ref</th><th class="right">Secs</th><th class="right">Outcome</th>
+      </tr></thead>
+      <tbody>${trades.map(row => {
+        const t = row.ts ? row.ts.slice(11,19) : '—';
+        const slug = row.market_slug || '—';
+        const pillCls = row.side === 'yes' ? 'yes' : 'no';
+        const pillLabel = row.side === 'yes' ? '▲ YES' : '▼ NO';
+        const vsRef = row.btc_vs_reference;
+        const vsStr = vsRef != null ? (vsRef >= 0 ? '+' : '') + vsRef.toFixed(3) + '%' : '—';
+        const vsColor = vsRef > 0.02 ? 'var(--green)' : vsRef != null && vsRef < -0.02 ? 'var(--red)' : 'var(--text-dim)';
+        const outcome = row.outcome;
+        const outcomeStr = outcome === 'up' ? '▲' : outcome === 'down' ? '▼' : row.resolved ? '?' : '…';
+        const outcomeColor = outcome === 'up' ? 'var(--green)' : outcome === 'down' ? 'var(--red)' : 'var(--text-dim)';
+        return `<tr>
+          <td style="color:var(--text-dim)">${t}</td>
+          <td style="color:var(--text);font-size:10px">${slug.split('-').slice(-1)[0]}</td>
+          <td><span class="wt-pill ${pillCls}">${pillLabel}</span></td>
+          <td class="right" style="color:var(--cyan)">${row.score.toFixed(4)}</td>
+          <td class="right" style="color:${vsColor}">${vsStr}</td>
+          <td class="right" style="color:var(--text-dim)">${row.seconds_remaining ? Math.round(row.seconds_remaining) + 's' : '—'}</td>
+          <td class="right" style="color:${outcomeColor};font-weight:700">${outcomeStr}</td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+
+    // Sidebar weights
+    const wBars = document.getElementById('weights-bars');
+    wBars.innerHTML = Object.entries(WEIGHTS).filter(([,w]) => w > 0).map(([name, w]) => `
+      <div class="wt-bar-row">
+        <div class="wt-bar-label">
+          <span style="color:var(--text-dim)">${name}</span>
+          <span style="color:var(--amber)">${(w * 100).toFixed(0)}%</span>
+        </div>
+        <div class="wt-bar-track"><div class="wt-bar-fill" style="width:${w * 100}%"></div></div>
+      </div>`).join('');
+  } catch(e) {}
+}
+
+async function refresh() {
+  await Promise.all([fetchComposite(), fetchScoreHistory()]);
+}
+
+refresh();
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>
