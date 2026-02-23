@@ -46,11 +46,11 @@ from urllib.error import HTTPError, URLError
 # ─────────────────────────────────────────────
 
 DEFAULT_WEIGHTS = {
-    "btc_vs_reference":      0.30,  # (price_now - priceToBeat) / priceToBeat — direct outcome signal
-    "order_imbalance":       0.20,
+    "btc_vs_reference":      0.40,  # (price_now - priceToBeat) / priceToBeat — direct outcome signal (+0.42 corr)
+    "order_imbalance":       0.00,  # negative edge in empirical data (-0.17) — excluded
     "trade_flow_ratio":      0.15,
-    "momentum_5m":           0.15,
-    "cex_poly_lag":          0.10,
+    "momentum_5m":           0.20,  # +0.22 corr, increased from 0.15
+    "cex_poly_lag":          0.15,  # +0.23 corr, increased from 0.10
     "momentum_consistency":  0.05,
     "vol_adjusted_momentum": 0.05,
 }
@@ -58,7 +58,7 @@ DEFAULT_WEIGHTS = {
 # Thresholds
 COMPOSITE_ENTRY_THRESHOLD = 0.55   # composite score must exceed this to signal a trade
                                    # (0.5 = no edge, 1.0 = maximum conviction)
-MIN_MOMENTUM_ABS = 0.15            # minimum |momentum_5m| to consider (filter noise)
+MIN_MOMENTUM_ABS = 0.05            # minimum |momentum_5m| to consider (filter noise)
 MAX_VOLATILITY_5M = 2.0            # skip if volatility too high (chaotic market)
 MIN_POLY_SPREAD = 0.10             # skip if Polymarket spread is very wide (illiquid)
 RSI_OVERBOUGHT = 72                # avoid chasing already-overbought

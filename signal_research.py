@@ -422,9 +422,11 @@ def derive_combo_signals(cex, poly, price_to_beat=None):
     """Derive cross-signal features."""
     derived = {}
 
-    # CEX/Poly lag: how much of the CEX signal is NOT yet in Polymarket pricing
+    # CEX/Poly lag: how much of the CEX signal is NOT yet in Polymarket pricing.
+    # Formula matches composite_signal.py to keep stored values consistent with scoring.
     if cex.get("momentum_5m") is not None and poly.get("poly_divergence") is not None:
-        derived["cex_poly_lag"] = cex["momentum_5m"] * (1.0 - poly["poly_divergence"] * 2)
+        poly_div = poly["poly_divergence"]
+        derived["cex_poly_lag"] = cex["momentum_5m"] * (0.15 - max(-0.15, min(0.15, poly_div))) / 0.15
 
     # BTC vs reference: (current_price - window_start_price) / window_start_price * 100
     # This is the direct answer to "is Bitcoin up or down since the window started?"
