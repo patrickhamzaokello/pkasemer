@@ -135,7 +135,7 @@ def fetch_binance_orderbook(symbol="BTCUSDT", limit=20):
     return _get(url)
 
 
-def fetch_binance_recent_trades(symbol="BTCUSDT", limit=100):
+def fetch_binance_recent_trades(symbol="BTCUSDT", limit=500):  # was 100
     url = f"{BINANCE_TRADES}?symbol={symbol}&limit={limit}"
     return _get(url)
 
@@ -250,9 +250,9 @@ def extract_cex_signals(symbol="BTCUSDT"):
 
     if k5 and len(k5) >= 2:
         closes_5m = [float(c[4]) for c in k5]
-        opens_5m = [float(c[1]) for c in k5]
 
-        signals["momentum_5m"] = (closes_5m[-1] - opens_5m[0]) / opens_5m[0] * 100
+        # Last close vs previous close = actual 5-minute price change
+        signals["momentum_5m"] = (closes_5m[-1] - closes_5m[-2]) / closes_5m[-2] * 100
 
         returns_5m = [(closes_5m[i] - closes_5m[i-1]) / closes_5m[i-1]
                       for i in range(1, len(closes_5m))]
@@ -267,8 +267,8 @@ def extract_cex_signals(symbol="BTCUSDT"):
     k15 = fetch_binance_klines(symbol, "15m", 5)
     if k15 and len(k15) >= 2:
         closes_15m = [float(c[4]) for c in k15]
-        opens_15m = [float(c[1]) for c in k15]
-        signals["momentum_15m"] = (closes_15m[-1] - opens_15m[0]) / opens_15m[0] * 100
+        # Last close vs previous close = actual 15-minute price change
+        signals["momentum_15m"] = (closes_15m[-1] - closes_15m[-2]) / closes_15m[-2] * 100
 
     # Vol-adjusted momentum
     if signals.get("momentum_5m") and signals.get("volatility_5m") and signals["volatility_5m"] > 0:
@@ -290,7 +290,7 @@ def extract_cex_signals(symbol="BTCUSDT"):
         signals["order_imbalance"] = calc_order_imbalance(bids, asks)
 
     # Trade flow
-    trades = fetch_binance_recent_trades(symbol, 100)
+    trades = fetch_binance_recent_trades(symbol, 500)
     if trades:
         signals["trade_flow_ratio"] = calc_trade_flow_ratio(trades)
 
@@ -608,7 +608,6 @@ def _is_valid_market(gamma_mkt):
 
 
 def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
-    """Collect one round of signal observations for the best active fast market."""
     from fast_trader import discover_fast_market_markets, find_best_fast_market
 
     markets = discover_fast_market_markets(asset, window)
@@ -624,13 +623,11 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
     cond_id = best.get("condition_id", "")
     now = datetime.now(timezone.utc)
 
-    # end_time already parsed correctly by discover_fast_market_markets — use it directly
     end_time = best.get("end_time")
     if not end_time:
         print(f"[{_now()}] SKIP: no end_time on best market")
         return
 
-    # Quick sanity check using the already-parsed end_time
     expired_secs = (now - end_time).total_seconds()
     if expired_secs > 600:
         print(f"[{_now()}] SKIP: market ended {expired_secs/60:.0f}m ago — {best.get('slug','')[:50]}")
@@ -638,19 +635,29 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
 
     seconds_remaining = (end_time - now).total_seconds()
 
-    # Fetch gamma market for poly signals — but DON'T use it for end_time
+    # Fetch gamma market for poly signals
     gamma_mkt = fetch_poly_market(cond_id) if cond_id else None
 
-    # Fetch signals
+    # ── CLOB FIX: extract YES token ID from clobTokenIds ──────────────────
+    clob_token_id = cond_id  # fallback
+    if gamma_mkt:
+        try:
+            token_ids = json.loads(gamma_mkt.get("clobTokenIds", "[]"))
+            if token_ids:
+                clob_token_id = token_ids[0]  # index 0 = YES token
+        except (json.JSONDecodeError, IndexError, TypeError):
+            pass
+    # ──────────────────────────────────────────────────────────────────────
+
     cex = extract_cex_signals(symbol)
-    poly = extract_poly_signals(cond_id, gamma_mkt)
+    poly = extract_poly_signals(clob_token_id, gamma_mkt)  # <-- use token, not cond_id
     derived = derive_combo_signals(cex, poly)
     all_signals = {**cex, **poly, **derived}
 
     row = {
         "ts": now.isoformat(),
         "market_slug": best.get("slug", ""),
-        "market_condition_id": cond_id,
+        "market_condition_id": cond_id,  # keep storing conditionId for resolution
         "seconds_remaining": seconds_remaining,
         "price_now": all_signals.get("price_now"),
         **{k: all_signals.get(k) for k in SIGNAL_COLUMNS if k != "seconds_remaining"},
@@ -682,9 +689,10 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
     oi = all_signals.get("order_imbalance", 0) or 0
     tfr = all_signals.get("trade_flow_ratio", 0.5) or 0.5
     rsi = all_signals.get("rsi_14") or 0
+    clob_ok = "✓" if clob_token_id != cond_id else "✗"
     print(f"[{_now()}] {best['question'][:45]:45} | "
           f"m5={m5:+.3f}% poly={poly_p:.3f} lag={lag:+.3f} "
-          f"OI={oi:+.3f} TFR={tfr:.2f} RSI={rsi:.0f} secs={seconds_remaining:.0f}")
+          f"OI={oi:+.3f} TFR={tfr:.2f} RSI={rsi:.0f} secs={seconds_remaining:.0f} clob={clob_ok} tokenid={clob_token_id}")
 
 
 def _now():

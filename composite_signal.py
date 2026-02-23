@@ -59,7 +59,7 @@ COMPOSITE_ENTRY_THRESHOLD = 0.55   # composite score must exceed this to signal 
                                    # (0.5 = no edge, 1.0 = maximum conviction)
 MIN_MOMENTUM_ABS = 0.15            # minimum |momentum_5m| to consider (filter noise)
 MAX_VOLATILITY_5M = 2.0            # skip if volatility too high (chaotic market)
-MIN_POLY_SPREAD = 0.02             # skip if Polymarket spread is very wide (illiquid)
+MIN_POLY_SPREAD = 0.10             # skip if Polymarket spread is very wide (illiquid)
 RSI_OVERBOUGHT = 72                # avoid chasing already-overbought
 RSI_OVERSOLD = 28                  # avoid chasing already-oversold
 

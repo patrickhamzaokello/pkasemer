@@ -325,9 +325,12 @@ def discover_fast_market_markets(asset="BTC", window="5m"):
 
 def find_best_fast_market(markets):
     """
-    Pick the best market to trade: soonest-expiring with enough time remaining.
-    Uses event_start to gate on window proximity (must be within 15 min).
-    No upper cap on end_time — Polymarket runs 24/7 on weekdays.
+    Pick the best market to trade.
+    
+    Strategy:
+    - If current window has > 60s left AND event_start has passed → trade it
+    - Otherwise prefer the NEXT window (300s out) so we enter fresh
+    - Never trade with < MIN_TIME_REMAINING seconds left
     """
     now = datetime.now(timezone.utc)
     candidates = []
@@ -339,25 +342,40 @@ def find_best_fast_market(markets):
         if not end_time:
             continue
 
-        # If we have event_start, only trade if price window opens within 15 min
-        if event_start:
-            secs_until_start = (event_start - now).total_seconds()
-            if secs_until_start > 900:  # 15 min
-                continue
-
         remaining = (end_time - now).total_seconds()
 
-        # Must have at least MIN_TIME_REMAINING seconds before resolution
+        # Hard floor — never enter a dying market
         if remaining < MIN_TIME_REMAINING:
             continue
 
-        candidates.append((remaining, m))
+        # If event_start is in the future, market window hasn't opened yet
+        # Still include it but note it as "pending"
+        window_open = True
+        secs_until_start = 0
+        if event_start:
+            secs_until_start = (event_start - now).total_seconds()
+            if secs_until_start > 900:  # more than 15 min away — skip entirely
+                continue
+            if secs_until_start > 0:
+                window_open = False  # window not yet open, but within 15 min
+
+        # Score: prefer open windows with substantial time remaining
+        # Windows with > 120s remaining score higher than near-expiry ones
+        # Pending windows (not yet open) score slightly lower than active ones
+        if window_open and remaining > 120:
+            score = remaining  # more time = better, up to a point
+        elif window_open:
+            score = remaining * 0.5  # less than 2 min — deprioritise
+        else:
+            score = remaining * 0.8  # window opening soon — decent
+
+        candidates.append((score, m))
 
     if not candidates:
         return None
 
-    # Soonest expiring = most urgent = freshest momentum signal
-    candidates.sort(key=lambda x: x[0])
+    # Highest score wins
+    candidates.sort(key=lambda x: x[0], reverse=True)
     return candidates[0][1]
 
 
@@ -609,7 +627,16 @@ def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=Fal
         return
 
     gamma_market = fetch_poly_market(best.get("condition_id", ""))
-    poly_signals = extract_poly_signals(best.get("condition_id", ""), gamma_market)
+    # CLOB requires YES token ID, not condition ID — extract from clobTokenIds
+    clob_token_id = best.get("condition_id", "")
+    if gamma_market:
+        try:
+            token_ids = json.loads(gamma_market.get("clobTokenIds", "[]"))
+            if token_ids:
+                clob_token_id = token_ids[0]
+        except (json.JSONDecodeError, IndexError, TypeError):
+            pass
+    poly_signals = extract_poly_signals(clob_token_id, gamma_market)
 
     log(f"  m5={cex_signals.get('momentum_5m', 0):+.3f}%  "
         f"OI={cex_signals.get('order_imbalance', 0):+.3f}  "
