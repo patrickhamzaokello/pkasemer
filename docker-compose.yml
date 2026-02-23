@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
 
-  # ── Signal collector (runs during US market hours only) ───────────────────
+  # ── Signal collector + trader (24/7) ─────────────────────────────────────
   collector:
     build: .
     container_name: fastloop-collector

@@ -1,6 +1,6 @@
 {
   "entry_threshold": 0.05,
-  "min_momentum_pct": 0.15,
+  "min_momentum_pct": 0.05,
   "max_position": 5.0,
   "lookback_minutes": 5,
   "min_time_remaining": 30,
@@ -10,13 +10,16 @@
   "signal_source": "binance",
   "volume_confidence": true,
   "daily_budget": 5.0,
-  "composite_threshold": 0.60,
+  "composite_threshold": 0.57,
   "signal_weights": {
-    "order_imbalance": 0.25,
-    "trade_flow_ratio": 0.20,
-    "momentum_5m": 0.20,
-    "cex_poly_lag": 0.15,
-    "momentum_consistency": 0.10,
-    "vol_adjusted_momentum": 0.10
+    "btc_vs_reference":      0.40,
+    "volume_ratio":          0.15,
+    "momentum_5m":           0.15,
+    "vol_adjusted_momentum": 0.10,
+    "cex_poly_lag":          0.10,
+    "price_acceleration":    0.05,
+    "momentum_consistency":  0.05,
+    "trade_flow_ratio":      0.00,
+    "order_imbalance":       0.00
   }
 }
