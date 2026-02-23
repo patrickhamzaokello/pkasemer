@@ -574,49 +574,37 @@ def export_csv(conn, path):
 
 def _is_valid_market(gamma_mkt):
     """
-    Validate that a Gamma market is a real, recently-created fast market.
-    Rejects ghost markets (closedTime from 2020), untraded markets, and
-    markets that closed before today.
+    Validate a Gamma market record is current and tradeable.
+    Only trusts endDate with a full ISO timestamp (contains 'T').
+    Never uses createdAt — unreliable for recurring markets.
     """
     if not gamma_mkt:
         return False, "no gamma data"
 
-    # Ghost market check: closedTime should be recent, not 2020
-    closed_time_raw = gamma_mkt.get("closedTime")
-    if closed_time_raw:
-        try:
-            ct = datetime.fromisoformat(str(closed_time_raw).replace(" ", "T").split(".")[0] + "+00:00")
-            age_days = (datetime.now(timezone.utc) - ct).days
-            if age_days > 2:
-                return False, f"ghost market (closedTime={closed_time_raw})"
-        except ValueError:
-            pass
+    now = datetime.now(timezone.utc)
 
-    # Must have been created recently (within last 2 days)
-    created_raw = gamma_mkt.get("createdAt")
-    if created_raw:
-        try:
-            ct = datetime.fromisoformat(str(created_raw).replace(" ", "T").split(".")[0] + "+00:00")
-            age_days = (datetime.now(timezone.utc) - ct).days
-            if age_days > 2:
-                return False, f"market too old (createdAt={created_raw})"
-        except ValueError:
-            pass
-
-    # endDate must be in the future or very recent (within last hour)
-    for key in ("endDate", "endDateIso", "end_date"):
+    # Try fields in order of reliability — endDate first, it has the full timestamp
+    for key in ("endDate", "end_date"):
         raw = gamma_mkt.get(key)
-        if raw:
+        if raw and "T" in str(raw):
             try:
-                end = datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
-                age_minutes = (datetime.now(timezone.utc) - end).total_seconds() / 60
-                if age_minutes > 60:
-                    return False, f"market ended {age_minutes:.0f}m ago"
-                break
-            except ValueError:
-                pass
+                end = datetime.fromisoformat(
+                    str(raw).replace("Z", "+00:00")
+                ).astimezone(timezone.utc)
 
-    return True, "ok"
+                expired_secs = (now - end).total_seconds()
+                if expired_secs > 600:
+                    return False, f"market ended {expired_secs/60:.0f}m ago"
+
+                future_secs = (end - now).total_seconds()
+                if future_secs > 900:
+                    return False, f"market resolves in {future_secs/60:.0f}m (too far ahead)"
+
+                return True, "ok"
+            except ValueError:
+                continue
+
+    return False, "no endDate with full timestamp found"
 
 
 def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
@@ -636,30 +624,22 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
     cond_id = best.get("condition_id", "")
     now = datetime.now(timezone.utc)
 
-    # Fetch gamma market first — used for end_time, validation, and poly signals
-    gamma_mkt = fetch_poly_market(cond_id) if cond_id else None
-
-    # Validate market is real and current (rejects ghost markets)
-    valid, reason = _is_valid_market(gamma_mkt)
-    if not valid:
-        print(f"[{_now()}] SKIP: {reason} — {best.get('slug', '')[:50]}")
+    # end_time already parsed correctly by discover_fast_market_markets — use it directly
+    end_time = best.get("end_time")
+    if not end_time:
+        print(f"[{_now()}] SKIP: no end_time on best market")
         return
 
-    # Prefer endDate from the API (reliable ISO timestamp) over regex-parsed end_time
-    end_time = None
-    if gamma_mkt:
-        for key in ("endDate", "end_date", "endDateIso", "end_date_iso"):
-            raw = gamma_mkt.get(key)
-            if raw:
-                try:
-                    end_time = datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
-                    break
-                except ValueError:
-                    pass
-    if end_time is None:
-        end_time = best.get("end_time")  # fallback to regex-parsed value
+    # Quick sanity check using the already-parsed end_time
+    expired_secs = (now - end_time).total_seconds()
+    if expired_secs > 600:
+        print(f"[{_now()}] SKIP: market ended {expired_secs/60:.0f}m ago — {best.get('slug','')[:50]}")
+        return
 
-    seconds_remaining = (end_time - now).total_seconds() if end_time else 0
+    seconds_remaining = (end_time - now).total_seconds()
+
+    # Fetch gamma market for poly signals — but DON'T use it for end_time
+    gamma_mkt = fetch_poly_market(cond_id) if cond_id else None
 
     # Fetch signals
     cex = extract_cex_signals(symbol)
@@ -672,7 +652,7 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
         "market_slug": best.get("slug", ""),
         "market_condition_id": cond_id,
         "seconds_remaining": seconds_remaining,
-        "price_now": all_signals.get("price_now"),  # explicit — not in SIGNAL_COLUMNS
+        "price_now": all_signals.get("price_now"),
         **{k: all_signals.get(k) for k in SIGNAL_COLUMNS if k != "seconds_remaining"},
     }
 
@@ -702,12 +682,9 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
     oi = all_signals.get("order_imbalance", 0) or 0
     tfr = all_signals.get("trade_flow_ratio", 0.5) or 0.5
     rsi = all_signals.get("rsi_14") or 0
-    time_src = "api" if end_time and gamma_mkt and any(
-        gamma_mkt.get(k) for k in ("endDate", "end_date", "endDateIso")
-    ) else "regex"
     print(f"[{_now()}] {best['question'][:45]:45} | "
           f"m5={m5:+.3f}% poly={poly_p:.3f} lag={lag:+.3f} "
-          f"OI={oi:+.3f} TFR={tfr:.2f} RSI={rsi:.0f} secs={seconds_remaining:.0f} [{time_src}]")
+          f"OI={oi:+.3f} TFR={tfr:.2f} RSI={rsi:.0f} secs={seconds_remaining:.0f}")
 
 
 def _now():

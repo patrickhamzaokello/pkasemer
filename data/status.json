@@ -1,12 +1,22 @@
 {
-  "ts": "2026-02-22T22:35:34.885259+00:00",
-  "cycle": 0,
+  "ts": "2026-02-23T16:13:08.231789+00:00",
+  "cycle": 302,
   "mode": "collect",
   "asset": "BTC",
   "window": "5m",
-  "market_open": false,
-  "market_status": "CLOSED (Sunday) \u2014 opens in 15h 54m",
-  "last_action": "waiting \u2014 CLOSED (Sunday) \u2014 opens in 15h 54m",
+  "market_open": true,
+  "market_status": "OPEN \u2014 closes in 287m (21:00 UTC)",
+  "last_action": "collect ok @ 16:13:07",
   "interval_s": 20,
-  "db_error": "no such table: signal_observations"
+  "db": {
+    "total": 0,
+    "resolved": 0,
+    "unresolved": 0,
+    "outcomes": {
+      "up": 0,
+      "down": 0,
+      "unclear": 0
+    }
+  },
+  "recent": []
 }

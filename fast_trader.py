@@ -26,6 +26,17 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, quote
 from composite_signal import get_composite_signal
 from signal_research import extract_cex_signals, extract_poly_signals, fetch_poly_market
+import time
+from datetime import datetime, timezone
+
+# Coin slugs exactly as Polymarket uses them
+COIN_SLUGS = {
+    "BTC": "btc",
+    "ETH": "eth", 
+    "SOL": "sol",
+    "XRP": "xrp",
+}
+
 
 # Force line-buffered stdout for non-TTY environments (cron, Docker, OpenClaw)
 sys.stdout.reconfigure(line_buffering=True)
@@ -74,6 +85,23 @@ ASSET_PATTERNS = {
     "ETH": ["ethereum up or down"],
     "SOL": ["solana up or down"],
 }
+
+def get_fast_market_slugs(asset="BTC", include_next=True):
+    """
+    Generate Polymarket 5m fast market slugs using Unix timestamp bucketing.
+    Format: {coin}-updown-5m-{unix_ts_rounded_to_5min}
+    
+    Returns current bucket slug and optionally the next one.
+    """
+    now = int(time.time())
+    current_bucket = (now // 300) * 300
+    next_bucket = current_bucket + 300
+
+    coin = COIN_SLUGS.get(asset.upper(), asset.lower())
+    slugs = [f"{coin}-updown-5m-{current_bucket}"]
+    if include_next:
+        slugs.append(f"{coin}-updown-5m-{next_bucket}")
+    return slugs
 
 
 def _load_config(schema, skill_file, config_filename="config.json"):
@@ -217,67 +245,47 @@ def _api_request(url, method="GET", data=None, headers=None, timeout=15):
 # =============================================================================
 
 def discover_fast_market_markets(asset="BTC", window="5m"):
-    """
-    Find active BTC fast markets via Polymarket events endpoint.
-    Uses eventStartTime to filter — only returns markets whose price
-    observation window opens within the next 15 minutes or has already started.
-    Polymarket runs these 24/7 on weekdays.
-    """
-    patterns = ASSET_PATTERNS.get(asset, ASSET_PATTERNS["BTC"])
     now = datetime.now(timezone.utc)
-
-    # Events endpoint recommended by Polymarket docs — order by end_date ascending
-    url = (
-        "https://gamma-api.polymarket.com/events"
-        "?active=true&closed=false&limit=50&order=end_date&ascending=true"
-    )
-    result = _api_request(url)
-    if not result or (isinstance(result, dict) and result.get("error")):
-        return []
-
     markets = []
-    for event in result:
-        event_markets = event.get("markets") or []
-        if not event_markets:
+
+    for slug in get_fast_market_slugs(asset, include_next=True):
+        gamma_url = f"https://gamma-api.polymarket.com/events?slug={slug}"
+        result = _api_request(gamma_url)
+
+        if not result or isinstance(result, dict) or len(result) == 0:
             continue
 
-        for m in event_markets:
-            q = (m.get("question") or event.get("title") or "").lower()
-            slug = m.get("slug") or event.get("slug") or ""
+        event = result[0]
 
-            # Must match asset pattern and window size in slug
-            if not (any(p in q for p in patterns) and f"-{window}-" in slug):
+        # eventStartTime is on the EVENT object, not the market
+        event_start = None
+        for key in ("startTime", "eventStartTime"):
+            raw = event.get(key)
+            if raw and "T" in str(raw):
+                try:
+                    event_start = datetime.fromisoformat(
+                        raw.replace("Z", "+00:00")
+                    ).astimezone(timezone.utc)
+                    break
+                except ValueError:
+                    pass
+
+        # Skip if start is more than 15 min away (market not yet tradeable)
+        if event_start:
+            secs_until_start = (event_start - now).total_seconds()
+            if secs_until_start > 900:
                 continue
 
-            # Skip closed markets
+        for m in (event.get("markets") or []):
             if m.get("closed", False):
                 continue
-
-            # Skip markets not yet open for orders
             if not m.get("acceptingOrders", True):
                 continue
 
-            condition_id = m.get("conditionId", "")
-
-            # event_start: when the price observation window opens
-            # Only use eventStartTime or startTime — never endDate as proxy
-            event_start = None
-            for key in ("eventStartTime", "startTime"):
-                raw = m.get(key) or event.get(key)
-                if raw:
-                    try:
-                        event_start = datetime.fromisoformat(
-                            raw.replace("Z", "+00:00")
-                        ).astimezone(timezone.utc)
-                        break
-                    except ValueError:
-                        pass
-
-            # end_time: when market resolves
-            # Require full ISO timestamp (must contain "T") — reject date-only strings
+            # endDate is on the MARKET object with full ISO timestamp
             end_time = None
-            for key in ("endDate", "end_date"):
-                raw = m.get(key) or event.get(key)
+            for key in ("endDate",):
+                raw = m.get(key)
                 if raw and "T" in str(raw):
                     try:
                         end_time = datetime.fromisoformat(
@@ -287,57 +295,32 @@ def discover_fast_market_markets(asset="BTC", window="5m"):
                     except ValueError:
                         pass
 
-            # Filter: skip markets whose price window is more than 15 min away
-            if event_start:
-                mins_until_start = (event_start - now).total_seconds() / 60
-                if mins_until_start > 15:
-                    continue
-
-            # Filter: skip markets that resolved more than 5 min ago
-            if end_time and (now - end_time).total_seconds() > 300:
+            if not end_time:
                 continue
 
-            # Last resort: regex parse from title (fallback only)
-            if end_time is None:
-                end_time = _parse_fast_market_end_time(
-                    m.get("question") or event.get("title") or ""
-                )
-                if end_time is None:
-                    continue  # cannot determine timing — skip
+            # Skip if expired more than 5 min ago
+            if (now - end_time).total_seconds() > 300:
+                continue
+
+            # Parse fee rate — real field is makerBaseFee (bps)
+            fee_bps = int(
+                m.get("makerBaseFee") or
+                m.get("feeRateBps") or
+                m.get("fee_rate_bps") or 0
+            )
 
             markets.append({
-                "question":      m.get("question") or event.get("title") or "",
-                "slug":          slug,
-                "condition_id":  condition_id,
-                "end_time":      end_time,
-                "event_start":   event_start,
-                "outcomes":      m.get("outcomes", []),
-                "outcome_prices":m.get("outcomePrices", "[]"),
-                "fee_rate_bps":  int(m.get("fee_rate_bps") or m.get("feeRateBps") or 0),
+                "question":       m.get("question") or event.get("title") or "",
+                "slug":           slug,
+                "condition_id":   m.get("conditionId", ""),
+                "end_time":       end_time,
+                "event_start":    event_start,
+                "outcomes":       m.get("outcomes", []),
+                "outcome_prices": m.get("outcomePrices", "[]"),
+                "fee_rate_bps":   fee_bps,
             })
 
     return markets
-
-
-def _parse_fast_market_end_time(question):
-    """
-    Fallback: parse end time from question title.
-    e.g. 'Bitcoin Up or Down - February 15, 5:30AM-5:35AM ET' → datetime
-    """
-    import re
-    pattern = r'(\w+ \d+),.*?-\s*(\d{1,2}:\d{2}(?:AM|PM))\s*ET'
-    match = re.search(pattern, question)
-    if not match:
-        return None
-    try:
-        date_str = match.group(1)
-        time_str = match.group(2)
-        year = datetime.now(timezone.utc).year
-        dt = datetime.strptime(f"{date_str} {year} {time_str}", "%B %d %Y %I:%M%p")
-        # ET = UTC-5 (conservative; EDT would be UTC-4)
-        return dt.replace(tzinfo=timezone.utc) + timedelta(hours=5)
-    except Exception:
-        return None
 
 
 def find_best_fast_market(markets):
