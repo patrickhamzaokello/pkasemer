@@ -350,9 +350,10 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
     else:
         result["filter_reason"] = f"score {score:.3f} within neutral band (threshold ±{threshold - 0.5:.3f})"
 
-    # Position sizing: scale linearly with confidence, squared to be conservative
-    # confidence=0.5 → 25% of max, confidence=1.0 → 100% of max
-    result["position_pct"] = confidence ** 2
+    # Position sizing: linear with confidence.
+    # confidence=0.10 → 10% of max, confidence=0.44 → 44% of max ($2.20 at $5 budget)
+    # Quadratic was too conservative — blocked valid trades below minimum order size.
+    result["position_pct"] = confidence
 
     return result
 
