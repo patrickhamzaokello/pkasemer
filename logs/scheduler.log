@@ -522,3 +522,26 @@
 2026-02-23T17:04:04Z [INFO] [cycle 19] OPEN — closes in 236m (21:00 UTC)
 2026-02-23T17:04:27Z [INFO] [cycle 20] OPEN — closes in 236m (21:00 UTC)
 2026-02-23T17:04:50Z [INFO] [cycle 21] OPEN — closes in 235m (21:00 UTC)
+2026-02-23T17:05:13Z [INFO] [cycle 22] OPEN — closes in 235m (21:00 UTC)
+2026-02-23T17:05:37Z [INFO] [cycle 23] OPEN — closes in 234m (21:00 UTC)
+2026-02-23T17:06:00Z [INFO] [cycle 24] OPEN — closes in 234m (21:00 UTC)
+2026-02-23T17:06:22Z [INFO] [cycle 25] OPEN — closes in 234m (21:00 UTC)
+2026-02-23T17:06:45Z [INFO] [cycle 26] OPEN — closes in 233m (21:00 UTC)
+2026-02-23T17:07:08Z [INFO] [cycle 27] OPEN — closes in 233m (21:00 UTC)
+2026-02-23T17:07:33Z [INFO] [cycle 28] OPEN — closes in 232m (21:00 UTC)
+2026-02-23T17:07:44Z [INFO] Resolved 38 outcomes
+2026-02-23T17:08:04Z [INFO] [cycle 29] OPEN — closes in 232m (21:00 UTC)
+2026-02-23T17:08:27Z [INFO] [cycle 30] OPEN — closes in 232m (21:00 UTC)
+2026-02-23T17:08:33Z [INFO] Received signal 15, shutting down gracefully...
+2026-02-23T17:08:34Z [INFO] Scheduler stopped.
+2026-02-23T17:08:37Z [INFO] ============================================================
+2026-02-23T17:08:37Z [INFO] FastLoop Scheduler starting
+2026-02-23T17:08:37Z [INFO]   Mode:     collect
+2026-02-23T17:08:37Z [INFO]   Asset:    BTC 5m
+2026-02-23T17:08:37Z [INFO]   Interval: 20s
+2026-02-23T17:08:37Z [INFO]   DB:       /data/signal_research.db
+2026-02-23T17:08:37Z [INFO]   Hours:    Mon–Fri 14:30–21:00 UTC
+2026-02-23T17:08:37Z [INFO] ============================================================
+2026-02-23T17:08:37Z [INFO] [cycle 1] OPEN — closes in 231m (21:00 UTC)
+2026-02-23T17:08:44Z [INFO] Received signal 15, shutting down gracefully...
+2026-02-23T17:08:45Z [INFO] Scheduler stopped.

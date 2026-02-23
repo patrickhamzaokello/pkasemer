@@ -312,7 +312,7 @@ def extract_poly_signals(condition_id, gamma_market=None):
         except (ValueError, IndexError, json.JSONDecodeError):
             pass
 
-    # CLOB order book
+    # CLOB order book — authoritative source for live price
     clob = fetch_poly_clob_orderbook(condition_id)
     if clob:
         bids = clob.get("bids", [])
@@ -322,6 +322,11 @@ def extract_poly_signals(condition_id, gamma_market=None):
                 best_bid = float(bids[0].get("price", 0))
                 best_ask = float(asks[0].get("price", 1))
                 signals["poly_spread"] = best_ask - best_bid
+
+                # CLOB midpoint overrides Gamma API outcomePrices (which is stale)
+                mid_price = (best_bid + best_ask) / 2
+                signals["poly_yes_price"] = mid_price
+                signals["poly_divergence"] = mid_price - 0.50
 
                 bid_size = sum(float(b.get("size", 0)) for b in bids[:5])
                 ask_size = sum(float(a.get("size", 0)) for a in asks[:5])
