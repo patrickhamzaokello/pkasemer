@@ -46,7 +46,7 @@ def observations():
                    order_imbalance, trade_flow_ratio, volatility_5m,
                    price_acceleration, poly_yes_price, poly_divergence,
                    cex_poly_lag, momentum_consistency, vol_adjusted_momentum,
-                   price_now
+                   price_now, price_to_beat, btc_vs_reference
             FROM signal_observations
             ORDER BY id DESC LIMIT 200
         """).fetchall()
@@ -71,6 +71,7 @@ def correlations():
             return jsonify({"error": "No resolved observations yet", "data": []})
 
         SIGNAL_COLS = [
+            "btc_vs_reference",
             "momentum_1m", "momentum_5m", "momentum_15m",
             "rsi_14", "volume_ratio", "order_imbalance",
             "trade_flow_ratio", "volatility_5m", "price_acceleration",
@@ -149,7 +150,9 @@ def summary():
                 AVG(order_imbalance) as avg_oi,
                 AVG(trade_flow_ratio) as avg_tfr,
                 AVG(rsi_14) as avg_rsi,
-                AVG(poly_yes_price) as avg_poly
+                AVG(poly_yes_price) as avg_poly,
+                AVG(btc_vs_reference) as avg_vs_ref,
+                AVG(price_now) as avg_price_now
             FROM (SELECT * FROM signal_observations ORDER BY id DESC LIMIT 50)
         """).fetchone()
         conn.close()
@@ -169,6 +172,8 @@ def summary():
                 "trade_flow_ratio": round(recent_avg[2], 4) if recent_avg[2] else None,
                 "rsi_14": round(recent_avg[3], 2) if recent_avg[3] else None,
                 "poly_yes_price": round(recent_avg[4], 4) if recent_avg[4] else None,
+                "btc_vs_reference": round(recent_avg[5], 4) if recent_avg[5] else None,
+                "price_now": round(recent_avg[6], 2) if recent_avg[6] else None,
             }
         })
     except Exception as e:

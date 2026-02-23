@@ -491,22 +491,22 @@
     </div>
 
     <div class="sidebar-section">
-      <div class="section-label">Market Hours</div>
+      <div class="section-label">Clock</div>
       <div class="stat-row">
-        <span class="stat-label">open</span>
-        <span class="stat-val green">14:30 UTC</span>
-      </div>
-      <div class="stat-row">
-        <span class="stat-label">close</span>
-        <span class="stat-val red">21:00 UTC</span>
-      </div>
-      <div class="stat-row">
-        <span class="stat-label">days</span>
-        <span class="stat-val">Mon – Fri</span>
-      </div>
-      <div class="stat-row" style="margin-top:6px">
-        <span class="stat-label">your time now</span>
+        <span class="stat-label">UTC now</span>
         <span class="stat-val cyan" id="utc-clock">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">schedule</span>
+        <span class="stat-val green">24 / 7</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">avg BTC price</span>
+        <span class="stat-val amber" id="s-btc-price">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">avg vs ref</span>
+        <span class="stat-val" id="s-vs-ref">—</span>
       </div>
     </div>
 
@@ -581,13 +581,6 @@ setInterval(() => {
   document.getElementById('utc-clock').textContent = `${h}:${m}:${s} UTC`;
 }, 1000);
 
-function isMarketOpen() {
-  const now = new Date();
-  const day = now.getUTCDay(); // 0=Sun, 6=Sat
-  if (day === 0 || day === 6) return false;
-  const mins = now.getUTCHours() * 60 + now.getUTCMinutes();
-  return mins >= 870 && mins < 1260; // 14:30=870, 21:00=1260
-}
 
 async function fetchStatus() {
   try {
@@ -601,13 +594,12 @@ async function fetchStatus() {
     document.getElementById('s-interval').textContent = `${d.interval_s || '—'}s`;
     document.getElementById('s-action').textContent = d.last_action || '—';
 
-    const open = d.market_open || isMarketOpen();
     const badge = document.getElementById('market-badge');
     const dot = document.getElementById('badge-dot');
     const txt = document.getElementById('market-status-text');
-    badge.className = `market-badge ${open ? 'open' : 'closed'}`;
-    dot.className = `badge-dot ${open ? 'pulse' : ''}`;
-    txt.textContent = d.market_status || (open ? 'market open' : 'market closed');
+    badge.className = 'market-badge open';
+    dot.className = 'badge-dot pulse';
+    txt.textContent = d.market_status || 'live 24/7';
 
     if (d.db) {
       const db = d.db;
@@ -657,8 +649,21 @@ async function fetchSummary() {
       document.getElementById('c-poly').textContent =
         avg.poly_yes_price ? `$${avg.poly_yes_price.toFixed(3)}` : '—';
 
+      // BTC price and vs-ref in sidebar clock section
+      if (avg.price_now) {
+        document.getElementById('s-btc-price').textContent =
+          '$' + avg.price_now.toLocaleString('en-US', {maximumFractionDigits: 0});
+      }
+      if (avg.btc_vs_reference != null) {
+        const vsRef = avg.btc_vs_reference;
+        const el = document.getElementById('s-vs-ref');
+        el.textContent = (vsRef >= 0 ? '+' : '') + vsRef.toFixed(4) + '%';
+        el.style.color = vsRef > 0.01 ? 'var(--green)' : vsRef < -0.01 ? 'var(--red)' : 'var(--text-dim)';
+      }
+
       // Signal bars
       const bars = [
+        {name: 'btc vs ref', val: avg.btc_vs_reference, range: [-0.5, 0.5]},
         {name: 'm5 momentum', val: avg.momentum_5m, range: [-1, 1]},
         {name: 'order imbal', val: avg.order_imbalance, range: [-1, 1]},
         {name: 'trade flow', val: avg.trade_flow_ratio ? avg.trade_flow_ratio - 0.5 : null, range: [-0.5, 0.5]},
@@ -699,7 +704,7 @@ async function fetchCorrelations() {
     if (d.error || !d.data || d.data.length === 0) {
       wrap.innerHTML = `<div class="empty">
         <div class="empty-title">No resolved observations yet</div>
-        Collect data during market hours (14:30–21:00 UTC) and run --resolve
+        Collecting data now — correlations appear after markets resolve (~5 min)
       </div>`;
       document.getElementById('corr-meta').textContent = '0 resolved';
       return;
@@ -763,22 +768,25 @@ async function fetchObservations() {
     const r = await fetch(`${API}/api/observations`);
     const rows = await r.json();
     if (rows.error || !rows.length) {
-      feed.innerHTML = '<div class="empty"><div class="empty-title">No observations yet</div>Start the collector during market hours.</div>';
+      feed.innerHTML = '<div class="empty"><div class="empty-title">No observations yet</div>Collector starting up — first data arrives in ~20 seconds.</div>';
       return;
     }
     document.getElementById('obs-meta').textContent = `last ${rows.length}`;
     feed.innerHTML = rows.slice(0, 50).map(r => {
       const time = r.ts ? r.ts.slice(11, 19) : '—';
-      const market = r.market_slug ? r.market_slug.replace('bitcoin-', 'BTC-').slice(-25) : '—';
+      const market = r.market_slug ? r.market_slug.replace('btc-updown-5m-', 'BTC#') : '—';
       const m5 = r.momentum_5m != null ? (r.momentum_5m >= 0 ? '+' : '') + r.momentum_5m.toFixed(3) + '%' : '—';
-      const oi = r.order_imbalance != null ? (r.order_imbalance >= 0 ? '+' : '') + r.order_imbalance.toFixed(3) : '—';
+      const vsRef = r.btc_vs_reference != null
+        ? (r.btc_vs_reference >= 0 ? '+' : '') + r.btc_vs_reference.toFixed(3) + '%'
+        : '—';
+      const vsRefColor = r.btc_vs_reference > 0.01 ? 'var(--green)' : r.btc_vs_reference < -0.01 ? 'var(--red)' : 'var(--cyan)';
       const outcome = r.outcome || '—';
       const outcomeColor = outcome === 'up' ? 'var(--green)' : outcome === 'down' ? 'var(--red)' : 'var(--text-dim)';
 
       return `<div class="log-row">
         <span class="log-time">${time}</span>
         <span class="log-market">${market} <span style="color:${outcomeColor}">[${outcome}]</span></span>
-        <span class="log-signals">m5=${m5} OI=${oi}</span>
+        <span class="log-signals">m5=${m5} ref=<span style="color:${vsRefColor}">${vsRef}</span></span>
       </div>`;
     }).join('');
   } catch(e) {

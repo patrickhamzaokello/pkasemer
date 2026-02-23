@@ -2,8 +2,7 @@
 """
 FastLoop Scheduler
 
-Runs signal collection and trading only during US market hours:
-  Mon–Fri, 14:30–21:00 UTC (9:30am–4:00pm ET)
+Runs signal collection and trading 24/7 (Polymarket operates continuously).
 
 Modes (set via FASTLOOP_MODE env var):
   collect   — run signal_research.py --collect (default)
@@ -40,11 +39,6 @@ WINDOW = os.environ.get("FASTLOOP_WINDOW", "5m")
 DB_PATH = os.environ.get("DB_PATH", "/data/signal_research.db")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 
-# US market hours in UTC
-MARKET_OPEN_UTC = (14, 30)   # 9:30am ET = 14:30 UTC
-MARKET_CLOSE_UTC = (21, 0)   # 4:00pm ET = 21:00 UTC
-MARKET_DAYS = {0, 1, 2, 3, 4}  # Mon=0 ... Fri=4
-
 # ─────────────────────────────────────────────
 # Logging
 # ─────────────────────────────────────────────
@@ -62,58 +56,14 @@ log = logging.getLogger("scheduler")
 
 
 # ─────────────────────────────────────────────
-# Market Hours
+# Status
 # ─────────────────────────────────────────────
 
-def is_market_open(now=None):
-    """Return True if current UTC time is within US market hours, Mon–Fri."""
+def scheduler_status_str(now=None):
+    """Human-readable running status."""
     if now is None:
         now = datetime.now(timezone.utc)
-    if now.weekday() not in MARKET_DAYS:
-        return False
-    open_minutes = MARKET_OPEN_UTC[0] * 60 + MARKET_OPEN_UTC[1]
-    close_minutes = MARKET_CLOSE_UTC[0] * 60 + MARKET_CLOSE_UTC[1]
-    current_minutes = now.hour * 60 + now.minute
-    return open_minutes <= current_minutes < close_minutes
-
-
-def seconds_until_open(now=None):
-    """Return seconds until next market open (Mon–Fri 14:30 UTC)."""
-    if now is None:
-        now = datetime.now(timezone.utc)
-
-    # Try each of the next 7 days
-    for days_ahead in range(7):
-        candidate = now + timedelta(days=days_ahead)
-        if candidate.weekday() not in MARKET_DAYS:
-            continue
-        open_today = candidate.replace(
-            hour=MARKET_OPEN_UTC[0], minute=MARKET_OPEN_UTC[1],
-            second=0, microsecond=0
-        )
-        if open_today > now:
-            return (open_today - now).total_seconds()
-
-    return 86400  # fallback: 24h
-
-
-def market_status_str(now=None):
-    """Human-readable market status."""
-    if now is None:
-        now = datetime.now(timezone.utc)
-    if is_market_open(now):
-        close = now.replace(
-            hour=MARKET_CLOSE_UTC[0], minute=MARKET_CLOSE_UTC[1],
-            second=0, microsecond=0
-        )
-        mins_left = (close - now).total_seconds() / 60
-        return f"OPEN — closes in {mins_left:.0f}m ({MARKET_CLOSE_UTC[0]}:{MARKET_CLOSE_UTC[1]:02d} UTC)"
-    else:
-        secs = seconds_until_open(now)
-        hours = int(secs // 3600)
-        mins = int((secs % 3600) // 60)
-        day = now.strftime("%A")
-        return f"CLOSED ({day}) — opens in {hours}h {mins}m"
+    return f"RUNNING — {now.strftime('%a %H:%M UTC')}"
 
 
 # ─────────────────────────────────────────────
@@ -177,8 +127,8 @@ def write_status(cycle, last_action, market_open):
         "mode": MODE,
         "asset": ASSET,
         "window": WINDOW,
-        "market_open": market_open,
-        "market_status": market_status_str(now),
+        "market_open": True,
+        "market_status": scheduler_status_str(now),
         "last_action": last_action,
         "interval_s": INTERVAL,
     }
@@ -250,34 +200,17 @@ def main():
     log.info(f"  Asset:    {ASSET} {WINDOW}")
     log.info(f"  Interval: {INTERVAL}s")
     log.info(f"  DB:       {DB_PATH}")
-    log.info(f"  Hours:    Mon–Fri 14:30–21:00 UTC")
+    log.info(f"  Running:  24/7 (Polymarket is always open)")
     log.info("=" * 60)
 
     cycle = 0
     last_resolve = datetime.now(timezone.utc)
     last_action = "starting"
-    waiting_logged = False
 
     while _running:
         now = datetime.now(timezone.utc)
-        open_ = is_market_open(now)
-
-        if not open_:
-            if not waiting_logged:
-                log.info(f"Market {market_status_str(now)}")
-                waiting_logged = True
-            write_status(cycle, f"waiting — {market_status_str(now)}", False)
-            # Sleep in short chunks so shutdown signal is caught quickly
-            for _ in range(min(60, INTERVAL * 3)):
-                if not _running:
-                    break
-                time.sleep(1)
-            continue
-
-        # Market is open
-        waiting_logged = False
         cycle += 1
-        log.info(f"[cycle {cycle}] {market_status_str(now)}")
+        log.info(f"[cycle {cycle}] {scheduler_status_str(now)}")
 
         # Run based on mode
         if MODE in ("collect", "both"):
@@ -298,6 +231,7 @@ def main():
             last_resolve = now
 
         write_status(cycle, last_action, True)
+
 
         # Sleep with interrupt awareness
         for _ in range(INTERVAL):
