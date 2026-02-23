@@ -52,7 +52,7 @@ from urllib.error import HTTPError, URLError
 from dotenv import load_dotenv
 load_dotenv()
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "signal_research.db")
+DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "signal_research.db"))
 BINANCE_WS_SNAPSHOT = "https://api.binance.com/api/v3/depth"
 BINANCE_TRADES = "https://api.binance.com/api/v3/trades"
 BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
@@ -457,7 +457,7 @@ def resolve_outcomes(conn, symbol="BTCUSDT"):
     cursor = conn.execute("""
         SELECT id, market_condition_id, market_slug, ts, seconds_remaining, price_now
         FROM signal_observations
-        WHERE resolved = 0
+        WHERE resolved = 0 OR outcome = 'unclear'
         ORDER BY ts ASC LIMIT 100
     """)
     rows = cursor.fetchall()

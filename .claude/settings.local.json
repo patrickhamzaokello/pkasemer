@@ -4,7 +4,8 @@
       "Bash(docker compose:*)",
       "Bash(docker stop:*)",
       "Bash(docker start:*)",
-      "Bash(docker.exe ps:*)"
+      "Bash(docker.exe ps:*)",
+      "Bash(echo:*)"
     ]
   }
 }
