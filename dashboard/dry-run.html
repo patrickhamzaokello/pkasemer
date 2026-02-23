@@ -114,49 +114,28 @@
 
 <div class="layout">
   <div class="sidebar">
-
     <div class="sidebar-section">
       <div class="section-label">Active Weights</div>
       <div id="weights-bars"><div class="loading" style="padding:10px"><span class="spinner"></span></div></div>
     </div>
-
     <div class="sidebar-section">
       <div class="section-label">Thresholds</div>
       <div class="stat-row"><span class="stat-label">entry (BUY)</span><span class="stat-val" style="color:var(--green)" id="th-hi">0.570</span></div>
       <div class="stat-row"><span class="stat-label">entry (SELL)</span><span class="stat-val" style="color:var(--red)" id="th-lo">0.430</span></div>
-      <div class="stat-row"><span class="stat-label">min momentum</span><span class="stat-val">±0.05%</span></div>
-      <div class="stat-row"><span class="stat-label">poly div gate</span><span class="stat-val">±0.08</span></div>
     </div>
-
     <div class="sidebar-section">
       <div class="section-label">Session Stats</div>
       <div class="stat-row"><span class="stat-label">cycles scored</span><span class="stat-val" style="color:var(--amber)" id="ss-cycles">—</span></div>
       <div class="stat-row"><span class="stat-label">would-trade</span><span class="stat-val" style="color:var(--green)" id="ss-would">—</span></div>
       <div class="stat-row"><span class="stat-label">trade rate</span><span class="stat-val" id="ss-rate">—</span></div>
-      <div class="stat-row"><span class="stat-label">avg score</span><span class="stat-val" id="ss-avg">—</span></div>
-      <div class="stat-row"><span class="stat-label">top block</span><span class="stat-val" id="ss-block" style="font-size:9px;max-width:120px;text-align:right;word-break:break-word">—</span></div>
     </div>
-
-    <div class="sidebar-section">
-      <div class="section-label">Prediction Accuracy</div>
-      <div class="stat-row"><span class="stat-label">resolved preds</span><span class="stat-val" id="acc-total">—</span></div>
-      <div class="stat-row"><span class="stat-label">win rate</span><span class="stat-val" id="acc-wr" style="font-weight:700">—</span></div>
-      <div class="stat-row"><span class="stat-label">YES correct</span><span class="stat-val" id="acc-yes">—</span></div>
-      <div class="stat-row"><span class="stat-label">NO correct</span><span class="stat-val" id="acc-no">—</span></div>
-      <div class="stat-row"><span class="stat-label">avg score ✓</span><span class="stat-val" style="color:var(--green)" id="acc-sc">—</span></div>
-      <div class="stat-row"><span class="stat-label">avg score ✗</span><span class="stat-val" style="color:var(--red)" id="acc-sw">—</span></div>
-    </div>
-
     <div class="sidebar-section">
       <div class="section-label">Clock</div>
       <div class="stat-row"><span class="stat-label">UTC</span><span class="stat-val" style="color:var(--cyan)" id="utc-clock">—</span></div>
     </div>
-
   </div>
 
   <div class="main">
-
-    <!-- Score Banner -->
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">&#9679; Live Composite Signal</div>
@@ -166,370 +145,95 @@
         <div>
           <div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px">Composite Score</div>
           <div class="score-big" id="score-big" style="color:var(--text-dim)">—</div>
-          <div style="font-size:10px;color:var(--text-dim);margin-top:4px" id="score-secs">—</div>
         </div>
         <div class="score-gauge-wrap">
-          <div class="score-gauge-label"><span>0.0 bearish</span><span>0.5 neutral</span><span>bullish 1.0</span></div>
+          <div class="score-gauge-label"><span>0.0 bear</span><span>0.5 mid</span><span>1.0 bull</span></div>
           <div class="score-gauge-track" id="gauge-track">
             <div class="score-gauge-fill" id="gauge-fill" style="width:50%;background:var(--text-dim)"></div>
-            <div class="score-gauge-threshold" id="gauge-th-hi" style="left:57%"></div>
-            <div class="score-gauge-threshold-lo" id="gauge-th-lo" style="left:43%"></div>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text-dim);margin-top:4px">
-            <span>SELL if &lt; 0.43</span><span id="conf-label">—</span><span>BUY if &gt; 0.57</span>
+            <div class="score-gauge-threshold" style="left:57%"></div>
+            <div class="score-gauge-threshold-lo" style="left:43%"></div>
           </div>
         </div>
         <div class="score-decision">
           <div class="score-side" id="score-side" style="color:var(--text-dim)">—</div>
-          <div class="score-conf" id="score-conf">confidence: —</div>
           <div class="score-filter" id="score-filter"></div>
         </div>
       </div>
-
-      <!-- Signal breakdown -->
-      <div style="padding:8px 0">
-        <div style="display:grid;grid-template-columns:140px 60px 60px 40px 1fr;gap:8px;padding:5px 14px;font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border)">
-          <span>Signal</span><span style="text-align:right">Raw</span><span style="text-align:right">Norm</span><span style="text-align:right">Wt</span><span>Contribution</span>
-        </div>
-        <div id="breakdown-rows"><div class="loading"><span class="spinner"></span>loading...</div></div>
-      </div>
+      <div id="breakdown-rows"><div class="loading"><span class="spinner"></span></div></div>
     </div>
 
-    <!-- Score History Chart -->
     <div class="panel">
-      <div class="panel-header">
-        <div class="panel-title">Score History</div>
-        <div class="panel-meta" id="hist-meta">last 100 cycles</div>
-      </div>
+      <div class="panel-header"><div class="panel-title">Score History</div></div>
       <div class="history-svg-wrap">
         <svg id="hist-svg" viewBox="0 0 900 100" preserveAspectRatio="none"></svg>
       </div>
     </div>
 
-    <!-- Would-Trade Log -->
     <div class="panel">
-      <div class="panel-header">
-        <div class="panel-title">Would-Trade Log</div>
-        <div class="panel-meta" id="wt-meta">threshold crossings</div>
-      </div>
-      <div id="wt-table-wrap"><div class="loading"><span class="spinner"></span>loading...</div></div>
+      <div class="panel-header"><div class="panel-title">Recent Activity</div></div>
+      <div id="wt-table-wrap"><div class="loading">waiting for data...</div></div>
     </div>
-
-    <!-- Prediction vs Outcome -->
-    <div class="panel">
-      <div class="panel-header">
-        <div class="panel-title">Prediction vs Outcome</div>
-        <div class="panel-meta" id="pred-meta">resolved predictions</div>
-      </div>
-      <div id="accuracy-strip" style="display:flex;border-bottom:1px solid var(--border)">
-        <div style="flex:1;padding:12px 16px;text-align:center;border-right:1px solid var(--border)">
-          <div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">Win Rate</div>
-          <div style="font-family:var(--display);font-size:24px;font-weight:800;color:var(--text-bright)" id="big-wr">—</div>
-        </div>
-        <div style="flex:1;padding:12px 16px;text-align:center;border-right:1px solid var(--border)">
-          <div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">YES Accuracy</div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)" id="big-yes-wr">—</div>
-        </div>
-        <div style="flex:1;padding:12px 16px;text-align:center;border-right:1px solid var(--border)">
-          <div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">NO Accuracy</div>
-          <div style="font-size:18px;font-weight:700;color:var(--red)" id="big-no-wr">—</div>
-        </div>
-        <div style="flex:1;padding:12px 16px;text-align:center">
-          <div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">Resolved</div>
-          <div style="font-size:18px;font-weight:700;color:var(--text-bright)" id="big-resolved">—</div>
-        </div>
-      </div>
-      <div id="pred-table-wrap"><div class="loading"><span class="spinner"></span>waiting for resolved predictions...</div></div>
-    </div>
-
   </div>
 </div>
 
 <script>
+// Keep API dynamic based on host
 const API = window.location.origin;
-
-const WEIGHTS = {
-  btc_vs_reference: 0.40, volume_ratio: 0.15, momentum_5m: 0.15,
-  price_acceleration: 0.15, vol_adjusted_momentum: 0.10, momentum_consistency: 0.05,
-};
+const WEIGHTS = { btc_vs_reference: 0.40, volume_ratio: 0.15, momentum_5m: 0.15, price_acceleration: 0.15, vol_adjusted_momentum: 0.10, momentum_consistency: 0.05 };
 const THRESHOLD = 0.57;
 
+// Live Clock
 setInterval(() => {
   const n = new Date();
-  document.getElementById('utc-clock').textContent =
-    `${String(n.getUTCHours()).padStart(2,'0')}:${String(n.getUTCMinutes()).padStart(2,'0')}:${String(n.getUTCSeconds()).padStart(2,'0')} UTC`;
+  document.getElementById('utc-clock').textContent = n.toISOString().slice(11,19) + ' UTC';
 }, 1000);
 
 function fmtRaw(name, v) {
   if (v == null) return 'n/a';
-  if (name.includes('momentum') || name.includes('reference') || name.includes('acceleration')) return (v >= 0 ? '+' : '') + v.toFixed(3) + '%';
-  if (name === 'volume_ratio') return v.toFixed(2) + 'x';
-  return (v >= 0 ? '+' : '') + v.toFixed(4);
-}
-
-async function fetchComposite() {
-  try {
-    const r = await fetch(`${API}/api/composite`);
-    const d = await r.json();
-    if (d.error) return;
-
-    const score = d.score;
-    const side = d.side;
-    const shouldTrade = d.should_trade;
-    const filter = d.filter_reason;
-
-    // Score big display
-    const bigEl = document.getElementById('score-big');
-    bigEl.textContent = score.toFixed(4);
-    bigEl.style.color = score > THRESHOLD ? 'var(--green)' : score < (1 - THRESHOLD) ? 'var(--red)' : 'var(--text-dim)';
-
-    document.getElementById('score-secs').textContent =
-      d.seconds_remaining ? `${Math.round(d.seconds_remaining)}s remaining` : '';
-
-    // Gauge
-    const pct = Math.round(score * 100);
-    const fill = document.getElementById('gauge-fill');
-    fill.style.width = pct + '%';
-    fill.style.background = score > THRESHOLD ? 'var(--green)' : score < (1 - THRESHOLD) ? 'var(--red)' : 'var(--text-dim)';
-
-    document.getElementById('conf-label').textContent = `confidence: ${(d.confidence * 100).toFixed(0)}%`;
-
-    // Side
-    const sideEl = document.getElementById('score-side');
-    if (shouldTrade && side === 'yes') { sideEl.textContent = '▲ BUY YES'; sideEl.style.color = 'var(--green)'; }
-    else if (shouldTrade && side === 'no') { sideEl.textContent = '▼ BUY NO'; sideEl.style.color = 'var(--red)'; }
-    else { sideEl.textContent = '— NO TRADE'; sideEl.style.color = 'var(--text-dim)'; }
-
-    document.getElementById('score-conf').textContent = `confidence: ${(d.confidence * 100).toFixed(1)}%`;
-    document.getElementById('score-filter').textContent = filter || '';
-
-    document.getElementById('comp-market').textContent = d.market_slug ? d.market_slug.split('-').slice(-1)[0] + ' · ' + new Date(d.ts).toUTCString().slice(17,25) + ' UTC' : '—';
-
-    // Breakdown
-    const bd = d.breakdown || {};
-    const activeSignals = Object.entries(WEIGHTS).filter(([,w]) => w > 0);
-    const rows = activeSignals.map(([name, weight]) => {
-      const info = bd[name] || {};
-      const raw = info.raw;
-      const norm = info.normalized;
-      const contrib = norm != null ? (norm - 0.5) * weight : null;
-      const barPct = norm != null ? Math.round(Math.abs(norm - 0.5) / 0.5 * 100) : 0;
-      const barColor = norm != null ? (norm > 0.5 ? 'var(--green)' : 'var(--red)') : 'var(--text-dim)';
-      const normColor = norm == null ? 'var(--text-dim)' : norm > 0.55 ? 'var(--green)' : norm < 0.45 ? 'var(--red)' : 'var(--text)';
-      return `<div class="breakdown-row">
-        <span class="breakdown-name">${name}</span>
-        <span class="breakdown-raw">${fmtRaw(name, raw)}</span>
-        <span class="breakdown-norm" style="color:${normColor}">${norm != null ? norm.toFixed(3) : '—'}</span>
-        <span class="breakdown-wt">${(weight * 100).toFixed(0)}%</span>
-        <div class="breakdown-bar-track">
-          <div class="breakdown-bar-fill" style="width:${barPct}%;background:${barColor}"></div>
-        </div>
-      </div>`;
-    }).join('');
-    document.getElementById('breakdown-rows').innerHTML = rows || '<div class="loading">no data</div>';
-
-    document.getElementById('last-update').textContent = `updated ${new Date().toUTCString().slice(17,25)} UTC`;
-  } catch(e) {}
-}
-
-async function fetchScoreHistory() {
-  try {
-    const r = await fetch(`${API}/api/score-history`);
-    const rows = await r.json();
-    if (!rows.length) return;
-
-    // Update sidebar stats
-    const total = rows.length;
-    const wouldTrade = rows.filter(r => r.should_trade).length;
-    document.getElementById('ss-cycles').textContent = total;
-    document.getElementById('ss-would').textContent = wouldTrade;
-    document.getElementById('ss-rate').textContent = total > 0 ? Math.round(wouldTrade / total * 100) + '%' : '—';
-    const avgScore = rows.reduce((s, r) => s + r.score, 0) / total;
-    document.getElementById('ss-avg').textContent = avgScore.toFixed(3);
-
-    // Top block reason
-    const blocks = rows.filter(r => !r.should_trade && r.filter_reason).map(r => r.filter_reason);
-    if (blocks.length) {
-      const freq = {};
-      blocks.forEach(b => {
-        const key = b.split('(')[0].trim();
-        freq[key] = (freq[key] || 0) + 1;
-      });
-      const top = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
-      document.getElementById('ss-block').textContent = top ? top[0] : '—';
-    }
-
-    document.getElementById('hist-meta').textContent = `${total} cycles`;
-
-    // Draw SVG history
-    const svg = document.getElementById('hist-svg');
-    const W = 900, H = 100, PAD = 6;
-    const n = rows.length;
-    const toX = i => PAD + (i / Math.max(n - 1, 1)) * (W - PAD * 2);
-    const toY = s => H - PAD - (s * (H - PAD * 2));
-
-    const thHiY = toY(THRESHOLD);
-    const thLoY = toY(1 - THRESHOLD);
-    const pts = rows.map((r, i) => `${toX(i)},${toY(r.score)}`).join(' ');
-
-    const dots = rows.filter(r => r.should_trade).map((r, _, arr) => {
-      const idx = rows.indexOf(r);
-      const color = r.side === 'yes' ? '#00e676' : '#ff3d57';
-      return `<circle cx="${toX(idx)}" cy="${toY(r.score)}" r="3" fill="${color}" opacity="0.8"/>`;
-    }).join('');
-
-    svg.innerHTML = `
-      <rect x="0" y="${thLoY}" width="${W}" height="${thHiY - thLoY}" fill="rgba(255,255,255,0.02)"/>
-      <line x1="0" y1="${thHiY}" x2="${W}" y2="${thHiY}" stroke="rgba(0,230,118,0.3)" stroke-width="1" stroke-dasharray="4,4"/>
-      <line x1="0" y1="${thLoY}" x2="${W}" y2="${thLoY}" stroke="rgba(255,61,87,0.3)" stroke-width="1" stroke-dasharray="4,4"/>
-      <line x1="0" y1="${toY(0.5)}" x2="${W}" y2="${toY(0.5)}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-      <polyline points="${pts}" fill="none" stroke="var(--cyan)" stroke-width="1.5" stroke-linejoin="round" opacity="0.7"/>
-      ${dots}
-      <text x="4" y="${thHiY - 3}" fill="rgba(0,230,118,0.5)" font-size="8">BUY</text>
-      <text x="4" y="${thLoY + 10}" fill="rgba(255,61,87,0.5)" font-size="8">SELL</text>
-    `;
-
-    // Would-trade log table
-    const wtWrap = document.getElementById('wt-table-wrap');
-    const trades = [...rows].reverse().filter(r => r.should_trade).slice(0, 30);
-    document.getElementById('wt-meta').textContent = `${wouldTrade} crossings in last ${total} cycles`;
-
-    // Sidebar weights (always populate regardless of trade count)
-    const wBars = document.getElementById('weights-bars');
-    wBars.innerHTML = Object.entries(WEIGHTS).filter(([,w]) => w > 0).map(([name, w]) => `
-      <div class="wt-bar-row">
-        <div class="wt-bar-label">
-          <span style="color:var(--text-dim)">${name}</span>
-          <span style="color:var(--amber)">${(w * 100).toFixed(0)}%</span>
-        </div>
-        <div class="wt-bar-track"><div class="wt-bar-fill" style="width:${w * 100}%"></div></div>
-      </div>`).join('');
-
-    if (!trades.length) {
-      wtWrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-dim)">
-        <div style="font-size:13px;color:var(--text);margin-bottom:6px">No threshold crossings yet</div>
-        Score has not exceeded ${THRESHOLD} — model is filtering. Check filter reasons above.
-      </div>`;
-      return;
-    }
-
-    wtWrap.innerHTML = `<table>
-      <thead><tr>
-        <th>Time (UTC)</th><th>Window</th><th>Signal</th><th class="right">Score</th>
-        <th class="right">vs Ref</th><th class="right">vol</th><th class="right">Secs</th><th class="right">Outcome</th>
-      </tr></thead>
-      <tbody>${trades.map(row => {
-        const t = row.ts ? row.ts.slice(11,19) : '—';
-        const slug = row.market_slug || '—';
-        const pillCls = row.side === 'yes' ? 'yes' : 'no';
-        const pillLabel = row.side === 'yes' ? '▲ YES' : '▼ NO';
-        const vsRef = row.btc_vs_reference;
-        const vsStr = vsRef != null ? (vsRef >= 0 ? '+' : '') + vsRef.toFixed(3) + '%' : '—';
-        const vsColor = vsRef > 0.02 ? 'var(--green)' : vsRef != null && vsRef < -0.02 ? 'var(--red)' : 'var(--text-dim)';
-        const vol = row.volume_ratio;
-        const volStr = vol != null ? vol.toFixed(2) + 'x' : '—';
-        const outcome = row.outcome;
-        const outcomeStr = outcome === 'up' ? '▲ up' : outcome === 'down' ? '▼ down' : row.resolved ? '?' : '…';
-        const outcomeColor = outcome === 'up' ? 'var(--green)' : outcome === 'down' ? 'var(--red)' : 'var(--text-dim)';
-        return `<tr>
-          <td style="color:var(--text-dim)">${t}</td>
-          <td style="color:var(--text);font-size:10px">${slug.split('-').slice(-1)[0]}</td>
-          <td><span class="wt-pill ${pillCls}">${pillLabel}</span></td>
-          <td class="right" style="color:var(--cyan)">${row.score != null ? row.score.toFixed(4) : '—'}</td>
-          <td class="right" style="color:${vsColor}">${vsStr}</td>
-          <td class="right" style="color:var(--text-dim)">${volStr}</td>
-          <td class="right" style="color:var(--text-dim)">${row.seconds_remaining ? Math.round(row.seconds_remaining) + 's' : '—'}</td>
-          <td class="right" style="color:${outcomeColor};font-weight:700">${outcomeStr}</td>
-        </tr>`;
-      }).join('')}</tbody></table>`;
-  } catch(e) {}
-}
-
-async function fetchPredictions() {
-  try {
-    const [predR, accR] = await Promise.all([
-      fetch(`${API}/api/predictions`),
-      fetch(`${API}/api/accuracy`),
-    ]);
-    const preds = await predR.json();
-    const acc   = await accR.json();
-
-    if (acc && !acc.error) {
-      const wr = acc.win_rate != null ? (acc.win_rate * 100).toFixed(1) + '%' : '—';
-      const wrColor = acc.win_rate > 0.55 ? 'var(--green)' : acc.win_rate < 0.45 ? 'var(--red)' : 'var(--amber)';
-      document.getElementById('big-wr').textContent = wr;
-      document.getElementById('big-wr').style.color = wrColor;
-      document.getElementById('big-yes-wr').textContent = acc.yes_wr != null ? (acc.yes_wr * 100).toFixed(1) + '%' : '—';
-      document.getElementById('big-no-wr').textContent = acc.no_wr != null ? (acc.no_wr * 100).toFixed(1) + '%' : '—';
-      document.getElementById('big-resolved').textContent = acc.total || 0;
-      // Sidebar
-      document.getElementById('acc-total').textContent = acc.total || 0;
-      document.getElementById('acc-wr').textContent = wr;
-      document.getElementById('acc-wr').style.color = wrColor;
-      document.getElementById('acc-yes').textContent = acc.yes_wr != null ? `${acc.yes_correct}/${acc.yes_total} (${(acc.yes_wr*100).toFixed(0)}%)` : '—';
-      document.getElementById('acc-no').textContent = acc.no_wr != null ? `${acc.no_correct}/${acc.no_total} (${(acc.no_wr*100).toFixed(0)}%)` : '—';
-      document.getElementById('acc-sc').textContent = acc.avg_score_correct != null ? acc.avg_score_correct.toFixed(3) : '—';
-      document.getElementById('acc-sw').textContent = acc.avg_score_wrong != null ? acc.avg_score_wrong.toFixed(3) : '—';
-    }
-
-    const wrap = document.getElementById('pred-table-wrap');
-    const meta = document.getElementById('pred-meta');
-
-    if (!preds || preds.error || !preds.length) {
-      wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-dim)">
-        <div style="font-size:13px;color:var(--text);margin-bottom:6px">No predictions yet</div>
-        Predictions appear once the model scores above threshold. Markets resolve ~5 minutes after window ends.
-      </div>`;
-      meta.textContent = '0 predictions';
-      return;
-    }
-
-    const resolved = preds.filter(p => p.outcome && p.outcome !== 'unclear');
-    meta.textContent = `${preds.length} predictions · ${resolved.length} resolved`;
-
-    wrap.innerHTML = `<table>
-      <thead><tr>
-        <th>Time (UTC)</th><th>Window</th><th>Prediction</th>
-        <th class="right">Score</th><th class="right">Conf</th>
-        <th class="right">vs Ref</th><th class="right">m5</th>
-        <th>Outcome</th><th>Correct?</th>
-      </tr></thead>
-      <tbody>${preds.map(row => {
-        const t = row.ts ? row.ts.slice(11,19) : '—';
-        const slug = (row.market_slug || '').split('-').slice(-1)[0] || '—';
-        const pillCls = row.side === 'yes' ? 'yes' : 'no';
-        const pillLabel = row.side === 'yes' ? '▲ YES' : '▼ NO';
-        const score = row.score != null ? row.score.toFixed(3) : '—';
-        const conf = row.confidence != null ? (row.confidence * 100).toFixed(0) + '%' : '—';
-        const vsRef = row.btc_vs_reference;
-        const vsStr = vsRef != null ? (vsRef >= 0 ? '+' : '') + vsRef.toFixed(3) + '%' : '—';
-        const vsColor = vsRef > 0.02 ? 'var(--green)' : vsRef != null && vsRef < -0.02 ? 'var(--red)' : 'var(--text-dim)';
-        const m5 = row.momentum_5m;
-        const m5Str = m5 != null ? (m5 >= 0 ? '+' : '') + m5.toFixed(3) + '%' : '—';
-        const m5Color = m5 > 0.05 ? 'var(--green)' : m5 != null && m5 < -0.05 ? 'var(--red)' : 'var(--text-dim)';
-        const outcome = row.outcome;
-        const outcomeStr = outcome === 'up' ? '▲ up' : outcome === 'down' ? '▼ down' : row.resolved ? 'unclear' : '…';
-        const outcomeColor = outcome === 'up' ? 'var(--green)' : outcome === 'down' ? 'var(--red)' : 'var(--text-dim)';
-        const correct = row.correct;
-        const correctStr = correct === true ? '✓' : correct === false ? '✗' : '—';
-        const correctColor = correct === true ? 'var(--green)' : correct === false ? 'var(--red)' : 'var(--text-dim)';
-        return `<tr>
-          <td style="color:var(--text-dim)">${t}</td>
-          <td style="font-size:10px">${slug}</td>
-          <td><span class="wt-pill ${pillCls}">${pillLabel}</span></td>
-          <td class="right" style="color:var(--cyan)">${score}</td>
-          <td class="right" style="color:var(--text-dim)">${conf}</td>
-          <td class="right" style="color:${vsColor}">${vsStr}</td>
-          <td class="right" style="color:${m5Color}">${m5Str}</td>
-          <td style="color:${outcomeColor};font-weight:700">${outcomeStr}</td>
-          <td style="color:${correctColor};font-weight:900;font-size:14px;text-align:center">${correctStr}</td>
-        </tr>`;
-      }).join('')}</tbody></table>`;
-  } catch(e) {}
+  return (v >= 0 ? '+' : '') + v.toFixed(3) + (name.includes('ratio') ? 'x' : '%');
 }
 
 async function refresh() {
-  await Promise.all([fetchComposite(), fetchScoreHistory(), fetchPredictions()]);
+  try {
+    const res = await fetch(`${API}/api/composite`);
+    const d = await res.json();
+    
+    // Update Score
+    const bigEl = document.getElementById('score-big');
+    bigEl.textContent = d.score.toFixed(4);
+    bigEl.style.color = d.score > THRESHOLD ? 'var(--green)' : d.score < (1-THRESHOLD) ? 'var(--red)' : 'var(--text-dim)';
+    
+    document.getElementById('gauge-fill').style.width = (d.score * 100) + '%';
+    document.getElementById('score-side').textContent = d.should_trade ? (d.side === 'yes' ? '▲ BUY' : '▼ SELL') : 'WAIT';
+    document.getElementById('score-filter').textContent = d.filter_reason || '';
+    
+    // Breakdown
+    const rows = Object.entries(WEIGHTS).map(([name, weight]) => {
+      const val = (d.breakdown && d.breakdown[name]) ? d.breakdown[name].normalized : 0.5;
+      return `<div class="breakdown-row">
+        <span class="breakdown-name">${name}</span>
+        <span class="breakdown-raw">${fmtRaw(name, d.breakdown?.[name]?.raw)}</span>
+        <span class="breakdown-norm">${val.toFixed(2)}</span>
+        <span class="breakdown-wt">${(weight*100).toFixed(0)}%</span>
+        <div class="breakdown-bar-track"><div class="breakdown-bar-fill" style="width:${Math.abs(val-0.5)*200}%; background:${val > 0.5 ? 'var(--green)':'var(--red)'}"></div></div>
+      </div>`;
+    }).join('');
+    document.getElementById('breakdown-rows').innerHTML = rows;
+
+    // Fetch History and update sidebar
+    const hRes = await fetch(`${API}/api/score-history`);
+    const history = await hRes.json();
+    if (history.length) {
+       document.getElementById('ss-cycles').textContent = history.length;
+       document.getElementById('ss-would').textContent = history.filter(x => x.should_trade).length;
+       
+       // Simple SVG path
+       const pts = history.map((r, i) => `${(i/history.length)*900},${100 - (r.score*100)}`).join(' ');
+       document.getElementById('hist-svg').innerHTML = `<polyline points="${pts}" fill="none" stroke="var(--cyan)" stroke-width="1.5"/>`;
+    }
+    
+    document.getElementById('last-update').textContent = `updated ${new Date().toISOString().slice(14,19)}`;
+  } catch (e) { console.error("Update failed", e); }
 }
 
 refresh();
