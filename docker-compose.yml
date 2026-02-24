@@ -8,7 +8,7 @@ services:
     container_name: fastloop-collector
     restart: unless-stopped
     environment:
-      FASTLOOP_MODE: dry          # collect | trade | both | dry
+      FASTLOOP_MODE: collect          # collect | trade | both | dry
       FASTLOOP_INTERVAL: "20"         # seconds between cycles
       FASTLOOP_ASSET: BTC
       FASTLOOP_WINDOW: 5m

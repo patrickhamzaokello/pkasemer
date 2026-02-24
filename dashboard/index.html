@@ -125,9 +125,9 @@
   .layout {
     display: grid;
     grid-template-columns: 260px 1fr;
-    grid-template-rows: auto 1fr;
     gap: 0;
-    height: calc(100vh - 82px);
+    min-height: calc(100vh - 82px);
+    align-items: start;
   }
 
   /* Sidebar */
@@ -136,6 +136,10 @@
     border-right: 1px solid var(--border);
     overflow-y: auto;
     background: var(--surface);
+    position: sticky;
+    top: 82px;
+    height: calc(100vh - 82px);
+    align-self: start;
   }
 
   .sidebar-section {
@@ -193,7 +197,6 @@
 
   /* Main area */
   .main {
-    overflow-y: auto;
     padding: 16px;
     display: flex;
     flex-direction: column;
