@@ -30,12 +30,22 @@ Signal candidates tracked:
     - poly_spread                                 best_ask - best_bid on CLOB
     - poly_volume_24h                             recent market liquidity
     - poly_order_imbalance                        CLOB buy vs sell depth
-    - poly_mid_vs_last                            mid price vs last trade
 
   Derived / Combo Signals:
+    - btc_vs_reference                            (price_now - ref) / ref * 100
     - cex_poly_lag                                momentum direction vs poly pricing
     - momentum_consistency                        # of recent candles agreeing on direction
     - vol_adjusted_momentum                       momentum / recent volatility
+
+Changes from original:
+    - collect_one() now imports from market_utils instead of fast_trader —
+      eliminates the circular import (fast_trader → signal_research → fast_trader).
+    - btc_vs_reference seeding now only fires in the first 60s after window open,
+      preventing a restart mid-window from zeroing out the dominant signal.
+    - _determine_outcome() validates that outcomes[0] is labelled "up" before
+      assuming outcomePrices[0] corresponds to the Up token.
+    - _CACHE_FILE and DB_PATH use _DATA_DIR for consistent path resolution between
+      Docker (/data) and local (script directory) environments.
 """
 
 import os
@@ -52,22 +62,32 @@ from urllib.error import HTTPError, URLError
 from dotenv import load_dotenv
 load_dotenv()
 
-DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "signal_research.db"))
-BINANCE_WS_SNAPSHOT = "https://api.binance.com/api/v3/depth"
-BINANCE_TRADES = "https://api.binance.com/api/v3/trades"
-BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
-POLY_CLOB = "https://clob.polymarket.com"
-GAMMA_API = "https://gamma-api.polymarket.com"
+# =============================================================================
+# Paths — consistent with fast_trader.py
+# =============================================================================
 
-# ─────────────────────────────────────────────
+_DATA_DIR = "/data" if os.path.isdir("/data") else os.path.dirname(os.path.abspath(__file__))
+
+DB_PATH = os.environ.get("DB_PATH", os.path.join(_DATA_DIR, "signal_research.db"))
+
+BINANCE_WS_SNAPSHOT = "https://api.binance.com/api/v3/depth"
+BINANCE_TRADES      = "https://api.binance.com/api/v3/trades"
+BINANCE_KLINES      = "https://api.binance.com/api/v3/klines"
+POLY_CLOB           = "https://clob.polymarket.com"
+GAMMA_API           = "https://gamma-api.polymarket.com"
+
+# =============================================================================
 # Window Reference Price Cache
+#
 # Records Binance price at first observation of each 5m window.
 # Polymarket's eventMetadata.priceToBeat is never populated via the API,
 # so we maintain our own reference to compute btc_vs_reference.
-# Stored at /data/window_refs.json (Docker) or ./window_refs.json (local).
-# ─────────────────────────────────────────────
+#
+# FIX: seeding now only fires in the first 60s after window open (controlled
+# by the caller passing window_open=True). Seeding on every cycle caused a
+# restart mid-window to zero out btc_vs_reference for the rest of the window.
+# =============================================================================
 
-_DATA_DIR = "/data" if os.path.isdir("/data") else os.path.dirname(os.path.abspath(__file__))
 _REF_CACHE_FILE = os.path.join(_DATA_DIR, "window_refs.json")
 
 
@@ -91,8 +111,13 @@ def _save_ref_cache(cache):
 def get_window_reference_price(slug, cex_price_now=None, window_open=False):
     """
     Return the cached Binance reference price for this market window slug.
-    On the first cycle after window open, records cex_price_now and returns it.
-    Returns None if the window hasn't opened yet or no price available.
+
+    window_open should be True ONLY in the first ~60s after the window starts.
+    When True and no cached price exists, records cex_price_now as the reference.
+
+    Returns None if:
+    - The window hasn't opened yet (window_open=False and no cache entry)
+    - No price is available to record
     """
     if not slug:
         return None
@@ -101,7 +126,7 @@ def get_window_reference_price(slug, cex_price_now=None, window_open=False):
         return float(cache[slug])
     if window_open and cex_price_now:
         cache[slug] = cex_price_now
-        # Keep last 48 entries (~4 hours of 5-minute windows)
+        # Keep last 60 entries (~5 hours of 5-minute windows)
         if len(cache) > 60:
             for k in sorted(cache.keys())[:-48]:
                 del cache[k]
@@ -110,9 +135,9 @@ def get_window_reference_price(slug, cex_price_now=None, window_open=False):
     return None
 
 
-# ─────────────────────────────────────────────
+# =============================================================================
 # DB Setup
-# ─────────────────────────────────────────────
+# =============================================================================
 
 def init_db(path=DB_PATH):
     conn = sqlite3.connect(path)
@@ -141,17 +166,17 @@ def init_db(path=DB_PATH):
             price_now REAL,
 
             -- Market reference
-            price_to_beat REAL,       -- Chainlink BTC price at window start (from eventMetadata)
+            price_to_beat REAL,
 
-            -- Polymarket signals (sourced from Gamma API, no CLOB needed)
-            poly_yes_price REAL,      -- lastTradePrice from API
+            -- Polymarket signals (sourced from Gamma API)
+            poly_yes_price REAL,
             poly_divergence REAL,
-            poly_spread REAL,         -- bestAsk - bestBid from API
+            poly_spread REAL,
             poly_volume_24h REAL,
             poly_order_imbalance REAL,
 
             -- Derived
-            btc_vs_reference REAL,    -- (price_now - price_to_beat) / price_to_beat * 100
+            btc_vs_reference REAL,
             cex_poly_lag REAL,
             momentum_consistency REAL,
             vol_adjusted_momentum REAL,
@@ -165,13 +190,13 @@ def init_db(path=DB_PATH):
     """)
     # Migrate existing DBs that predate these columns
     for col, typedef in [
-        ("price_to_beat", "REAL"),
-        ("btc_vs_reference", "REAL"),
-        ("signal_score", "REAL"),
-        ("signal_side", "TEXT"),
-        ("signal_confidence", "REAL"),
-        ("would_trade", "INTEGER"),
-        ("filter_reason", "TEXT"),
+        ("price_to_beat",      "REAL"),
+        ("btc_vs_reference",   "REAL"),
+        ("signal_score",       "REAL"),
+        ("signal_side",        "TEXT"),
+        ("signal_confidence",  "REAL"),
+        ("would_trade",        "INTEGER"),
+        ("filter_reason",      "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE signal_observations ADD COLUMN {col} {typedef}")
@@ -181,9 +206,9 @@ def init_db(path=DB_PATH):
     return conn
 
 
-# ─────────────────────────────────────────────
+# =============================================================================
 # Data Fetchers
-# ─────────────────────────────────────────────
+# =============================================================================
 
 def _get(url, timeout=8):
     try:
@@ -204,7 +229,7 @@ def fetch_binance_orderbook(symbol="BTCUSDT", limit=20):
     return _get(url)
 
 
-def fetch_binance_recent_trades(symbol="BTCUSDT", limit=500):  # was 100
+def fetch_binance_recent_trades(symbol="BTCUSDT", limit=500):
     url = f"{BINANCE_TRADES}?symbol={symbol}&limit={limit}"
     return _get(url)
 
@@ -224,9 +249,9 @@ def fetch_poly_market(condition_id):
     return None
 
 
-# ─────────────────────────────────────────────
+# =============================================================================
 # Signal Calculators
-# ─────────────────────────────────────────────
+# =============================================================================
 
 def calc_rsi(closes, period=14):
     if len(closes) < period + 1:
@@ -245,7 +270,7 @@ def calc_rsi(closes, period=14):
 
 
 def calc_volatility(returns):
-    """Annualized realized volatility from a list of returns."""
+    """Realized volatility from a list of returns."""
     if len(returns) < 2:
         return None
     mean = sum(returns) / len(returns)
@@ -269,9 +294,9 @@ def calc_order_imbalance(bids, asks, levels=5):
 def calc_trade_flow_ratio(trades):
     """
     Ratio of buy-initiated volume to total volume.
-    Binance marks isBuyerMaker: True means the buyer was maker (so seller hit the bid = sell flow).
+    Binance marks isBuyerMaker: True means buyer was maker (seller hit the bid = sell flow).
     """
-    buy_vol = sum(float(t["qty"]) for t in trades if not t.get("isBuyerMaker", True))
+    buy_vol  = sum(float(t["qty"]) for t in trades if not t.get("isBuyerMaker", True))
     sell_vol = sum(float(t["qty"]) for t in trades if t.get("isBuyerMaker", True))
     total = buy_vol + sell_vol
     if total == 0:
@@ -280,37 +305,27 @@ def calc_trade_flow_ratio(trades):
 
 
 def extract_cex_signals(symbol="BTCUSDT"):
-    """
-    Pull all CEX signals. Returns dict of signal_name -> value.
-    """
+    """Pull all CEX signals. Returns dict of signal_name -> value."""
     signals = {}
 
-    # Klines for momentum, RSI, volatility
     k1 = fetch_binance_klines(symbol, "1m", 20)
     k5 = fetch_binance_klines(symbol, "5m", 20)
 
     if k1 and len(k1) >= 2:
-        closes_1m = [float(c[4]) for c in k1]
-        opens_1m = [float(c[1]) for c in k1]
+        closes_1m  = [float(c[4]) for c in k1]
         volumes_1m = [float(c[5]) for c in k1]
 
-        # Momentum
         signals["momentum_1m"] = (closes_1m[-1] - closes_1m[-2]) / closes_1m[-2] * 100
-        signals["price_now"] = closes_1m[-1]
+        signals["price_now"]   = closes_1m[-1]
+        signals["rsi_14"]      = calc_rsi(closes_1m)
 
-        # RSI
-        signals["rsi_14"] = calc_rsi(closes_1m)
-
-        # Volume ratio (latest vs 10-candle avg)
         avg_vol = sum(volumes_1m[:-1]) / max(len(volumes_1m) - 1, 1)
         signals["volume_ratio"] = volumes_1m[-1] / avg_vol if avg_vol > 0 else 1.0
 
-        # Volatility (std of 1m returns)
         returns_1m = [(closes_1m[i] - closes_1m[i-1]) / closes_1m[i-1]
                       for i in range(1, len(closes_1m))]
         signals["volatility_1m"] = calc_volatility(returns_1m[-5:])
 
-        # Momentum consistency: fraction of last N candles that agree with latest direction
         direction = 1 if signals["momentum_1m"] > 0 else -1
         recent_moves = [1 if closes_1m[i] > closes_1m[i-1] else -1
                         for i in range(max(1, len(closes_1m)-5), len(closes_1m))]
@@ -320,45 +335,35 @@ def extract_cex_signals(symbol="BTCUSDT"):
     if k5 and len(k5) >= 2:
         closes_5m = [float(c[4]) for c in k5]
 
-        # Last close vs previous close = actual 5-minute price change
         signals["momentum_5m"] = (closes_5m[-1] - closes_5m[-2]) / closes_5m[-2] * 100
 
         returns_5m = [(closes_5m[i] - closes_5m[i-1]) / closes_5m[i-1]
                       for i in range(1, len(closes_5m))]
         signals["volatility_5m"] = calc_volatility(returns_5m[-5:])
 
-        # Price acceleration: is momentum accelerating or decelerating?
         if len(closes_5m) >= 3:
             m_recent = (closes_5m[-1] - closes_5m[-2]) / closes_5m[-2] * 100
-            m_prior = (closes_5m[-2] - closes_5m[-3]) / closes_5m[-3] * 100
+            m_prior  = (closes_5m[-2] - closes_5m[-3]) / closes_5m[-3] * 100
             signals["price_acceleration"] = m_recent - m_prior
 
     k15 = fetch_binance_klines(symbol, "15m", 5)
     if k15 and len(k15) >= 2:
         closes_15m = [float(c[4]) for c in k15]
-        # Last close vs previous close = actual 15-minute price change
         signals["momentum_15m"] = (closes_15m[-1] - closes_15m[-2]) / closes_15m[-2] * 100
 
-    # Vol-adjusted momentum
     if signals.get("momentum_5m") and signals.get("volatility_5m") and signals["volatility_5m"] > 0:
         signals["vol_adjusted_momentum"] = signals["momentum_5m"] / signals["volatility_5m"]
 
-    # Order book
     ob = fetch_binance_orderbook(symbol, 20)
     if ob and ob.get("bids") and ob.get("asks"):
         bids = ob["bids"]
         asks = ob["asks"]
-
-        # Spread in bps
         best_bid = float(bids[0][0])
         best_ask = float(asks[0][0])
         mid = (best_bid + best_ask) / 2
-        signals["spread_bps"] = ((best_ask - best_bid) / mid) * 10000
-
-        # Order imbalance
+        signals["spread_bps"]      = ((best_ask - best_bid) / mid) * 10000
         signals["order_imbalance"] = calc_order_imbalance(bids, asks)
 
-    # Trade flow
     trades = fetch_binance_recent_trades(symbol, 500)
     if trades:
         signals["trade_flow_ratio"] = calc_trade_flow_ratio(trades)
@@ -371,17 +376,14 @@ def extract_poly_signals(market_data):
     Extract Polymarket signals from a market dict (Gamma events API format).
 
     Uses live fields directly from the API — no CLOB call needed:
-      lastTradePrice  → poly_yes_price  (most current traded price)
-      bestBid/bestAsk → poly_spread     (live order book spread)
-      spread          → poly_spread     (fallback if bestBid/bestAsk absent)
+      lastTradePrice  → poly_yes_price
+      bestBid/bestAsk → poly_spread
       volumeClob      → poly_volume_24h
     """
     signals = {}
     if not market_data:
         return signals
 
-    # Live price: lastTradePrice is the most current signal.
-    # Fall back to bestBid/bestAsk midpoint, then outcomePrices (stale — avoid).
     last_trade = market_data.get("lastTradePrice")
     best_bid   = market_data.get("bestBid")
     best_ask   = market_data.get("bestAsk")
@@ -400,10 +402,9 @@ def extract_poly_signals(market_data):
             pass
 
     if yes_price is not None:
-        signals["poly_yes_price"] = yes_price
+        signals["poly_yes_price"]  = yes_price
         signals["poly_divergence"] = yes_price - 0.50
 
-    # Spread: prefer bestBid/bestAsk, fall back to spread field
     if best_bid is not None and best_ask is not None:
         try:
             signals["poly_spread"] = float(best_ask) - float(best_bid)
@@ -415,7 +416,6 @@ def extract_poly_signals(market_data):
         except (ValueError, TypeError):
             pass
 
-    # Volume
     vol = market_data.get("volumeClob") or market_data.get("volume24hr")
     if vol is not None:
         try:
@@ -430,15 +430,10 @@ def derive_combo_signals(cex, poly, price_to_beat=None):
     """Derive cross-signal features."""
     derived = {}
 
-    # CEX/Poly lag: how much of the CEX signal is NOT yet in Polymarket pricing.
-    # Formula matches composite_signal.py to keep stored values consistent with scoring.
     if cex.get("momentum_5m") is not None and poly.get("poly_divergence") is not None:
         poly_div = poly["poly_divergence"]
         derived["cex_poly_lag"] = cex["momentum_5m"] * (0.15 - max(-0.15, min(0.15, poly_div))) / 0.15
 
-    # BTC vs reference: (current_price - window_start_price) / window_start_price * 100
-    # This is the direct answer to "is Bitcoin up or down since the window started?"
-    # Positive = Up is currently winning. Most predictive signal available.
     if price_to_beat and cex.get("price_now"):
         derived["btc_vs_reference"] = (
             (cex["price_now"] - price_to_beat) / price_to_beat * 100
@@ -447,9 +442,9 @@ def derive_combo_signals(cex, poly, price_to_beat=None):
     return derived
 
 
-# ─────────────────────────────────────────────
+# =============================================================================
 # Outcome Resolution
-# ─────────────────────────────────────────────
+# =============================================================================
 
 def resolve_outcomes(conn, symbol="BTCUSDT"):
     """
@@ -458,14 +453,12 @@ def resolve_outcomes(conn, symbol="BTCUSDT"):
     Resolution strategy (in priority order):
       1. market.winners field — explicit winner token label ("Up" / "Down")
       2. outcomePrices — YES token final price (>0.8 = up, <0.2 = down)
+         Only used after validating that outcomes[0] is labelled "Up".
       3. outcomes array with winner flag
       4. Mark as 'unclear' if closed but can't determine direction
-
-    Note: secs_remaining may be inflated (pre-created market bug).
-    We ignore it and just check market age + closed flag.
     """
     cursor = conn.execute("""
-        SELECT id, market_condition_id, market_slug, ts, seconds_remaining, price_now
+        SELECT id, market_condition_id, market_slug, ts
         FROM signal_observations
         WHERE resolved = 0 OR outcome = 'unclear'
         ORDER BY ts ASC LIMIT 100
@@ -475,22 +468,23 @@ def resolve_outcomes(conn, symbol="BTCUSDT"):
     skipped_open = 0
 
     for row in rows:
-        obs_id, cond_id, slug, ts_str, secs_remaining, price_at_obs = row
+        obs_id, cond_id, slug, ts_str = row
         if not slug and not cond_id:
             continue
 
-        # Only attempt resolution if observation is at least 10 minutes old
         try:
             obs_time = datetime.fromisoformat(ts_str)
         except ValueError:
             continue
+
+        # Only attempt resolution if observation is at least 10 minutes old
         age_seconds = (datetime.now(timezone.utc) - obs_time).total_seconds()
         if age_seconds < 600:
             skipped_open += 1
             continue
 
-        # Prefer slug-based lookup via events endpoint — conditionId lookup returns
-        # wrong markets (Polymarket API bug with fast-market condition IDs).
+        # Prefer slug-based lookup — conditionId lookup returns wrong markets
+        # for fast-market condition IDs (Polymarket API bug).
         market = None
         if slug:
             data = _get(f"{GAMMA_API}/events?slug={slug}")
@@ -499,15 +493,13 @@ def resolve_outcomes(conn, symbol="BTCUSDT"):
                 if mkts:
                     market = mkts[0]
 
-        # Fallback to conditionId only if slug lookup failed
         if market is None and cond_id:
             market = fetch_poly_market(cond_id)
 
         if not market:
             continue
 
-        closed = market.get("closed", False)
-        if not closed:
+        if not market.get("closed", False):
             skipped_open += 1
             continue
 
@@ -529,6 +521,10 @@ def _determine_outcome(market):
     """
     Extract up/down outcome from a resolved Gamma market dict.
     Tries multiple fields since Gamma API is inconsistent post-resolution.
+
+    FIX: outcomePrices strategy now validates that outcomes[0] is labelled "Up"
+    before assuming prices[0] corresponds to the Up token. Prevents silently
+    flipping outcomes on markets with different outcome orderings.
     """
     # Strategy 1: explicit winners array e.g. ["Up"] or ["Down"]
     winners = market.get("winners") or market.get("winner")
@@ -541,21 +537,45 @@ def _determine_outcome(market):
         if "down" in w:
             return "down"
 
-    # Strategy 2: outcomePrices — winning token resolves to ~1.0
+    # Strategy 2: outcomePrices — only safe when we know which token is which.
+    # Validate that outcomes[0] is "Up" before treating prices[0] as Up probability.
     try:
-        prices = json.loads(market.get("outcomePrices", "[]"))
-        if len(prices) >= 2:
-            yes_price = float(prices[0])
-            no_price = float(prices[1])
-            if yes_price > 0.8:
-                return "up"
-            if no_price > 0.8:
-                return "down"
-            if yes_price > no_price and yes_price > 0.6:
-                return "up"
-            if no_price > yes_price and no_price > 0.6:
-                return "down"
-    except (ValueError, json.JSONDecodeError, IndexError):
+        outcomes_raw = market.get("outcomes", "[]")
+        if isinstance(outcomes_raw, str):
+            outcomes_list = json.loads(outcomes_raw)
+        else:
+            outcomes_list = outcomes_raw
+
+        if isinstance(outcomes_list, list) and len(outcomes_list) >= 2:
+            first_label = str(outcomes_list[0]).lower()
+            second_label = str(outcomes_list[1]).lower()
+
+            # Only proceed if we can confirm the token ordering
+            if "up" in first_label and "down" in second_label:
+                prices = json.loads(market.get("outcomePrices", "[]"))
+                if len(prices) >= 2:
+                    yes_price = float(prices[0])
+                    no_price  = float(prices[1])
+                    if yes_price > 0.8:
+                        return "up"
+                    if no_price > 0.8:
+                        return "down"
+                    if yes_price > no_price and yes_price > 0.6:
+                        return "up"
+                    if no_price > yes_price and no_price > 0.6:
+                        return "down"
+            elif "down" in first_label and "up" in second_label:
+                # Reversed ordering — swap interpretation
+                prices = json.loads(market.get("outcomePrices", "[]"))
+                if len(prices) >= 2:
+                    down_price = float(prices[0])
+                    up_price   = float(prices[1])
+                    if up_price > 0.8:
+                        return "up"
+                    if down_price > 0.8:
+                        return "down"
+            # Unknown ordering — skip outcomePrices entirely
+    except (ValueError, json.JSONDecodeError, IndexError, TypeError):
         pass
 
     # Strategy 3: outcomes array with winner flag
@@ -577,9 +597,9 @@ def _determine_outcome(market):
     return "unclear"
 
 
-# ─────────────────────────────────────────────
+# =============================================================================
 # Signal Analysis / Correlation Report
-# ─────────────────────────────────────────────
+# =============================================================================
 
 SIGNAL_COLUMNS = [
     "momentum_1m", "momentum_5m", "momentum_15m",
@@ -636,20 +656,18 @@ def analyze_signals(conn, min_n=20):
         v_list = [p[0] for p in paired]
         o_list = [p[1] for p in paired]
 
-        # Point-biserial correlation
-        n = len(v_list)
+        n      = len(v_list)
         mean_v = sum(v_list) / n
         mean_o = sum(o_list) / n
-        std_v = math.sqrt(sum((x - mean_v)**2 for x in v_list) / n) or 1e-9
-        std_o = math.sqrt(sum((x - mean_o)**2 for x in o_list) / n) or 1e-9
-        corr = sum((v_list[i] - mean_v) * (o_list[i] - mean_o) for i in range(n)) / (n * std_v * std_o)
+        std_v  = math.sqrt(sum((x - mean_v)**2 for x in v_list) / n) or 1e-9
+        std_o  = math.sqrt(sum((x - mean_o)**2 for x in o_list) / n) or 1e-9
+        corr   = sum((v_list[i] - mean_v) * (o_list[i] - mean_o) for i in range(n)) / (n * std_v * std_o)
 
-        # Win rates by signal direction
         pos_wins = [o for v, o in paired if v > 0]
         neg_wins = [o for v, o in paired if v <= 0]
         wr_pos = sum(pos_wins) / len(pos_wins) if pos_wins else float('nan')
         wr_neg = sum(neg_wins) / len(neg_wins) if neg_wins else float('nan')
-        edge = wr_pos - wr_neg
+        edge   = wr_pos - wr_neg
 
         results.append((abs(corr), col, len(paired), corr, wr_pos, wr_neg, edge))
 
@@ -669,8 +687,8 @@ def analyze_signals(conn, min_n=20):
 def export_csv(conn, path):
     """Export all observations to CSV."""
     cursor = conn.execute("SELECT * FROM signal_observations ORDER BY ts")
-    rows = cursor.fetchall()
-    cols = [d[0] for d in cursor.description]
+    rows   = cursor.fetchall()
+    cols   = [d[0] for d in cursor.description]
     import csv
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -679,47 +697,17 @@ def export_csv(conn, path):
     print(f"Exported {len(rows)} rows to {path}")
 
 
-# ─────────────────────────────────────────────
+# =============================================================================
 # Collection Loop
-# ─────────────────────────────────────────────
+# =============================================================================
 
-def _is_valid_market(gamma_mkt):
-    """
-    Validate a Gamma market record is current and tradeable.
-    Only trusts endDate with a full ISO timestamp (contains 'T').
-    Never uses createdAt — unreliable for recurring markets.
-    """
-    if not gamma_mkt:
-        return False, "no gamma data"
-
-    now = datetime.now(timezone.utc)
-
-    # Try fields in order of reliability — endDate first, it has the full timestamp
-    for key in ("endDate", "end_date"):
-        raw = gamma_mkt.get(key)
-        if raw and "T" in str(raw):
-            try:
-                end = datetime.fromisoformat(
-                    str(raw).replace("Z", "+00:00")
-                ).astimezone(timezone.utc)
-
-                expired_secs = (now - end).total_seconds()
-                if expired_secs > 600:
-                    return False, f"market ended {expired_secs/60:.0f}m ago"
-
-                future_secs = (end - now).total_seconds()
-                if future_secs > 900:
-                    return False, f"market resolves in {future_secs/60:.0f}m (too far ahead)"
-
-                return True, "ok"
-            except ValueError:
-                continue
-
-    return False, "no endDate with full timestamp found"
+def _now():
+    return datetime.now(timezone.utc).strftime("%H:%M:%S")
 
 
 def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
-    from fast_trader import discover_fast_market_markets, find_best_fast_market
+    # FIX: import from market_utils, not fast_trader — eliminates circular import
+    from market_utils import discover_fast_market_markets, find_best_fast_market
 
     markets = discover_fast_market_markets(asset, window)
     if not markets:
@@ -746,32 +734,31 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
 
     seconds_remaining = (end_time - now).total_seconds()
 
-    # Fetch CEX signals first — we need price_now to populate the reference cache
-    cex = extract_cex_signals(symbol)
+    cex  = extract_cex_signals(symbol)
     poly = extract_poly_signals(best)
 
-    # price_to_beat: our cached Binance price at first observation after window opens.
-    # Polymarket's eventMetadata.priceToBeat is never set via the API, so we record
-    # our own reference on the first cycle after startTime passes.
-
-    # event_start = best.get("event_start")
-    # window_open = bool(event_start and now >= event_start)
+    # FIX: only seed reference price in the first 60s after window opens.
+    # Seeding on every cycle would reset btc_vs_reference to 0 on restart.
+    event_start = best.get("event_start")
+    window_just_opened = bool(
+        event_start and (now - event_start).total_seconds() < 60
+    )
     price_to_beat = get_window_reference_price(
         best.get("slug", ""),
         cex_price_now=cex.get("price_now"),
-        window_open=True,  # always seed immediately
+        window_open=window_just_opened,
     )
 
-    derived = derive_combo_signals(cex, poly, price_to_beat)
+    derived     = derive_combo_signals(cex, poly, price_to_beat)
     all_signals = {**cex, **poly, **derived}
 
     row = {
-        "ts": now.isoformat(),
-        "market_slug": best.get("slug", ""),
-        "market_condition_id": cond_id,
-        "seconds_remaining": seconds_remaining,
-        "price_now": all_signals.get("price_now"),
-        "price_to_beat": price_to_beat,
+        "ts":                   now.isoformat(),
+        "market_slug":          best.get("slug", ""),
+        "market_condition_id":  cond_id,
+        "seconds_remaining":    seconds_remaining,
+        "price_now":            all_signals.get("price_now"),
+        "price_to_beat":        price_to_beat,
         **{k: all_signals.get(k) for k in SIGNAL_COLUMNS if k != "seconds_remaining"},
     }
 
@@ -795,19 +782,20 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
     """, row)
     obs_id = cursor.lastrowid
 
-    # Compute composite signal and store prediction alongside the observation
+    # Compute composite signal and store prediction alongside observation
+    sig = None
     try:
         from composite_signal import get_composite_signal
         cex_for_sig = {k: all_signals.get(k) for k in [
             "momentum_5m", "rsi_14", "volume_ratio", "order_imbalance",
             "trade_flow_ratio", "volatility_5m", "price_acceleration",
             "btc_vs_reference", "cex_poly_lag", "momentum_consistency",
-            "vol_adjusted_momentum",
+            "vol_adjusted_momentum", "momentum_1m", "momentum_15m",
         ]}
         poly_for_sig = {
-            "poly_yes_price": all_signals.get("poly_yes_price"),
+            "poly_yes_price":  all_signals.get("poly_yes_price"),
             "poly_divergence": all_signals.get("poly_divergence"),
-            "poly_spread": all_signals.get("poly_spread"),
+            "poly_spread":     all_signals.get("poly_spread"),
         }
         sig = get_composite_signal(cex_for_sig, poly_for_sig)
         conn.execute("""
@@ -828,51 +816,50 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
 
     conn.commit()
 
-    m5 = all_signals.get("momentum_5m", 0) or 0
-    poly_p = all_signals.get("poly_yes_price", 0.5) or 0.5
-    vs_ref = all_signals.get("btc_vs_reference")
-    vol_r = all_signals.get("volume_ratio", 1.0) or 1.0
+    m5         = all_signals.get("momentum_5m", 0) or 0
+    poly_p     = all_signals.get("poly_yes_price", 0.5) or 0.5
+    vs_ref     = all_signals.get("btc_vs_reference")
+    vol_r      = all_signals.get("volume_ratio", 1.0) or 1.0
     vs_ref_str = f"{vs_ref:+.4f}%" if vs_ref is not None else "n/a"
 
-    # Build signal score line for log
-    try:
-        score_str = f"score={sig['score']:.3f} → {(sig.get('side') or 'neutral').upper()}"
-        if sig["should_trade"]:
-            score_str += f" (conf={sig['confidence']:.2f}) WOULD_TRADE"
-        elif sig.get("filter_reason"):
-            score_str += f" | {sig['filter_reason']}"
-    except Exception:
-        score_str = ""
+    score_str = ""
+    if sig is not None:
+        try:
+            score_str = f"score={sig['score']:.3f} → {(sig.get('side') or 'neutral').upper()}"
+            if sig["should_trade"]:
+                score_str += f" (conf={sig['confidence']:.2f}) WOULD_TRADE"
+            elif sig.get("filter_reason"):
+                score_str += f" | {sig['filter_reason']}"
+        except Exception:
+            pass
 
-    print(f"[{_now()}] {best.get('slug','')[-19:]:19} {seconds_remaining:4.0f}s | "
-          f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} vol={vol_r:.2f}x | "
-          f"{score_str}")
+    print(
+        f"[{_now()}] {best.get('slug','')[-19:]:19} {seconds_remaining:4.0f}s | "
+        f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} vol={vol_r:.2f}x | "
+        f"{score_str}"
+    )
 
 
-def _now():
-    return datetime.now(timezone.utc).strftime("%H:%M:%S")
-
-
-# ─────────────────────────────────────────────
+# =============================================================================
 # CLI
-# ─────────────────────────────────────────────
+# =============================================================================
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="FastLoop Signal Research")
-    parser.add_argument("--collect", action="store_true",
+    parser.add_argument("--collect",  action="store_true",
                         help="Collect signals continuously (Ctrl-C to stop)")
-    parser.add_argument("--analyze", action="store_true",
+    parser.add_argument("--analyze",  action="store_true",
                         help="Show correlation report")
-    parser.add_argument("--resolve", action="store_true",
+    parser.add_argument("--resolve",  action="store_true",
                         help="Resolve pending outcomes")
-    parser.add_argument("--export", metavar="FILE",
+    parser.add_argument("--export",   metavar="FILE",
                         help="Export observations to CSV")
-    parser.add_argument("--min-n", type=int, default=20,
+    parser.add_argument("--min-n",    type=int, default=20,
                         help="Min observations to show in report")
     parser.add_argument("--interval", type=int, default=30,
                         help="Collection interval in seconds (default: 30)")
-    parser.add_argument("--asset", default="BTC")
-    parser.add_argument("--window", default="5m")
+    parser.add_argument("--asset",    default="BTC")
+    parser.add_argument("--window",   default="5m")
     args = parser.parse_args()
 
     conn = init_db()
