@@ -529,6 +529,10 @@ def import_fast_market_market(slug):
     if imports_used >= IMPORT_DAILY_LIMIT:
         return None, f"Daily import limit reached ({imports_used}/{IMPORT_DAILY_LIMIT}) — waiting for tomorrow"
 
+    # After the import gate check, before calling import_fast_market_market:
+    if slug not in _market_id_cache:
+        log(f"  Import quota: {imports_used}/{IMPORT_DAILY_LIMIT} used today")
+
     url = f"https://polymarket.com/event/{slug}"
 
     for attempt in range(3):
@@ -810,7 +814,7 @@ def run_fast_market_strategy(
     # Gate: only consume an import slot on strong signals
     slug = best["slug"]
     if slug not in _market_id_cache:
-        if MIN_SCORE_TO_IMPORT <= score <= (1 - MIN_SCORE_TO_IMPORT):
+        if score < MIN_SCORE_TO_IMPORT and score > (1 - MIN_SCORE_TO_IMPORT):
             log(f"  SKIP import: score {score:.3f} too weak to spend import quota")
             return
 
