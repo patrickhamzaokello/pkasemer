@@ -529,23 +529,38 @@ def import_fast_market_market(slug):
     if imports_used >= IMPORT_DAILY_LIMIT:
         return None, f"Daily import limit reached ({imports_used}/{IMPORT_DAILY_LIMIT}) — waiting for tomorrow"
 
-    # After the import gate check, before calling import_fast_market_market:
-    if slug not in _market_id_cache:
-        print(f"  Import quota: {imports_used}/{IMPORT_DAILY_LIMIT} used today")
+    print(f"  Import quota: {imports_used}/{IMPORT_DAILY_LIMIT} used today")
 
     url = f"https://polymarket.com/event/{slug}"
 
-    # REPLACE the entire for attempt in range(3) loop with:
     try:
         result = get_client().import_market(url)
     except Exception as e:
         err = str(e)
         if "429" in err:
-            print(f"  Rate limited — will retry next cycle (20s)", flush=True)
-            return None, "429_rate_limited"  # special marker, don't log as error
+            print(f"  Rate limited — will retry next cycle", flush=True)
+            return None, "429_rate_limited"
         return None, err
 
-    return None, "Max retries exceeded (rate limited)"
+    # --- THIS BLOCK WAS MISSING ---
+    # result is a dict from the SDK; extract the Simmer market_id
+    if isinstance(result, dict):
+        market_id = result.get("market_id") or result.get("id")
+    else:
+        # SDK might return an object
+        market_id = getattr(result, "market_id", None) or getattr(result, "id", None)
+
+    if not market_id:
+        return None, f"No market_id in import response: {result}"
+
+    # Cache it so future cycles skip the import quota
+    _market_id_cache[slug] = market_id
+    _save_market_cache(_market_id_cache)
+    _increment_import_count()
+
+    return market_id, None
+    # The old code fell through to this line every time:
+    # return None, "Max retries exceeded (rate limited)"
 
 
 def get_positions():
