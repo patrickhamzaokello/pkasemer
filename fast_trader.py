@@ -174,17 +174,16 @@ DAILY_BUDGET       = cfg["daily_budget"]
 # Daily Budget & Import Tracking
 # =============================================================================
 
-def _get_spend_path(skill_file):
-    return Path(skill_file).parent / "daily_spend.json"
+# daily_spend.json lives on /data (shared volume) so monitor container can read it
+_SPEND_FILE = Path(_DATA_DIR) / "daily_spend.json"
 
 
-def _load_daily_spend(skill_file):
+def _load_daily_spend(*_):
     """Load today's spend record, resetting automatically on a new UTC day."""
-    spend_path = _get_spend_path(skill_file)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if spend_path.exists():
+    if _SPEND_FILE.exists():
         try:
-            with open(spend_path) as f:
+            with open(_SPEND_FILE) as f:
                 data = json.load(f)
             if data.get("date") == today:
                 return data
@@ -193,20 +192,19 @@ def _load_daily_spend(skill_file):
     return {"date": today, "spent": 0.0, "trades": 0, "imports_today": 0}
 
 
-def _save_daily_spend(skill_file, spend_data):
-    spend_path = _get_spend_path(skill_file)
-    with open(spend_path, "w") as f:
+def _save_daily_spend(spend_data):
+    with open(_SPEND_FILE, "w") as f:
         json.dump(spend_data, f, indent=2)
 
 
 def _get_import_count_today():
-    return _load_daily_spend(__file__).get("imports_today", 0)
+    return _load_daily_spend().get("imports_today", 0)
 
 
 def _increment_import_count():
-    spend = _load_daily_spend(__file__)
+    spend = _load_daily_spend()
     spend["imports_today"] = spend.get("imports_today", 0) + 1
-    _save_daily_spend(__file__, spend)
+    _save_daily_spend(spend)
 
 
 # =============================================================================
@@ -514,7 +512,7 @@ def run_fast_market_strategy(
 
     # ── Config view ───────────────────────────────────────────────────────────
     if show_config:
-        daily_spend = _load_daily_spend(__file__)
+        daily_spend = _load_daily_spend()
         print(f"Config: {_get_config_path(__file__)}")
         print(
             f"  asset={ASSET}  window={WINDOW}  max_pos=${MAX_POSITION_USD:.2f}  "
@@ -544,7 +542,7 @@ def run_fast_market_strategy(
                 )
         return
 
-    daily_spend = _load_daily_spend(__file__)
+    daily_spend = _load_daily_spend()
 
     # ── Step 1: Discover markets ──────────────────────────────────────────────
     markets = discover_fast_market_markets(ASSET, WINDOW)
@@ -716,7 +714,7 @@ def run_fast_market_strategy(
             log(f"  TRADED {shares:.1f} {side.upper()} shares @ ${entry_price:.3f}", force=True)
             daily_spend["spent"]  += position_size
             daily_spend["trades"] += 1
-            _save_daily_spend(__file__, daily_spend)
+            _save_daily_spend(daily_spend)
             if trade_id and JOURNAL_AVAILABLE:
                 log_trade(
                     trade_id=trade_id,

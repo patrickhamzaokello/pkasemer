@@ -25,9 +25,9 @@ CORS(app)
 
 DB_PATH     = os.environ.get("DB_PATH", "/data/signal_research.db")
 STATUS_PATH = "/data/status.json"
-LOG_PATH    = "/app/logs/scheduler.log"
+LOG_PATH    = "/app/logs/scheduler.log"   # requires ./logs:/app/logs in monitor service
 CACHE_PATH  = "/data/market_id_cache.json"
-SPEND_PATH  = "/app/daily_spend.json"
+SPEND_PATH  = "/data/daily_spend.json"    # on shared volume, written by fast_trader.py
 
 
 def get_db():

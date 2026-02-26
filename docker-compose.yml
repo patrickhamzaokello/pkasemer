@@ -9,12 +9,11 @@ services:
     restart: unless-stopped
     environment:
       FASTLOOP_MODE: trade          # collect | trade | both | dry
-      FASTLOOP_INTERVAL: "60"         # seconds between cycles- was 20
+      FASTLOOP_INTERVAL: "60"       # seconds between cycles
       FASTLOOP_ASSET: BTC
       FASTLOOP_WINDOW: 5m
       DB_PATH: /data/signal_research.db
       LOG_LEVEL: INFO
-      # Copy your .env file or set SIMMER_API_KEY here for trade mode
     env_file:
       - .env
     volumes:
@@ -39,7 +38,8 @@ services:
     env_file:
       - .env
     volumes:
-      - fastloop-data:/data
+      - fastloop-data:/data          # shared with collector: status.json, db, cache, spend
+      - ./logs:/app/logs             # shared with collector: scheduler.log (read-only here)
       - ./dashboard:/app/dashboard:ro
     ports:
       - "5000:5000"
@@ -60,6 +60,14 @@ volumes:
       o: bind
       device: ./data          # persists to ./data/ on host
 
+# ── File locations after these fixes ──────────────────────────────────────
+#
+#  /data/signal_research.db     ← DB (shared volume, both containers)
+#  /data/status.json            ← scheduler status (shared volume)
+#  /data/market_id_cache.json   ← import cache (shared volume)
+#  /data/daily_spend.json       ← budget + quota tracking (shared volume)
+#  /app/logs/scheduler.log      ← log file (bind mount, both containers)
+#
 # ── Usage ──────────────────────────────────────────────────────────────────
 #
 # Build and start:
@@ -70,17 +78,20 @@ volumes:
 #   docker compose logs -f monitor
 #
 # Open dashboard:
-#   http://localhost:5000
+#   http://localhost:5000/live.html
 #
 # Switch to dry-run trading (no real trades):
-#   Set FASTLOOP_MODE=dry in this file, then: docker compose up -d collector
+#   Set FASTLOOP_MODE=dry, then: docker compose up -d collector
 #
 # Switch to live trading:
-#   Set FASTLOOP_MODE=both in this file (collect + trade simultaneously)
+#   Set FASTLOOP_MODE=both (collect + trade simultaneously)
 #   Ensure SIMMER_API_KEY is set in .env
 #   docker compose up -d collector
 #
-# Run signal analysis (from inside collector container):
+# Seed import cache (run when quota is exhausted):
+#   docker exec fastloop-collector python seed_cache.py
+#
+# Run signal analysis:
 #   docker exec fastloop-collector python signal_research.py --analyze --min-n 30
 #
 # Export data:
