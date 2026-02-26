@@ -535,43 +535,15 @@ def import_fast_market_market(slug):
 
     url = f"https://polymarket.com/event/{slug}"
 
-    for attempt in range(3):
-        try:
-            result = get_client().import_market(url)
-        except Exception as e:
-            err = str(e)
-            if "429" in err and attempt < 2:
-                wait = (attempt + 1) * 15  # 15s, 30s
-                print(f"  Rate limited, retrying in {wait}s...", flush=True)
-                time.sleep(wait)
-                continue
-            return None, err
-
-        if not result:
-            return None, "No response from import endpoint"
-
-        if isinstance(result, dict) and result.get("error"):
-            return None, result.get("error", "Unknown error")
-
-        status    = result.get("status")
-        market_id = result.get("market_id")
-
-        if status == "resolved":
-            alts = result.get("active_alternatives", [])
-            if alts:
-                return None, f"Market resolved. Try: {alts[0].get('id')}"
-            return None, "Market resolved"
-
-        if status in ("imported", "already_exists"):
-            _market_id_cache[slug] = market_id
-            _save_market_cache(_market_id_cache)
-            # FIX: only increment quota on a real new import, not cache/already_exists
-            if status == "imported":
-                _increment_import_count()
-            return market_id, None
-
-        # Unexpected status — don't retry
-        return None, f"Unexpected status: {status}"
+    # REPLACE the entire for attempt in range(3) loop with:
+    try:
+        result = get_client().import_market(url)
+    except Exception as e:
+        err = str(e)
+        if "429" in err:
+            print(f"  Rate limited — will retry next cycle (20s)", flush=True)
+            return None, "429_rate_limited"  # special marker, don't log as error
+        return None, err
 
     return None, "Max retries exceeded (rate limited)"
 
@@ -820,7 +792,8 @@ def run_fast_market_strategy(
 
     market_id, import_error = import_fast_market_market(slug)
     if not market_id:
-        log(f"  ERROR import failed: {import_error}", force=True)
+        if import_error != "429_rate_limited":
+            log(f"  ERROR import failed: {import_error}", force=True)
         return
 
     # ── Trade execution ───────────────────────────────────────────────────────
