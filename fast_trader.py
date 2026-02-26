@@ -28,6 +28,7 @@ from composite_signal import get_composite_signal
 from signal_research import extract_cex_signals, extract_poly_signals, get_window_reference_price
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 # Coin slugs exactly as Polymarket uses them
 COIN_SLUGS = {
@@ -79,7 +80,23 @@ TRADE_SOURCE = "sdk:fastloop"
 SMART_SIZING_PCT = 0.05
 MIN_SHARES_PER_ORDER = 2
 
-_market_id_cache = {}  # cache slug → market_id to avoid repeated import calls
+_CACHE_FILE = Path("/data/market_id_cache.json")
+
+def _load_market_cache():
+    if _CACHE_FILE.exists():
+        try:
+            return json.loads(_CACHE_FILE.read_text())
+        except Exception:
+            return {}
+    return {}
+
+def _save_market_cache(cache):
+    try:
+        _CACHE_FILE.write_text(json.dumps(cache))
+    except Exception:
+        pass
+
+_market_id_cache = _load_market_cache()
 
 
 ASSET_SYMBOLS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT"}
@@ -462,9 +479,11 @@ def get_momentum(asset="BTC", source="binance", lookback=5):
 def import_fast_market_market(slug):
     global _market_id_cache
 
-    # Return cached market_id if we already imported this slug
-    if slug in _market_id_cache:
-        return _market_id_cache[slug], None
+    # Check daily limit before calling Simmer
+    if slug not in _market_id_cache:
+        imports_used = _get_import_count_today()
+        if imports_used >= 9:  # leave 1 buffer
+            return None, f"Daily import limit reached ({imports_used}/10) — waiting for tomorrow"
 
     url = f"https://polymarket.com/event/{slug}"
     for attempt in range(3):
@@ -488,12 +507,11 @@ def import_fast_market_market(slug):
             alts = result.get("active_alternatives", [])
             return None, f"Market resolved" if not alts else f"Market resolved. Try: {alts[0].get('id')}"
         if status in ("imported", "already_exists"):
-            # Cache it — evict oldest if cache grows too large
             _market_id_cache[slug] = market_id
-            if len(_market_id_cache) > 20:
-                oldest = list(_market_id_cache.keys())[0]
-                del _market_id_cache[oldest]
-            return market_id, None
+            _save_market_cache(_market_id_cache)
+            _increment_import_count()
+        return market_id, None
+
         return None, f"Unexpected status: {status}"
     return None, "Max retries exceeded (rate limited)"
 
@@ -540,6 +558,24 @@ def execute_trade(market_id, side, amount):
         }
     except Exception as e:
         return {"error": str(e)}
+
+def _get_import_count_today():
+    """Track how many imports used today."""
+    spend = _load_daily_spend(__file__)
+    return spend.get("imports_today", 0)
+
+def _increment_import_count():
+    spend = _load_daily_spend(__file__)
+    spend["imports_today"] = spend.get("imports_today", 0) + 1
+    _save_daily_spend(__file__, spend)
+
+def _reset_import_count_if_new_day():
+    spend = _load_daily_spend(__file__)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if spend.get("date") != today:
+        spend = {"date": today, "spent": 0.0, "trades": 0, "imports_today": 0}
+        _save_daily_spend(__file__, spend)
+
 
 
 def calculate_position_size(max_size, smart_sizing=False):
@@ -705,6 +741,14 @@ def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=Fal
     print(f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
           f"m5={m5:+.3f}% vs_ref={vs_ref_str} vol={vol_r:.2f}x | "
           f"score={score:.3f} conf={confidence:.2f} → {side.upper()} ${position_size:.2f}", flush=True)
+
+    # Gate: only spend an import on strong signals (free tier = 10 imports/day)
+    MIN_SCORE_TO_IMPORT = 0.65
+    slug = best["slug"]
+    if slug not in _market_id_cache:
+        if score < MIN_SCORE_TO_IMPORT and score > (1 - MIN_SCORE_TO_IMPORT):
+            print(f"  SKIP import: score {score:.3f} too weak to spend import quota", flush=True)
+            return
 
     market_id, import_error = import_fast_market_market(best["slug"])
     if not market_id:
