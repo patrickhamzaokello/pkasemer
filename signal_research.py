@@ -745,8 +745,6 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
         return
 
     seconds_remaining = (end_time - now).total_seconds()
-    event_start = best.get("event_start")
-    window_open = bool(event_start and now >= event_start)
 
     # Fetch CEX signals first — we need price_now to populate the reference cache
     cex = extract_cex_signals(symbol)
@@ -755,10 +753,13 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
     # price_to_beat: our cached Binance price at first observation after window opens.
     # Polymarket's eventMetadata.priceToBeat is never set via the API, so we record
     # our own reference on the first cycle after startTime passes.
+
+    # event_start = best.get("event_start")
+    # window_open = bool(event_start and now >= event_start)
     price_to_beat = get_window_reference_price(
         best.get("slug", ""),
         cex_price_now=cex.get("price_now"),
-        window_open=window_open,
+        window_open=True,  # always seed immediately
     )
 
     derived = derive_combo_signals(cex, poly, price_to_beat)

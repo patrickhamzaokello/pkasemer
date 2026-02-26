@@ -603,12 +603,17 @@ def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=Fal
 
     poly_signals = extract_poly_signals(best)
 
-    event_start = best.get("event_start")
-    window_open = bool(event_start and datetime.now(timezone.utc) >= event_start)
+    # event_start = best.get("event_start")
+    # window_open = bool(event_start and datetime.now(timezone.utc) >= event_start)
+    # price_to_beat = get_window_reference_price(
+    #     best.get("slug", ""),
+    #     cex_price_now=cex_signals.get("price_now"),
+    #     window_open=window_open,
+    # )
     price_to_beat = get_window_reference_price(
         best.get("slug", ""),
         cex_price_now=cex_signals.get("price_now"),
-        window_open=window_open,
+        window_open=True,  # always seed on first sight of slug
     )
     if price_to_beat and cex_signals.get("price_now"):
         cex_signals["btc_vs_reference"] = (
