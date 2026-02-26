@@ -531,7 +531,7 @@ def import_fast_market_market(slug):
 
     # After the import gate check, before calling import_fast_market_market:
     if slug not in _market_id_cache:
-        log(f"  Import quota: {imports_used}/{IMPORT_DAILY_LIMIT} used today")
+        print(f"  Import quota: {imports_used}/{IMPORT_DAILY_LIMIT} used today")
 
     url = f"https://polymarket.com/event/{slug}"
 
