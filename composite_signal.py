@@ -49,15 +49,17 @@ from urllib.error import HTTPError, URLError
 # ─────────────────────────────────────────────
 
 DEFAULT_WEIGHTS = {
-    "btc_vs_reference":      0.40,  # corr +0.39, edge +0.26 — dominant signal
-    "volume_ratio":          0.15,  # edge +0.22 — elevated volume predicts direction
-    "momentum_5m":           0.15,  # corr +0.17, edge +0.18
-    "vol_adjusted_momentum": 0.10,  # corr +0.19, edge +0.17
-    "price_acceleration":    0.15,  # corr +0.23 — independent of momentum level
-    "momentum_consistency":  0.05,  # corr +0.06
-    "cex_poly_lag":          0.00,  # redundant with momentum_5m when poly_div≈0 — excluded
-    "trade_flow_ratio":      0.00,  # edge -0.38 in data — excluded
-    "order_imbalance":       0.00,  # edge +0.01 in data — excluded
+    "btc_vs_reference":      0.45,
+    "vol_adjusted_momentum": 0.22,
+    "price_acceleration":    0.13,
+    "momentum_15m":          0.12,
+    "momentum_1m":           0.08,
+    "momentum_5m":           0.00,
+    "cex_poly_lag":          0.00,
+    "volume_ratio":          0.00,
+    "trade_flow_ratio":      0.00,
+    "order_imbalance":       0.00,
+    "momentum_consistency":  0.00,
 }
 
 # Thresholds
@@ -168,6 +170,8 @@ NORMALIZERS = {
     "btc_vs_reference":      normalize_btc_vs_reference,
     "volume_ratio":          normalize_volume_ratio,
     "momentum_5m":           normalize_momentum,
+    "momentum_1m":           normalize_momentum,
+    "momentum_15m":          normalize_momentum, 
     "vol_adjusted_momentum": normalize_vol_adjusted_momentum,
     "cex_poly_lag":          normalize_cex_poly_lag,
     "price_acceleration":    normalize_price_acceleration,
@@ -180,47 +184,37 @@ NORMALIZERS = {
 # ─────────────────────────────────────────────
 # Pre-trade filters (hard gates before scoring)
 # ─────────────────────────────────────────────
-
-def apply_filters(cex, poly):
-    """
-    Returns (passed: bool, reason: str).
-    Hard filters eliminate clearly bad conditions regardless of composite score.
-    """
+def apply_filters(cex, poly, config=None):
     m5 = cex.get("momentum_5m")
     vol5 = cex.get("volatility_5m")
     rsi = cex.get("rsi_14")
     vol_ratio = cex.get("volume_ratio", 1.0)
     poly_spread = poly.get("poly_spread")
-    poly_oi = poly.get("poly_order_imbalance")
 
-    # Momentum too weak — pure noise
     if m5 is not None and abs(m5) < MIN_MOMENTUM_ABS:
         return False, f"momentum too weak ({m5:+.3f}% < ±{MIN_MOMENTUM_ABS}%)"
 
-    # Market too volatile — model unreliable
     if vol5 is not None and vol5 > MAX_VOLATILITY_5M:
         return False, f"volatility too high ({vol5:.3f} > {MAX_VOLATILITY_5M})"
 
-    # RSI extremes — mean reversion likely, don't chase
     if rsi is not None:
         if m5 and m5 > 0 and rsi > RSI_OVERBOUGHT:
             return False, f"RSI overbought ({rsi:.0f} > {RSI_OVERBOUGHT}), skip long"
         if m5 and m5 < 0 and rsi < RSI_OVERSOLD:
             return False, f"RSI oversold ({rsi:.0f} < {RSI_OVERSOLD}), skip short"
 
-    # Polymarket spread too wide — execution drag too high
     if poly_spread is not None and poly_spread > MIN_POLY_SPREAD:
         return False, f"Poly spread too wide ({poly_spread:.3f} > {MIN_POLY_SPREAD})"
 
-    # Polymarket already priced in the move — data shows edge -0.29 once divergence > 0.08
     poly_divergence = poly.get("poly_divergence", 0)
     if m5 and m5 > 0 and poly_divergence > 0.08:
         return False, f"Poly already priced bullish ({poly_divergence:+.3f}), no edge left"
     if m5 and m5 < 0 and poly_divergence < -0.08:
         return False, f"Poly already priced bearish ({poly_divergence:+.3f}), no edge left"
 
-    # Low volume — signal unreliable
-    if vol_ratio is not None and vol_ratio < 0.3:
+    # Volume gate — only apply if volume_confidence is enabled in config
+    volume_confidence = config.get("volume_confidence", True) if config else True
+    if volume_confidence and vol_ratio is not None and vol_ratio < 0.3:
         return False, f"Volume too low ({vol_ratio:.2f}x avg)"
 
     return True, "ok"
@@ -243,6 +237,8 @@ def compute_composite_score(cex, poly, weights=None):
         "btc_vs_reference":      cex.get("btc_vs_reference"),
         "volume_ratio":          cex.get("volume_ratio"),
         "momentum_5m":           cex.get("momentum_5m"),
+        "momentum_1m":           cex.get("momentum_1m"),       
+        "momentum_15m":          cex.get("momentum_15m"),     
         "vol_adjusted_momentum": cex.get("vol_adjusted_momentum"),
         "cex_poly_lag":          _calc_cex_poly_lag(cex, poly),
         "price_acceleration":    cex.get("price_acceleration"),
@@ -322,7 +318,7 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
     }
 
     # Hard filters first
-    passed, reason = apply_filters(cex_signals, poly_signals)
+    passed, reason = apply_filters(cex_signals, poly_signals, config=config)
     if not passed:
         result["filter_reason"] = reason
         return result
@@ -351,9 +347,10 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
         result["filter_reason"] = f"score {score:.3f} within neutral band (threshold ±{threshold - 0.5:.3f})"
 
     # Position sizing: linear with confidence.
-    # confidence=0.10 → 10% of max, confidence=0.44 → 44% of max ($2.20 at $5 budget)
-    # Quadratic was too conservative — blocked valid trades below minimum order size.
-    result["position_pct"] = confidence
+    # Floor at 0.55 when trading — ensures position_size always clears 5-share minimum
+    # at $5 max_position. confidence=0.452 → position_pct=0.55 → $2.75 (covers 5 shares @ $0.55)
+    MIN_POSITION_PCT = 0.55
+    result["position_pct"] = max(confidence, MIN_POSITION_PCT) if result["should_trade"] else confidence
 
     return result
 

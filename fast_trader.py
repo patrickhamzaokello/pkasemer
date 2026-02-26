@@ -668,11 +668,16 @@ def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=Fal
         print(f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
               f"score={score:.3f} → {side.upper()} BLOCK: size ${position_size:.2f} < $0.50 min")
         return
-    if entry_price > 0 and (MIN_SHARES_PER_ORDER * entry_price) > position_size:
-        print(f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
-              f"score={score:.3f} → {side.upper()} BLOCK: "
-              f"${position_size:.2f} < {MIN_SHARES_PER_ORDER}x${entry_price:.2f} min")
-        return
+    
+    min_order_usdc = 5 * entry_price  # Polymarket hard minimum = 5 shares
+    if position_size < min_order_usdc:
+        if remaining_budget >= min_order_usdc and min_order_usdc <= MAX_POSITION_USD:
+            position_size = min_order_usdc  # bump up to meet minimum
+        else:
+            print(f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+                f"score={score:.3f} → {side.upper()} BLOCK: "
+                f"can't meet 5-share min ${min_order_usdc:.2f} (budget=${remaining_budget:.2f})")
+            return
 
     # ── Step 5: Import & execute ──────────────────────────────────────────────
     print(f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
