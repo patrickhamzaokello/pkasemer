@@ -8,7 +8,7 @@
   "window": "5m",
   "signal_source": "binance",
   "volume_confidence": false,
-  "daily_budget": 5.0,
+  "daily_budget": 10.0,
   "composite_threshold": 0.62,
   "signal_weights": {
     "btc_vs_reference":      0.45,
