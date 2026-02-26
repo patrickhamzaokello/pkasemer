@@ -232,6 +232,33 @@ def _save_market_cache(cache):
 _market_id_cache = _load_market_cache()
 
 
+def warm_import_cache(asset="BTC"):
+    """
+    Pre-import the current and next 5m market slugs at startup.
+    Called once when the scheduler starts so that live trade cycles
+    always find a cached market_id and never hit the import endpoint
+    mid-signal.
+
+    Uses the same import quota tracking — skips if limit already reached.
+    Logs clearly so you can see what was cached vs skipped.
+    """
+    from market_utils import get_fast_market_slugs
+    slugs = get_fast_market_slugs(asset, include_next=True)
+    print(f"  [cache warm] checking {len(slugs)} slugs for {asset}...", flush=True)
+    for slug in slugs:
+        if slug in _market_id_cache:
+            print(f"  [cache warm] {slug[-19:]} already cached ✓", flush=True)
+            continue
+        market_id, err = import_fast_market_market(slug)
+        if market_id:
+            print(f"  [cache warm] {slug[-19:]} imported → {market_id[:8]}... ✓", flush=True)
+        elif err == "429_rate_limited":
+            print(f"  [cache warm] {slug[-19:]} rate limited — will cache on first signal", flush=True)
+        else:
+            print(f"  [cache warm] {slug[-19:]} skipped: {err}", flush=True)
+        time.sleep(12)  # 6/min limit = 1 per 10s; 12s gives comfortable headroom
+
+
 # =============================================================================
 # API Helpers
 # =============================================================================
@@ -351,15 +378,19 @@ def get_momentum(asset="BTC", source="binance", lookback=5):
 # Simmer API: Import & Trade
 # =============================================================================
 
-def import_fast_market_market(slug):
+def import_fast_market_market(slug, max_retries=3):
     """
     Import a Polymarket market via Simmer SDK.
 
     Returns (market_id, None) on success or (None, error_str) on failure.
     Cache hits are returned immediately without consuming the import quota.
 
-    FIX: original code called import_market() but never extracted market_id
-    from the result — every call fell through to the error return.
+    Retries up to max_retries times on 429 with exponential backoff:
+      attempt 1: wait 10s
+      attempt 2: wait 20s
+      attempt 3: wait 40s
+    After all retries exhausted returns (None, "429_rate_limited") so the
+    caller can log it as a soft skip rather than a hard error.
     """
     global _market_id_cache
 
@@ -372,35 +403,48 @@ def import_fast_market_market(slug):
     if imports_used >= IMPORT_DAILY_LIMIT:
         return None, f"Daily import limit reached ({imports_used}/{IMPORT_DAILY_LIMIT}) — waiting for tomorrow"
 
-    print(f"  Import quota: {imports_used}/{IMPORT_DAILY_LIMIT} used today")
+    print(f"  Import quota: {imports_used}/{IMPORT_DAILY_LIMIT} used today", flush=True)
 
     url = f"https://polymarket.com/event/{slug}"
 
-    try:
-        result = get_client().import_market(url)
-    except Exception as e:
-        err = str(e)
-        if "429" in err:
-            print(f"  Rate limited — will retry next cycle", flush=True)
-            return None, "429_rate_limited"
-        return None, err
+    for attempt in range(max_retries):
+        try:
+            result = get_client().import_market(url)
+        except Exception as e:
+            err = str(e)
+            if "429" in err:
+                wait = 10 * (2 ** attempt)   # 10s, 20s, 40s
+                print(
+                    f"  Rate limited (attempt {attempt+1}/{max_retries}) "
+                    f"— waiting {wait}s before retry...",
+                    flush=True,
+                )
+                if attempt < max_retries - 1:
+                    time.sleep(wait)
+                    continue
+                # All retries exhausted
+                print(f"  Rate limited on all {max_retries} attempts — skipping this cycle", flush=True)
+                return None, "429_rate_limited"
+            return None, err
 
-    # Extract the Simmer-specific market_id from the response.
-    # The SDK may return a dict or an object depending on version.
-    if isinstance(result, dict):
-        market_id = result.get("market_id") or result.get("id")
-    else:
-        market_id = getattr(result, "market_id", None) or getattr(result, "id", None)
+        # Extract the Simmer-specific market_id from the response.
+        # The SDK may return a dict or an object depending on SDK version.
+        if isinstance(result, dict):
+            market_id = result.get("market_id") or result.get("id")
+        else:
+            market_id = getattr(result, "market_id", None) or getattr(result, "id", None)
 
-    if not market_id:
-        return None, f"No market_id in import response: {result}"
+        if not market_id:
+            return None, f"No market_id in import response: {result}"
 
-    # Cache so future cycles skip the quota entirely
-    _market_id_cache[slug] = market_id
-    _save_market_cache(_market_id_cache)
-    _increment_import_count()
+        # Cache so future cycles skip the quota entirely
+        _market_id_cache[slug] = market_id
+        _save_market_cache(_market_id_cache)
+        _increment_import_count()
 
-    return market_id, None
+        return market_id, None
+
+    return None, "429_rate_limited"
 
 
 def get_positions():
