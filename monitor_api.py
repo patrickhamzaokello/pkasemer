@@ -379,8 +379,9 @@ def trades():
         rows = conn.execute("""
             SELECT ts, market_slug, trade_side, trade_amount, trade_result,
                    outcome, resolved, btc_vs_reference, momentum_5m,
-                   poly_yes_price, seconds_remaining, price_to_beat, price_now
-            FROM signal_observations WHERE traded = 1 ORDER BY id DESC LIMIT 200
+                   poly_yes_price, seconds_remaining, price_to_beat, price_now,
+                   signal_score, signal_confidence, signal_side, filter_reason
+            FROM signal_observations WHERE traded = 1 ORDER BY id DESC LIMIT 500
         """).fetchall()
         conn.close()
         return jsonify([dict(r) for r in rows])
