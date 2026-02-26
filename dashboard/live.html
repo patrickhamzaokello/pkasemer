@@ -93,7 +93,7 @@ body::after {
 
 /* LIVE STRIP */
 .live-strip {
-  display: grid; grid-template-columns: 230px 1fr 260px;
+  display: grid; grid-template-columns: 230px 1fr 260px 220px;
   border-bottom: 2px solid var(--border2); flex-shrink: 0; height: 210px;
 }
 .lc { border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
@@ -189,6 +189,18 @@ table.tbl tr.open td { background:rgba(36,120,255,.02); }
 .rd.open { background:var(--blue); animation:pulse 2s infinite; }
 .rd.unk  { background:var(--dim); }
 .empty-r td { text-align:center; padding:40px; color:var(--dim); font-size:12px; }
+
+/* Import health + decision stats column */
+.imp-grid { display:grid; grid-template-columns:1fr 1fr; }
+.imp-cell { padding:7px 10px; border-right:1px solid var(--border); border-bottom:1px solid var(--border); }
+.imp-cell:nth-child(even){ border-right:none; }
+.imp-lbl { font-size:9px; letter-spacing:1px; text-transform:uppercase; color:var(--dim); margin-bottom:3px; }
+.imp-val { font-family:var(--display); font-size:18px; font-weight:700; color:var(--text3); line-height:1; }
+.qbar-wrap { padding:6px 10px; border-bottom:1px solid var(--border); }
+.qbar-row { display:flex; justify-content:space-between; font-size:9px; margin-bottom:3px; color:var(--dim); }
+.qbar-row span { color:var(--text); }
+.qbar-track { height:5px; background:var(--border); border-radius:3px; overflow:hidden; }
+.qbar-fill  { height:100%; border-radius:3px; background:var(--green); transition:width .4s, background .4s; }
 </style>
 </head>
 <body>
@@ -264,6 +276,32 @@ table.tbl tr.open td { background:rgba(36,120,255,.02); }
   <div class="lc">
     <div class="ph"><span class="pt">Scheduler Log</span><span class="pb" id="log-n">—</span></div>
     <div class="lscroll" id="log-body"><div style="padding:16px;color:var(--dim)">loading...</div></div>
+  </div>
+
+  <!-- Import health + decision stats -->
+  <div class="lc" style="overflow-y:auto">
+    <div class="ph"><span class="pt">Import Health</span><span class="pb" id="cache-badge" style="color:var(--dim)">—</span></div>
+    <div class="imp-grid">
+      <div class="imp-cell"><div class="imp-lbl">Imports today</div><div class="imp-val" id="imp-today">—</div></div>
+      <div class="imp-cell"><div class="imp-lbl">Cached slugs</div><div class="imp-val" id="imp-cached">—</div></div>
+      <div class="imp-cell"><div class="imp-lbl">Current window</div><div class="imp-val" id="imp-current" style="font-size:13px">—</div></div>
+      <div class="imp-cell"><div class="imp-lbl">Spent today</div><div class="imp-val" id="imp-spent">—</div></div>
+    </div>
+    <div class="qbar-wrap">
+      <div class="qbar-row">Import quota<span id="quota-lbl">0 / 9</span></div>
+      <div class="qbar-track"><div class="qbar-fill" id="quota-fill" style="width:0%"></div></div>
+    </div>
+    <div class="qbar-wrap">
+      <div class="qbar-row">Daily budget<span id="budget-lbl">$0</span></div>
+      <div class="qbar-track"><div class="qbar-fill" id="budget-fill" style="width:0%"></div></div>
+    </div>
+
+    <div class="ph" style="margin-top:0"><span class="pt">Today's Decisions</span><span class="pb" id="dec-total">—</span></div>
+    <div class="sr"><span class="sl">Would trade</span><span class="sv g" id="dec-trade">—</span></div>
+    <div class="sr"><span class="sl">Blocked</span><span class="sv d" id="dec-blocked">—</span></div>
+    <div class="sr"><span class="sl">Trade rate</span><span class="sv b" id="dec-rate">—</span></div>
+    <div class="sr"><span class="sl">Avg score</span><span class="sv" id="dec-score">—</span></div>
+    <div class="sr" style="border-bottom:none"><span class="sl">Top block</span><span class="sv a" id="dec-top" style="font-size:9px;text-align:right;max-width:110px;word-break:break-word">—</span></div>
   </div>
 
 </div>
@@ -619,9 +657,56 @@ function drawPnl(trades) {
     <text x="${PAD+4}" y="${H-4}" fill="rgba(255,255,255,0.1)" font-size="9" font-family="monospace">${n} resolved · green=win · red=loss</text>`;
 }
 
+
+// Import status
+async function fetchImportStatus() {
+  try {
+    const d = await fetch(`${API}/api/import-status`).then(r=>r.json());
+
+    document.getElementById('imp-today').textContent   = d.imports_today + ' / ' + d.import_limit;
+    document.getElementById('imp-cached').textContent  = d.cache_entries;
+    const curEl = document.getElementById('imp-current');
+    curEl.textContent  = d.current_cached ? '✓ cached' : '✗ missing';
+    curEl.style.color  = d.current_cached ? 'var(--green)' : 'var(--red)';
+    document.getElementById('imp-spent').textContent   = '$' + (d.spent_today||0).toFixed(2);
+
+    const qPct = Math.min((d.imports_today / d.import_limit) * 100, 100);
+    const qFill = document.getElementById('quota-fill');
+    qFill.style.width = qPct + '%';
+    qFill.style.background = qPct > 80 ? 'var(--red)' : qPct > 55 ? 'var(--amber)' : 'var(--green)';
+    document.getElementById('quota-lbl').textContent = d.imports_today + ' / ' + d.import_limit;
+
+    const bPct = Math.min((d.spent_today / (d.daily_budget||10)) * 100, 100);
+    const bFill = document.getElementById('budget-fill');
+    bFill.style.width = bPct + '%';
+    bFill.style.background = bPct > 80 ? 'var(--red)' : bPct > 55 ? 'var(--amber)' : 'var(--green)';
+    document.getElementById('budget-lbl').textContent = '$' + (d.spent_today||0).toFixed(2) + ' / $' + (d.daily_budget||10).toFixed(0);
+
+    const badge = document.getElementById('cache-badge');
+    if (!d.cache_exists)      { badge.textContent='NO CACHE'; badge.style.color='var(--red)'; }
+    else if (!d.current_cached){ badge.textContent='STALE';   badge.style.color='var(--amber)'; }
+    else                       { badge.textContent='OK';      badge.style.color='var(--green)'; }
+  } catch(e){}
+}
+
+// Decision stats
+async function fetchDecisionStats() {
+  try {
+    const d = await fetch(`${API}/api/decision-stats`).then(r=>r.json());
+    if (d.error) return;
+    document.getElementById('dec-total').textContent   = d.total_today + ' cycles';
+    document.getElementById('dec-trade').textContent   = d.would_trade;
+    document.getElementById('dec-blocked').textContent = d.blocked;
+    document.getElementById('dec-rate').textContent    = d.trade_rate != null ? (d.trade_rate*100).toFixed(1)+'%' : '—';
+    document.getElementById('dec-score').textContent   = d.avg_score != null ? d.avg_score.toFixed(3) : '—';
+    const top = Object.entries(d.block_reasons||{}).sort((a,b)=>b[1]-a[1])[0];
+    document.getElementById('dec-top').textContent     = top ? top[0]+' ('+top[1]+')' : '—';
+  } catch(e){}
+}
+
 // Refresh
 async function refreshAll() {
-  await Promise.all([fetchStatus(), fetchCurrent(), fetchFeed(), fetchLog(), fetchTrades()]);
+  await Promise.all([fetchStatus(), fetchCurrent(), fetchFeed(), fetchLog(), fetchTrades(), fetchImportStatus(), fetchDecisionStats()]);
   $('last-ref').textContent='updated '+new Date().toUTCString().slice(17,25)+' UTC';
 }
 
