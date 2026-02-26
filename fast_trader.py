@@ -79,6 +79,9 @@ TRADE_SOURCE = "sdk:fastloop"
 SMART_SIZING_PCT = 0.05
 MIN_SHARES_PER_ORDER = 2
 
+_market_id_cache = {}  # cache slug → market_id to avoid repeated import calls
+
+
 ASSET_SYMBOLS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT"}
 ASSET_PATTERNS = {
     "BTC": ["bitcoin up or down"],
@@ -457,23 +460,42 @@ def get_momentum(asset="BTC", source="binance", lookback=5):
 # =============================================================================
 
 def import_fast_market_market(slug):
+    global _market_id_cache
+
+    # Return cached market_id if we already imported this slug
+    if slug in _market_id_cache:
+        return _market_id_cache[slug], None
+
     url = f"https://polymarket.com/event/{slug}"
-    try:
-        result = get_client().import_market(url)
-    except Exception as e:
-        return None, str(e)
-    if not result:
-        return None, "No response from import endpoint"
-    if result.get("error"):
-        return None, result.get("error", "Unknown error")
-    status   = result.get("status")
-    market_id = result.get("market_id")
-    if status == "resolved":
-        alts = result.get("active_alternatives", [])
-        return None, f"Market resolved. Try: {alts[0].get('id')}" if alts else "Market resolved, no alternatives"
-    if status in ("imported", "already_exists"):
-        return market_id, None
-    return None, f"Unexpected status: {status}"
+    for attempt in range(3):
+        try:
+            result = get_client().import_market(url)
+        except Exception as e:
+            err = str(e)
+            if "429" in err and attempt < 2:
+                wait = (attempt + 1) * 15  # 15s, 30s
+                print(f"  Rate limited, retrying in {wait}s...", flush=True)
+                time.sleep(wait)
+                continue
+            return None, err
+        if not result:
+            return None, "No response from import endpoint"
+        if result.get("error"):
+            return None, result.get("error", "Unknown error")
+        status    = result.get("status")
+        market_id = result.get("market_id")
+        if status == "resolved":
+            alts = result.get("active_alternatives", [])
+            return None, f"Market resolved" if not alts else f"Market resolved. Try: {alts[0].get('id')}"
+        if status in ("imported", "already_exists"):
+            # Cache it — evict oldest if cache grows too large
+            _market_id_cache[slug] = market_id
+            if len(_market_id_cache) > 20:
+                oldest = list(_market_id_cache.keys())[0]
+                del _market_id_cache[oldest]
+            return market_id, None
+        return None, f"Unexpected status: {status}"
+    return None, "Max retries exceeded (rate limited)"
 
 
 def get_market_details(market_id):
