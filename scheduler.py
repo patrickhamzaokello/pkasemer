@@ -17,6 +17,13 @@ Environment variables:
   FASTLOOP_WINDOW       5m | 15m (default: 5m)
   SIMMER_API_KEY        required for trade/both modes
   LOG_LEVEL             INFO | DEBUG (default: INFO)
+
+Changes from original:
+  - Added warm_import_cache() call at startup (before main loop).
+    This pre-imports the current + next 5m slugs so every live cycle
+    finds a cached market_id and never hits the rate-limited import
+    endpoint mid-signal. Root cause of "Rate limited — will retry next
+    cycle" appearing on every single trade attempt.
 """
 
 import os
@@ -32,11 +39,11 @@ from datetime import datetime, timezone, timedelta
 # Config
 # ─────────────────────────────────────────────
 
-MODE = os.environ.get("FASTLOOP_MODE", "collect").lower()
+MODE     = os.environ.get("FASTLOOP_MODE", "collect").lower()
 INTERVAL = int(os.environ.get("FASTLOOP_INTERVAL", "20"))
-ASSET = os.environ.get("FASTLOOP_ASSET", "BTC").upper()
-WINDOW = os.environ.get("FASTLOOP_WINDOW", "5m")
-DB_PATH = os.environ.get("DB_PATH", "/data/signal_research.db")
+ASSET    = os.environ.get("FASTLOOP_ASSET", "BTC").upper()
+WINDOW   = os.environ.get("FASTLOOP_WINDOW", "5m")
+DB_PATH  = os.environ.get("DB_PATH", "/data/signal_research.db")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 
 # ─────────────────────────────────────────────
@@ -60,7 +67,6 @@ log = logging.getLogger("scheduler")
 # ─────────────────────────────────────────────
 
 def scheduler_status_str(now=None):
-    """Human-readable running status."""
     if now is None:
         now = datetime.now(timezone.utc)
     return f"RUNNING — {now.strftime('%a %H:%M UTC')}"
@@ -73,7 +79,6 @@ def scheduler_status_str(now=None):
 def run_collector():
     """Run one collection cycle via signal_research.py."""
     try:
-        # Import and run directly (same process, more efficient than subprocess)
         sys.path.insert(0, "/app")
         from signal_research import collect_one, init_db
         conn = init_db(DB_PATH)
@@ -112,6 +117,35 @@ def run_resolver():
         log.error(f"Resolver error: {e}", exc_info=True)
 
 
+def run_cache_warm():
+    """
+    Pre-import current + next 5m market slugs before the trade loop starts.
+
+    This is the fix for "Rate limited — will retry next cycle" appearing on
+    every trade attempt. Without this, the cache is empty on startup and
+    every cycle tries to import from scratch, immediately hitting the
+    6/min rate limit on the Simmer import endpoint.
+
+    With this, the cache is populated before cycle 1 runs. Subsequent cycles
+    find the slug in cache and never touch the import endpoint.
+
+    Skipped if MODE is collect-only (no trading) to avoid spending quota.
+    """
+    if MODE == "collect":
+        log.info("Cache warm skipped (collect-only mode)")
+        return
+
+    try:
+        sys.path.insert(0, "/app")
+        from fast_trader import warm_import_cache
+        log.info("Warming market ID cache (pre-importing current + next 5m slug)...")
+        warm_import_cache(ASSET)
+        log.info("Cache warm complete.")
+    except Exception as e:
+        # Non-fatal — the trade loop will fall back to per-cycle import
+        log.warning(f"Cache warm failed (non-fatal): {e}")
+
+
 # ─────────────────────────────────────────────
 # Stats for monitoring
 # ─────────────────────────────────────────────
@@ -122,44 +156,44 @@ def write_status(cycle, last_action, market_open):
     now = datetime.now(timezone.utc)
 
     stats = {
-        "ts": now.isoformat(),
-        "cycle": cycle,
-        "mode": MODE,
-        "asset": ASSET,
-        "window": WINDOW,
-        "market_open": True,
+        "ts":            now.isoformat(),
+        "cycle":         cycle,
+        "mode":          MODE,
+        "asset":         ASSET,
+        "window":        WINDOW,
+        "market_open":   True,
         "market_status": scheduler_status_str(now),
-        "last_action": last_action,
-        "interval_s": INTERVAL,
+        "last_action":   last_action,
+        "interval_s":    INTERVAL,
     }
 
     # DB stats
     try:
         conn = sqlite3.connect(DB_PATH)
-        total = conn.execute("SELECT COUNT(*) FROM signal_observations").fetchone()[0]
+        total    = conn.execute("SELECT COUNT(*) FROM signal_observations").fetchone()[0]
         resolved = conn.execute("SELECT COUNT(*) FROM signal_observations WHERE resolved=1").fetchone()[0]
-        up = conn.execute("SELECT COUNT(*) FROM signal_observations WHERE outcome='up'").fetchone()[0]
-        down = conn.execute("SELECT COUNT(*) FROM signal_observations WHERE outcome='down'").fetchone()[0]
-        unclear = conn.execute("SELECT COUNT(*) FROM signal_observations WHERE outcome='unclear'").fetchone()[0]
-        recent = conn.execute("""
+        up       = conn.execute("SELECT COUNT(*) FROM signal_observations WHERE outcome='up'").fetchone()[0]
+        down     = conn.execute("SELECT COUNT(*) FROM signal_observations WHERE outcome='down'").fetchone()[0]
+        unclear  = conn.execute("SELECT COUNT(*) FROM signal_observations WHERE outcome='unclear'").fetchone()[0]
+        recent   = conn.execute("""
             SELECT ts, momentum_5m, poly_yes_price, order_imbalance, trade_flow_ratio, seconds_remaining
             FROM signal_observations ORDER BY id DESC LIMIT 20
         """).fetchall()
         conn.close()
 
         stats["db"] = {
-            "total": total,
-            "resolved": resolved,
+            "total":      total,
+            "resolved":   resolved,
             "unresolved": total - resolved,
-            "outcomes": {"up": up, "down": down, "unclear": unclear},
+            "outcomes":   {"up": up, "down": down, "unclear": unclear},
         }
         stats["recent"] = [
             {
-                "ts": r[0],
-                "m5": round(r[1], 4) if r[1] else None,
+                "ts":   r[0],
+                "m5":   round(r[1], 4) if r[1] else None,
                 "poly": round(r[2], 4) if r[2] else None,
-                "oi": round(r[3], 4) if r[3] else None,
-                "tfr": round(r[4], 4) if r[4] else None,
+                "oi":   round(r[3], 4) if r[3] else None,
+                "tfr":  round(r[4], 4) if r[4] else None,
                 "secs": round(r[5], 0) if r[5] else None,
             }
             for r in recent
@@ -195,7 +229,7 @@ signal.signal(signal.SIGINT, _handle_signal)
 
 def main():
     log.info("=" * 60)
-    log.info(f"FastLoop Scheduler starting")
+    log.info("FastLoop Scheduler starting")
     log.info(f"  Mode:     {MODE}")
     log.info(f"  Asset:    {ASSET} {WINDOW}")
     log.info(f"  Interval: {INTERVAL}s")
@@ -203,16 +237,20 @@ def main():
     log.info(f"  Running:  24/7 (Polymarket is always open)")
     log.info("=" * 60)
 
-    cycle = 0
+    # ── Startup: warm the market ID cache before cycle 1 ─────────────────────
+    # Without this, every trade cycle imports from scratch and hits the
+    # 6/min rate limit on the Simmer import endpoint.
+    run_cache_warm()
+
+    cycle       = 0
     last_resolve = datetime.now(timezone.utc)
-    last_action = "starting"
+    last_action  = "starting"
 
     while _running:
         now = datetime.now(timezone.utc)
         cycle += 1
         log.info(f"[cycle {cycle}] {scheduler_status_str(now)}")
 
-        # Run based on mode
         if MODE in ("collect", "both", "dry"):
             ok = run_collector()
             last_action = f"collect {'ok' if ok else 'err'} @ {now.strftime('%H:%M:%S')}"
@@ -231,7 +269,6 @@ def main():
             last_resolve = now
 
         write_status(cycle, last_action, True)
-
 
         # Sleep with interrupt awareness
         for _ in range(INTERVAL):
