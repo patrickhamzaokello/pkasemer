@@ -11,18 +11,18 @@
   "daily_budget": 20.0,
   "composite_threshold": 0.62,
   "signal_weights": {
-    "btc_vs_reference":      0.45,
-    "vol_adjusted_momentum": 0.22,
-    "price_acceleration":    0.13,
-    "momentum_15m":          0.12,
-    "momentum_1m":           0.08,
-    "momentum_5m":           0.00,
-    "cex_poly_lag":          0.00,
-    "volume_ratio":          0.00,
-    "trade_flow_ratio":      0.00,
-    "order_imbalance":       0.00,
-    "momentum_consistency":  0.00,
-    "poly_divergence":       0.00,
-    "poly_yes_price":        0.00
+    "btc_vs_reference":      0.327,
+    "vol_adjusted_momentum": 0.188,
+    "momentum_5m":           0.154,
+    "cex_poly_lag":          0.153,
+    "momentum_1m":           0.062,
+    "price_acceleration":    0.062,
+    "momentum_15m":          0.053,
+    "volume_ratio":          0.000,
+    "trade_flow_ratio":      0.000,
+    "order_imbalance":       0.000,
+    "momentum_consistency":  0.000,
+    "poly_divergence":       0.000,
+    "poly_yes_price":        0.000
   }
 }
