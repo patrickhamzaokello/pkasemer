@@ -20,7 +20,7 @@ services:
     volumes:
       - fastloop-data:/data
       - ./logs:/app/logs
-    command: python scheduler.py
+    command: sh -c "python -u scheduler.py 2>&1 | tee /app/logs/collector.log"
     healthcheck:
       test: ["CMD", "python", "-c", "import os; os.path.exists('/data/status.json') or exit(1)"]
       interval: 60s

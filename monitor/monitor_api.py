@@ -25,7 +25,7 @@ CORS(app)
 
 DB_PATH     = os.environ.get("DB_PATH", "/data/signal_research.db")
 STATUS_PATH = "/data/status.json"
-LOG_PATH    = "/app/logs/scheduler.log"   # requires ./logs:/app/logs in monitor service
+LOG_PATH    = "/app/logs/collector.log"   # unified stdout+stderr via tee (scheduler + trader)
 CACHE_PATH  = "/data/market_id_cache.json"
 SPEND_PATH  = "/data/daily_spend.json"    # on shared volume, written by fast_trader.py
 
@@ -444,14 +444,14 @@ def logs():
             kind = "error"
         elif "rate limited" in lo or "429" in lo:
             kind = "ratelimit"
+        elif ("→ yes" in lo or "→ no" in lo) and "score=" in lo:
+            kind = "trade"   # [LIVE] would-trade line: "score=X → NO $Y"
         elif "traded" in lo or "would trade" in lo or "would_trade" in lo:
             kind = "trade"
         elif "skip import" in lo or "import quota" in lo or "cache warm" in lo:
             kind = "import"
-        elif "block:" in lo or "skip:" in lo or "neutral" in lo:
+        elif "block:" in lo or "skip:" in lo:
             kind = "block"
-        elif "score=" in lo and ("→ yes" in lo or "→ no" in lo):
-            kind = "signal"
         elif "[cycle" in lo or "running" in lo:
             kind = "cycle"
         elif "resolved" in lo:
