@@ -4,7 +4,9 @@ services:
 
   # ── Signal collector + trader (24/7) ─────────────────────────────────────
   collector:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.trader
     container_name: fastloop-collector
     restart: unless-stopped
     environment:
@@ -14,8 +16,7 @@ services:
       FASTLOOP_WINDOW: 5m
       DB_PATH: /data/signal_research.db
       LOG_LEVEL: INFO
-    env_file:
-      - .env
+    env_file: [.env]
     volumes:
       - fastloop-data:/data
       - ./logs:/app/logs
@@ -29,17 +30,22 @@ services:
 
   # ── Monitor API + Dashboard ───────────────────────────────────────────────
   monitor:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.monitor
     container_name: fastloop-monitor
     restart: unless-stopped
     environment:
       DB_PATH: /data/signal_research.db
       LOG_LEVEL: INFO
-    env_file:
-      - .env
+    env_file: [.env]
     volumes:
       - fastloop-data:/data          # shared with collector: status.json, db, cache, spend
-      - ./logs:/app/logs             # shared with collector: scheduler.log (read-only here)
+      - ./logs:/app/logs             # shared with collector: scheduler.log
+      # ── Live code: only needs `docker compose restart monitor` after changes ──
+      - ./monitor/monitor_api.py:/app/monitor_api.py
+      - ./shared/composite_signal.py:/app/composite_signal.py
+      # ── Dashboard HTML: no restart needed at all ────────────────────────────
       - ./dashboard:/app/dashboard:ro
     ports:
       - "5000:5000"
@@ -60,7 +66,15 @@ volumes:
       o: bind
       device: ./data          # persists to ./data/ on host
 
-# ── File locations after these fixes ──────────────────────────────────────
+# ── Reload behaviour ───────────────────────────────────────────────────────
+#
+#  Edit dashboard/*.html            → nothing (live via volume mount)
+#  Edit monitor/monitor_api.py      → docker compose restart monitor
+#  Edit shared/composite_signal.py  → docker compose restart monitor
+#  Edit trader/*.py or config.json  → docker compose up -d --build collector
+#  Change trader env vars           → docker compose up -d collector
+#
+# ── File locations ─────────────────────────────────────────────────────────
 #
 #  /data/signal_research.db     ← DB (shared volume, both containers)
 #  /data/status.json            ← scheduler status (shared volume)
@@ -79,6 +93,9 @@ volumes:
 #
 # Open dashboard:
 #   http://localhost:5000/live.html
+#
+# Rebuild only trader after code changes:
+#   docker compose up -d --build collector
 #
 # Switch to dry-run trading (no real trades):
 #   Set FASTLOOP_MODE=dry, then: docker compose up -d collector
