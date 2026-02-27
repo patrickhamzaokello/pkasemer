@@ -42,22 +42,6 @@ sys.stdout.reconfigure(line_buffering=True)
 from dotenv import load_dotenv
 load_dotenv()
 
-# =============================================================================
-# Optional: Trade Journal integration
-# =============================================================================
-
-try:
-    from tradejournal import log_trade
-    JOURNAL_AVAILABLE = True
-except ImportError:
-    try:
-        from skills.tradejournal import log_trade
-        JOURNAL_AVAILABLE = True
-    except ImportError:
-        JOURNAL_AVAILABLE = False
-
-        def log_trade(*args, **kwargs):
-            pass
 
 
 # =============================================================================
