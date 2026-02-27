@@ -68,7 +68,7 @@ TRADE_SOURCE = "sdk:fastloop"
 SMART_SIZING_PCT = 0.05
 MIN_SHARES_PER_ORDER = 5
 MIN_SCORE_TO_IMPORT = 0.65
-IMPORT_DAILY_LIMIT = 9             # Leave 1 buffer from the 10/day free tier
+IMPORT_DAILY_LIMIT = 50           # Leave 1 buffer from the 10/day free tier
 
 ASSET_SYMBOLS = {
     "BTC": "BTCUSDT",
@@ -452,6 +452,7 @@ def get_positions():
         return [asdict(p) for p in positions]
     except Exception:
         return []
+
 
 
 def get_portfolio():

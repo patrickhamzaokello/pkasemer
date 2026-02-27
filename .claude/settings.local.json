@@ -10,7 +10,8 @@
       "Bash(docker info:*)",
       "Bash(docker:*)",
       "Bash(docker -H npipe:////./pipe/dockerDesktopLinuxEngine info)",
-      "Bash(docker context ls)"
+      "Bash(docker context ls)",
+      "Bash(wc -l \"/c/Users/pkase/Downloads/polymarket-fast-loop-1.0.12\"/*.py)"
     ]
   }
 }
