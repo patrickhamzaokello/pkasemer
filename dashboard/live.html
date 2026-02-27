@@ -5,606 +5,898 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FastLoop — Live Trading</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
-:root {
-  --bg:      #050709;
-  --s1:      #080c10;
-  --s2:      #0c1118;
-  --border:  #141c26;
-  --border2: #1e2d40;
-  --text:    #8faac2;
-  --text2:   #b8cce0;
-  --text3:   #d8eaf8;
-  --dim:     #3a5068;
-  --green:   #19e87a;
-  --red:     #f03a50;
-  --amber:   #f5a623;
-  --blue:    #2478ff;
-  --cyan:    #00cce0;
-  --purple:  #9b59ff;
-  --mono:    'IBM Plex Mono', monospace;
-  --display: 'Barlow Condensed', sans-serif;
-}
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 11px;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-body::after {
-  content: '';
-  position: fixed; inset: 0;
-  background: repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.03) 3px,rgba(0,0,0,0.03) 4px);
-  pointer-events: none; z-index: 9999;
-}
+  :root {
+    --bg: #080b0f;
+    --surface: #0d1117;
+    --border: #1a2332;
+    --border-bright: #243347;
+    --text: #c8d6e8;
+    --text-dim: #4a6080;
+    --text-bright: #e8f0f8;
+    --green: #00e676;
+    --green-dim: #00c45a;
+    --red: #ff3d57;
+    --red-dim: #cc2a40;
+    --amber: #ffb300;
+    --blue: #2196f3;
+    --blue-dim: #1565c0;
+    --cyan: #00bcd4;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Syne', sans-serif;
+  }
 
-/* HEADER */
-.header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 16px; height: 38px;
-  background: var(--s1); border-bottom: 1px solid var(--border2);
-  flex-shrink: 0; position: sticky; top: 0; z-index: 200;
-}
-.logo { font-family: var(--display); font-size: 22px; font-weight: 800; letter-spacing: 1px; color: var(--text3); }
-.logo em { color: var(--green); font-style: normal; }
-.header-right { display: flex; align-items: center; gap: 20px; }
-.sdot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); display: inline-block; margin-right: 5px; }
-.sdot.live { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
-.sdot.err  { background: var(--red); }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
-.htag { font-size: 10px; color: var(--dim); }
-.htag strong { color: var(--text2); }
-.clock { font-size: 13px; font-weight: 600; color: var(--text3); font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* NAV */
-.nav {
-  display: flex; align-items: center;
-  background: var(--s1); border-bottom: 1px solid var(--border);
-  padding: 0 16px; flex-shrink: 0;
-  position: sticky; top: 38px; z-index: 199;
-}
-.nav a { padding: 6px 14px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color .1s; }
-.nav a:hover { color: var(--text2); }
-.nav a.active { color: var(--green); border-bottom-color: var(--green); }
-.nav-r { flex: 1; }
-.nbtn { font-size: 9px; color: var(--dim); letter-spacing: 1px; cursor: pointer; padding: 3px 8px; border: 1px solid var(--border); border-radius: 2px; transition: all .15s; background: none; font-family: var(--mono); }
-.nbtn:hover { color: var(--green); border-color: var(--green); }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
 
-/* TOP P&L BAR */
-.top-bar {
-  display: grid; grid-template-columns: repeat(7,1fr);
-  border-bottom: 1px solid var(--border2); flex-shrink: 0;
-}
-.tc {
-  padding: 10px 14px; border-right: 1px solid var(--border); position: relative;
-}
-.tc:last-child { border-right: none; }
-.tc::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; }
-.tc.g::before{background:var(--green)} .tc.r::before{background:var(--red)} .tc.b::before{background:var(--blue)}
-.tc.a::before{background:var(--amber)} .tc.c::before{background:var(--cyan)} .tc.p::before{background:var(--purple)} .tc.d::before{background:var(--border2)}
-.tl { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); margin-bottom: 4px; }
-.tv { font-family: var(--display); font-size: 24px; font-weight: 700; color: var(--text3); line-height: 1; }
-.ts { font-size: 9px; color: var(--dim); margin-top: 3px; }
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.03) 2px,
+      rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
 
-/* LIVE STRIP */
-.live-strip {
-  display: grid; grid-template-columns: 230px 1fr 260px 220px;
-  border-bottom: 2px solid var(--border2); flex-shrink: 0; height: 210px;
-}
-.lc { border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
-.lc:last-child { border-right: none; }
-.ph { display: flex; align-items: center; justify-content: space-between; padding: 5px 10px; background: var(--s2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.pt { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--dim); }
-.pb { font-size: 9px; color: var(--dim); padding: 1px 5px; border: 1px solid var(--border); border-radius: 2px; }
+  /* ── Header ───────────────────────────────────────────── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .logo {
+    font-family: var(--display);
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--text-bright);
+  }
+  .logo span { color: var(--green); }
+  .header-right { display: flex; align-items: center; gap: 20px; }
 
-/* Signal */
-.sw { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
-.sbig { font-family: var(--display); font-size: 38px; font-weight: 800; line-height: 1; color: var(--dim); }
-.sbt { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
-.sbf { height: 100%; border-radius: 2px; transition: width .4s, background .4s; }
-.spill { display: inline-block; padding: 2px 9px 1px; font-family: var(--display); font-size: 14px; font-weight: 800; letter-spacing: 1.5px; border-radius: 2px; }
-.spill.yes{background:rgba(25,232,122,.1);color:var(--green);border:1px solid rgba(25,232,122,.25)}
-.spill.no{background:rgba(240,58,80,.1);color:var(--red);border:1px solid rgba(240,58,80,.25)}
-.spill.blk{background:rgba(58,80,104,.15);color:var(--dim);border:1px solid var(--border2)}
-.sr { display: flex; align-items: center; justify-content: space-between; padding: 3px 10px; border-bottom: 1px solid rgba(20,28,38,.5); }
-.sl { font-size: 10px; color: var(--dim); }
-.sv { font-size: 10px; color: var(--text2); font-variant-numeric: tabular-nums; }
-.sv.g{color:var(--green)} .sv.r{color:var(--red)} .sv.a{color:var(--amber)} .sv.b{color:var(--blue)} .sv.d{color:var(--dim)}
+  .market-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 2px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .market-badge.open   { background: rgba(0,230,118,0.1); border: 1px solid rgba(0,230,118,0.3); color: var(--green); }
+  .market-badge.closed { background: rgba(255,61,87,0.1);  border: 1px solid rgba(255,61,87,0.3);  color: var(--red); }
+  .market-badge.err    { background: rgba(255,61,87,0.1);  border: 1px solid rgba(255,61,87,0.3);  color: var(--red); }
+  .badge-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .badge-dot.pulse { animation: pulse 1.5s ease infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
-/* Feed */
-.fh { display:grid; grid-template-columns:54px 64px 38px 64px 48px 1fr 68px; padding:4px 8px; gap:4px; background:var(--s2); border-bottom:1px solid var(--border2); flex-shrink:0; }
-.fhc { font-size:9px; letter-spacing:1px; text-transform:uppercase; color:var(--dim); }
-.fscroll { overflow-y:auto; flex:1; }
-.fscroll::-webkit-scrollbar{width:3px} .fscroll::-webkit-scrollbar-thumb{background:var(--border2)}
-.fr { display:grid; grid-template-columns:54px 64px 38px 64px 48px 1fr 68px; padding:3px 8px; gap:4px; border-bottom:1px solid rgba(20,28,38,.4); font-variant-numeric:tabular-nums; }
-.fr:hover{background:rgba(255,255,255,.02)} .fr.tr{background:rgba(25,232,122,.04)}
-.fc { font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--dim); }
-.fc.g{color:var(--green)} .fc.r{color:var(--red)} .fc.a{color:var(--amber)} .fc.b{color:var(--blue)} .fc.t{color:var(--text2)}
-.dp { font-size:9px; font-weight:700; padding:1px 5px; border-radius:2px; display:inline-block; white-space:nowrap; }
-.dp-t{background:rgba(25,232,122,.13);color:var(--green);border:1px solid rgba(25,232,122,.3)}
-.dp-b{background:rgba(30,45,64,.4);color:var(--dim);border:1px solid var(--border2)}
-.dp-v{background:rgba(245,166,35,.1);color:var(--amber);border:1px solid rgba(245,166,35,.2)}
-.dp-n{background:rgba(36,120,255,.08);color:var(--blue);border:1px solid rgba(36,120,255,.2)}
+  .last-update { color: var(--text-dim); font-size: 10px; }
+  .utc-clock { color: var(--text-bright); font-size: 12px; font-variant-numeric: tabular-nums; letter-spacing: 0.5px; }
 
-/* Log */
-.lscroll { overflow-y:auto; flex:1; font-size:10px; }
-.lscroll::-webkit-scrollbar{width:3px} .lscroll::-webkit-scrollbar-thumb{background:var(--border2)}
-.ll { padding:2px 10px; line-height:1.5; border-bottom:1px solid rgba(20,28,38,.3); white-space:pre-wrap; word-break:break-all; }
-.ll.cycle{color:var(--dim)} .ll.signal{color:var(--text)} .ll.trade{color:var(--green);background:rgba(25,232,122,.03)}
-.ll.ratelimit{color:var(--red);background:rgba(240,58,80,.05)} .ll.import{color:var(--cyan)}
-.ll.error{color:var(--red);background:rgba(240,58,80,.07)} .ll.resolve{color:var(--purple)}
-.ll.block{color:var(--dim)} .ll.info{color:var(--dim)}
+  .refresh-btn {
+    background: none;
+    border: 1px solid var(--border-bright);
+    color: var(--text-dim);
+    padding: 3px 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    cursor: pointer;
+    border-radius: 2px;
+    transition: all 0.15s;
+  }
+  .refresh-btn:hover { border-color: var(--green); color: var(--green); }
 
-/* TRADES SECTION */
-.trades-section { flex:1; display:flex; flex-direction:column; }
-.trades-hdr {
-  display:flex; align-items:center; justify-content:space-between;
-  padding:8px 16px; background:var(--s1); border-bottom:1px solid var(--border2);
-  flex-shrink:0; position:sticky; top:76px; z-index:100;
-}
-.trades-title { font-family:var(--display); font-size:18px; font-weight:800; letter-spacing:1px; color:var(--text3); }
-.tab-bar { display:flex; gap:4px; }
-.tab { padding:4px 14px; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--dim); cursor:pointer; border:1px solid var(--border); border-radius:2px; background:none; font-family:var(--mono); transition:all .15s; }
-.tab:hover { color:var(--text2); border-color:var(--border2); }
-.tab.active { color:var(--green); border-color:var(--green); background:rgba(25,232,122,.06); }
+  /* ── Nav ──────────────────────────────────────────────── */
+  .nav {
+    display: flex;
+    gap: 2px;
+    padding: 0 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-link {
+    padding: 8px 16px;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+    margin-bottom: -1px;
+  }
+  .nav-link:hover { color: var(--text-bright); }
+  .nav-link.active { color: var(--text-bright); border-bottom-color: var(--green); }
+  .nav-right { margin-left: auto; display: flex; align-items: center; }
+  .nav-meta { font-size: 10px; color: var(--text-dim); }
 
-/* Accuracy */
-.acc-wrap { display:flex; align-items:center; gap:10px; padding:7px 16px; border-bottom:1px solid var(--border); flex-shrink:0; }
-.acc-lbl { font-size:10px; color:var(--dim); width:96px; flex-shrink:0; }
-.acc-lbl.r { text-align:right; }
-.acc-track { flex:1; height:6px; background:var(--border); border-radius:3px; overflow:hidden; display:flex; }
-.acc-yes { height:100%; background:var(--green); transition:width .4s; }
-.acc-no  { height:100%; background:var(--red);   transition:width .4s; }
-.acc-note { font-size:10px; color:var(--dim); white-space:nowrap; }
+  /* ── Scrollbar ────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 
-/* P&L chart */
-.pnl-chart { height:80px; border-bottom:1px solid var(--border); flex-shrink:0; }
-.pnl-chart svg { display:block; width:100%; height:100%; }
+  /* ── Layout ───────────────────────────────────────────── */
+  .layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    min-height: calc(100vh - 82px);
+    align-items: start;
+  }
 
-/* Table */
-.tbl-wrap { overflow:auto; flex:1; }
-.tbl-wrap::-webkit-scrollbar{width:4px;height:4px} .tbl-wrap::-webkit-scrollbar-thumb{background:var(--border2)}
-table.tbl { width:100%; border-collapse:collapse; font-size:11px; }
-table.tbl th {
-  padding:6px 10px; text-align:left; white-space:nowrap;
-  font-size:9px; letter-spacing:1.5px; text-transform:uppercase; color:var(--dim);
-  border-bottom:1px solid var(--border2); background:var(--s1); font-weight:400;
-  position:sticky; top:0; z-index:10;
-}
-table.tbl th.r { text-align:right; }
-table.tbl td { padding:7px 10px; border-bottom:1px solid rgba(20,28,38,.5); white-space:nowrap; }
-table.tbl td.r { text-align:right; }
-table.tbl tr:hover td { background:rgba(255,255,255,.015); }
-table.tbl tr.win  td { background:rgba(25,232,122,.025); }
-table.tbl tr.loss td { background:rgba(240,58,80,.025); }
-table.tbl tr.open td { background:rgba(36,120,255,.02); }
-.rd { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; vertical-align:middle; }
-.rd.win  { background:var(--green); box-shadow:0 0 5px rgba(25,232,122,.5); }
-.rd.loss { background:var(--red); }
-.rd.open { background:var(--blue); animation:pulse 2s infinite; }
-.rd.unk  { background:var(--dim); }
-.empty-r td { text-align:center; padding:40px; color:var(--dim); font-size:12px; }
+  /* ── Sidebar ──────────────────────────────────────────── */
+  .sidebar {
+    grid-row: 1 / 3;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    background: var(--surface);
+    position: sticky;
+    top: 82px;
+    height: calc(100vh - 82px);
+    align-self: start;
+  }
+  .sidebar-section { border-bottom: 1px solid var(--border); padding: 14px 16px; }
+  .section-label {
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .section-label-badge { font-size: 9px; letter-spacing: 0; text-transform: none; }
+  .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; }
+  .stat-label { color: var(--text-dim); font-size: 11px; }
+  .stat-val { color: var(--text-bright); font-size: 11px; font-weight: 500; }
+  .stat-val.green { color: var(--green); }
+  .stat-val.red   { color: var(--red); }
+  .stat-val.amber { color: var(--amber); }
+  .stat-val.blue  { color: var(--blue); }
+  .stat-val.cyan  { color: var(--cyan); }
+  .stat-val.dim   { color: var(--text-dim); }
 
-/* Import health + decision stats column */
-.imp-grid { display:grid; grid-template-columns:1fr 1fr; }
-.imp-cell { padding:7px 10px; border-right:1px solid var(--border); border-bottom:1px solid var(--border); }
-.imp-cell:nth-child(even){ border-right:none; }
-.imp-lbl { font-size:9px; letter-spacing:1px; text-transform:uppercase; color:var(--dim); margin-bottom:3px; }
-.imp-val { font-family:var(--display); font-size:18px; font-weight:700; color:var(--text3); line-height:1; }
-.qbar-wrap { padding:6px 10px; border-bottom:1px solid var(--border); }
-.qbar-row { display:flex; justify-content:space-between; font-size:9px; margin-bottom:3px; color:var(--dim); }
-.qbar-row span { color:var(--text); }
-.qbar-track { height:5px; background:var(--border); border-radius:3px; overflow:hidden; }
-.qbar-fill  { height:100%; border-radius:3px; background:var(--green); transition:width .4s, background .4s; }
+  /* Signal score */
+  .sig-score-wrap { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 6px; }
+  .sig-score-big {
+    font-family: var(--display);
+    font-size: 42px;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--text-dim);
+  }
+  .sig-pill {
+    display: inline-block;
+    padding: 3px 10px 2px;
+    font-family: var(--display);
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    border-radius: 2px;
+    margin-bottom: 2px;
+  }
+  .sig-pill.yes { background: rgba(0,230,118,0.1); color: var(--green); border: 1px solid rgba(0,230,118,0.25); }
+  .sig-pill.no  { background: rgba(255,61,87,0.1);  color: var(--red);   border: 1px solid rgba(255,61,87,0.25); }
+  .sig-pill.blk { background: rgba(74,96,128,0.15); color: var(--text-dim); border: 1px solid var(--border-bright); }
+  .sig-bar-track { height: 3px; background: var(--border); border-radius: 1px; overflow: hidden; margin-top: 4px; }
+  .sig-bar-fill  { height: 100%; border-radius: 1px; transition: width 0.4s, background 0.4s; }
+  .sig-filter { font-size: 10px; color: var(--amber); margin-top: 4px; }
+  .sig-conf   { font-size: 10px; color: var(--text-dim); margin-top: 1px; }
+
+  /* Progress bars */
+  .progress-wrap { margin: 5px 0; }
+  .progress-label { display: flex; justify-content: space-between; font-size: 9px; color: var(--text-dim); margin-bottom: 3px; }
+  .progress-label span { color: var(--text); }
+  .progress-track { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .progress-fill  { height: 100%; border-radius: 2px; background: var(--green); transition: width 0.4s, background 0.4s; }
+
+  /* ── Main ─────────────────────────────────────────────── */
+  .main { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+
+  /* Stats strip */
+  .stats-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 12px 14px;
+    border-radius: 2px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
+  .stat-card.green-top::before { background: var(--green); }
+  .stat-card.red-top::before   { background: var(--red); }
+  .stat-card.amber-top::before { background: var(--amber); }
+  .stat-card.blue-top::before  { background: var(--blue); }
+  .stat-card.cyan-top::before  { background: var(--cyan); }
+  .stat-card-label { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
+  .stat-card-value { font-size: 22px; font-weight: 700; color: var(--text-bright); font-family: var(--display); line-height: 1; }
+  .stat-card-sub   { font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+
+  /* Panels */
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 2px; overflow: hidden; }
+  .panel-header {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .panel-title { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+  .panel-meta  { font-size: 10px; color: var(--text-dim); }
+
+  /* Two-column row */
+  .panels-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+  /* Tab bar */
+  .tab-bar { display: flex; gap: 4px; }
+  .tab {
+    padding: 4px 12px;
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    cursor: pointer;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: none;
+    font-family: var(--mono);
+    transition: all 0.15s;
+  }
+  .tab:hover { color: var(--text-bright); border-color: var(--border-bright); }
+  .tab.active { color: var(--green); border-color: var(--green); background: rgba(0,230,118,0.06); }
+
+  /* Accuracy bar */
+  .acc-bar-wrap { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+  .acc-lbl  { font-size: 10px; color: var(--text-dim); width: 90px; flex-shrink: 0; }
+  .acc-lbl.r { text-align: right; }
+  .acc-track { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; display: flex; }
+  .acc-yes   { height: 100%; background: var(--green); transition: width 0.4s; }
+  .acc-no    { height: 100%; background: var(--red);   transition: width 0.4s; }
+  .acc-note  { font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+
+  /* P&L chart */
+  .pnl-chart { height: 80px; border-bottom: 1px solid var(--border); background: rgba(0,0,0,0.2); }
+  .pnl-chart svg { display: block; width: 100%; height: 100%; }
+
+  /* Trade table */
+  .tbl-wrap { overflow: auto; max-height: 420px; }
+  table.tbl { width: 100%; border-collapse: collapse; font-size: 11px; }
+  table.tbl th {
+    padding: 7px 10px;
+    text-align: left;
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    font-weight: 400;
+    background: var(--surface);
+    position: sticky; top: 0; z-index: 10;
+    white-space: nowrap;
+  }
+  table.tbl th.r { text-align: right; }
+  table.tbl td   { padding: 6px 10px; border-bottom: 1px solid rgba(26,35,50,0.5); white-space: nowrap; }
+  table.tbl td.r { text-align: right; }
+  table.tbl tr:hover td { background: rgba(255,255,255,0.015); }
+  table.tbl tr.win  td  { background: rgba(0,230,118,0.025); }
+  table.tbl tr.loss td  { background: rgba(255,61,87,0.025); }
+  table.tbl tr.open td  { background: rgba(33,150,243,0.02); }
+  table.tbl tr:last-child td { border-bottom: none; }
+
+  .rd { display: inline-block; width: 7px; height: 7px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
+  .rd.win  { background: var(--green); box-shadow: 0 0 5px rgba(0,230,118,0.5); }
+  .rd.loss { background: var(--red); }
+  .rd.open { background: var(--blue); animation: pulse 2s infinite; }
+  .rd.unk  { background: var(--text-dim); }
+
+  .trade-pill { display: inline-block; padding: 1px 7px; border-radius: 2px; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; }
+  .trade-pill.yes { background: rgba(0,230,118,0.12); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+  .trade-pill.no  { background: rgba(255,61,87,0.12);  color: var(--red);   border: 1px solid rgba(255,61,87,0.3); }
+
+  .out-pill { display: inline-block; padding: 2px 7px; border-radius: 2px; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  .out-pill.up   { background: rgba(0,230,118,0.12); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+  .out-pill.down { background: rgba(255,61,87,0.12);  color: var(--red);   border: 1px solid rgba(255,61,87,0.3); }
+
+  /* Cycle feed */
+  .feed-hdr {
+    display: grid;
+    grid-template-columns: 52px 68px 38px 72px 52px 1fr 52px;
+    padding: 5px 10px;
+    gap: 4px;
+    background: rgba(0,0,0,0.2);
+    border-bottom: 1px solid var(--border);
+  }
+  .feed-hcol { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); }
+  .feed-scroll { overflow-y: auto; max-height: 220px; }
+  .feed-row {
+    display: grid;
+    grid-template-columns: 52px 68px 38px 72px 52px 1fr 52px;
+    padding: 4px 10px;
+    gap: 4px;
+    border-bottom: 1px solid rgba(26,35,50,0.4);
+    font-variant-numeric: tabular-nums;
+  }
+  .feed-row:hover  { background: rgba(255,255,255,0.02); }
+  .feed-row.trade  { background: rgba(0,230,118,0.04); }
+  .feed-col { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+  .feed-col.g { color: var(--green); }
+  .feed-col.r { color: var(--red); }
+  .feed-col.t { color: var(--text); }
+
+  .dp { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 2px; display: inline-block; white-space: nowrap; }
+  .dp-trade   { background: rgba(0,230,118,0.13); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+  .dp-vol     { background: rgba(255,179,0,0.1);  color: var(--amber); border: 1px solid rgba(255,179,0,0.2); }
+  .dp-neutral { background: rgba(33,150,243,0.08); color: var(--blue); border: 1px solid rgba(33,150,243,0.2); }
+  .dp-block   { background: rgba(26,35,50,0.4);   color: var(--text-dim); border: 1px solid var(--border-bright); }
+
+  /* Log */
+  .log-scroll { overflow-y: auto; max-height: 252px; font-size: 10px; line-height: 1.6; }
+  .log-line   { padding: 2px 14px; border-bottom: 1px solid rgba(26,35,50,0.3); white-space: pre-wrap; word-break: break-all; color: var(--text-dim); }
+  .log-line.trade     { color: var(--green); background: rgba(0,230,118,0.03); }
+  .log-line.error     { color: var(--red);   background: rgba(255,61,87,0.07); }
+  .log-line.ratelimit { color: var(--red);   background: rgba(255,61,87,0.05); }
+  .log-line.import    { color: var(--cyan); }
+
+  /* Spinner / empty */
+  .spinner {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border: 1.5px solid var(--border-bright);
+    border-top-color: var(--green);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading { color: var(--text-dim); font-size: 11px; padding: 20px; text-align: center; }
+  .empty   { padding: 30px; text-align: center; color: var(--text-dim); font-size: 11px; }
 </style>
 </head>
 <body>
 
 <!-- HEADER -->
 <div class="header">
-  <div class="logo">Fast<em>Loop</em></div>
+  <div class="logo">PKASEMER<span>NWITQ</span> <span style="font-size:11px;color:var(--text-dim);font-family:var(--mono);font-weight:400">/ live trading</span></div>
   <div class="header-right">
-    <span><span class="sdot" id="sdot"></span><span class="htag" id="stext">connecting...</span></span>
-    <span class="htag">cycle <strong id="cnum">—</strong></span>
-    <span class="htag">obs <strong id="ocount">—</strong></span>
-    <span class="clock" id="clock">—</span>
+    <div id="market-badge" class="market-badge closed">
+      <div class="badge-dot" id="badge-dot"></div>
+      <span id="market-status-text">connecting...</span>
+    </div>
+    <span class="last-update">cycle <strong id="cnum" style="color:var(--text)">—</strong></span>
+    <span class="utc-clock" id="clock">—</span>
+    <button class="refresh-btn" onclick="refreshAll()">↺ refresh</button>
   </div>
 </div>
 
 <!-- NAV -->
 <nav class="nav">
-  <a href="index.html">Monitor</a>
-  <a href="dry-run.html">Signal Lab</a>
-  <a href="live.html" class="active">Live Trading</a>
-  <div class="nav-r"></div>
-  <span class="htag" id="last-ref" style="margin-right:8px">—</span>
-  <button class="nbtn" onclick="refreshAll()">↺ refresh</button>
+  <a href="index.html" class="nav-link">Monitor</a>
+  <a href="dry-run.html" class="nav-link">Signal Lab</a>
+  <a href="live.html" class="nav-link active">Live Trading</a>
+  <div class="nav-right">
+    <span class="nav-meta" id="last-ref">—</span>
+  </div>
 </nav>
 
-<!-- TOP P&L BAR -->
-<div class="top-bar">
-  <div class="tc g"><div class="tl">Today P&L</div><div class="tv" id="b-today-pnl" style="color:var(--dim)">—</div><div class="ts" id="b-today-n">0 trades</div></div>
-  <div class="tc d"><div class="tl">All-time P&L</div><div class="tv" id="b-total-pnl" style="color:var(--dim)">—</div><div class="ts" id="b-total-n">—</div></div>
-  <div class="tc b"><div class="tl">Win Rate</div><div class="tv" id="b-wr" style="color:var(--dim)">—</div><div class="ts" id="b-wr-sub">resolved</div></div>
-  <div class="tc c"><div class="tl">YES Win Rate</div><div class="tv" id="b-yes-wr" style="color:var(--dim)">—</div><div class="ts" id="b-yes-sub">—</div></div>
-  <div class="tc r"><div class="tl">NO Win Rate</div><div class="tv" id="b-no-wr" style="color:var(--dim)">—</div><div class="ts" id="b-no-sub">—</div></div>
-  <div class="tc a"><div class="tl">Open Positions</div><div class="tv" id="b-open" style="color:var(--dim)">—</div><div class="ts">awaiting resolve</div></div>
-  <div class="tc p"><div class="tl">Score: Win / Loss</div><div class="tv" id="b-scores" style="color:var(--dim);font-size:16px">—</div><div class="ts" id="b-scores-sub">avg signal score</div></div>
-</div>
+<!-- LAYOUT -->
+<div class="layout">
 
-<!-- LIVE STRIP -->
-<div class="live-strip">
+  <!-- ── SIDEBAR ─────────────────────────────────────────── -->
+  <div class="sidebar">
 
-  <!-- Signal -->
-  <div class="lc">
-    <div class="ph"><span class="pt">Current Signal</span><span class="pb" id="sig-ts">—</span></div>
-    <div class="sw">
-      <div style="display:flex;align-items:flex-end;gap:10px">
-        <div class="sbig" id="sig-score">—</div>
-        <div style="margin-bottom:4px">
-          <div id="sig-pill"><span class="spill blk">BLOCK</span></div>
-          <div style="font-size:9px;color:var(--dim);margin-top:2px" id="sig-conf">conf —</div>
+    <!-- Current Signal -->
+    <div class="sidebar-section">
+      <div class="section-label">
+        Current Signal
+        <span class="section-label-badge" style="color:var(--text-dim)" id="sig-ts">—</span>
+      </div>
+      <div class="sig-score-wrap">
+        <div class="sig-score-big" id="sig-score">—</div>
+        <div>
+          <div id="sig-pill"><span class="sig-pill blk">BLOCK</span></div>
+          <div class="sig-conf" id="sig-conf">conf —</div>
         </div>
       </div>
-      <div class="sbt"><div class="sbf" id="sig-bar" style="width:50%;background:var(--border)"></div></div>
-    </div>
-    <div id="sig-filt" style="font-size:10px;color:var(--amber);padding:2px 10px 4px;display:none"></div>
-    <div class="sr"><span class="sl">slug</span><span class="sv d" id="sig-slug" style="font-size:9px">—</span></div>
-    <div class="sr"><span class="sl">secs left</span><span class="sv" id="sig-secs">—</span></div>
-    <div class="sr"><span class="sl">BTC price</span><span class="sv" id="sig-price">—</span></div>
-    <div class="sr"><span class="sl">vs ref</span><span class="sv" id="sig-vs">—</span></div>
-    <div class="sr"><span class="sl">momentum 5m</span><span class="sv" id="sig-m5">—</span></div>
-    <div class="sr"><span class="sl">poly yes</span><span class="sv" id="sig-poly">—</span></div>
-  </div>
-
-  <!-- Cycle feed -->
-  <div class="lc">
-    <div class="ph"><span class="pt">Recent Cycles</span><span class="pb" id="feed-n">—</span></div>
-    <div class="fh">
-      <span class="fhc">Time</span><span class="fhc">Slug</span><span class="fhc">Secs</span>
-      <span class="fhc">m5/vsRef</span><span class="fhc">Score</span><span class="fhc">Decision</span><span class="fhc">Out</span>
-    </div>
-    <div class="fscroll" id="feed-body"><div style="padding:16px;color:var(--dim);text-align:center">waiting...</div></div>
-  </div>
-
-  <!-- Log -->
-  <div class="lc">
-    <div class="ph"><span class="pt">Scheduler Log</span><span class="pb" id="log-n">—</span></div>
-    <div class="lscroll" id="log-body"><div style="padding:16px;color:var(--dim)">loading...</div></div>
-  </div>
-
-  <!-- Import health + decision stats -->
-  <div class="lc" style="overflow-y:auto">
-    <div class="ph"><span class="pt">Import Health</span><span class="pb" id="cache-badge" style="color:var(--dim)">—</span></div>
-    <div class="imp-grid">
-      <div class="imp-cell"><div class="imp-lbl">Imports today</div><div class="imp-val" id="imp-today">—</div></div>
-      <div class="imp-cell"><div class="imp-lbl">Cached slugs</div><div class="imp-val" id="imp-cached">—</div></div>
-      <div class="imp-cell"><div class="imp-lbl">Current window</div><div class="imp-val" id="imp-current" style="font-size:13px">—</div></div>
-      <div class="imp-cell"><div class="imp-lbl">Spent today</div><div class="imp-val" id="imp-spent">—</div></div>
-    </div>
-    <div class="qbar-wrap">
-      <div class="qbar-row">Import quota<span id="quota-lbl">0 / 9</span></div>
-      <div class="qbar-track"><div class="qbar-fill" id="quota-fill" style="width:0%"></div></div>
-    </div>
-    <div class="qbar-wrap">
-      <div class="qbar-row">Daily budget<span id="budget-lbl">$0</span></div>
-      <div class="qbar-track"><div class="qbar-fill" id="budget-fill" style="width:0%"></div></div>
+      <div class="sig-bar-track"><div class="sig-bar-fill" id="sig-bar" style="width:50%;background:var(--border)"></div></div>
+      <div class="sig-filter" id="sig-filter" style="display:none"></div>
+      <div style="margin-top:8px">
+        <div class="stat-row">
+          <span class="stat-label">window</span>
+          <span class="stat-val dim" id="sig-slug" style="font-size:9px;text-align:right;max-width:155px;word-break:break-all">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">secs left</span>
+          <span class="stat-val" id="sig-secs">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">BTC price</span>
+          <span class="stat-val amber" id="sig-price">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">vs ref</span>
+          <span class="stat-val" id="sig-vs">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">momentum 5m</span>
+          <span class="stat-val" id="sig-m5">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">poly yes</span>
+          <span class="stat-val blue" id="sig-poly">—</span>
+        </div>
+      </div>
     </div>
 
-    <div class="ph" style="margin-top:0"><span class="pt">Today's Decisions</span><span class="pb" id="dec-total">—</span></div>
-    <div class="sr"><span class="sl">Would trade</span><span class="sv g" id="dec-trade">—</span></div>
-    <div class="sr"><span class="sl">Blocked</span><span class="sv d" id="dec-blocked">—</span></div>
-    <div class="sr"><span class="sl">Trade rate</span><span class="sv b" id="dec-rate">—</span></div>
-    <div class="sr"><span class="sl">Avg score</span><span class="sv" id="dec-score">—</span></div>
-    <div class="sr" style="border-bottom:none"><span class="sl">Top block</span><span class="sv a" id="dec-top" style="font-size:9px;text-align:right;max-width:110px;word-break:break-word">—</span></div>
-  </div>
-
-</div>
-
-<!-- ═══════════════════════════════ TRADES ════════════════════════════════ -->
-<div class="trades-section">
-
-  <div class="trades-hdr">
-    <span class="trades-title">Placed Trades</span>
-    <div class="tab-bar">
-      <button class="tab active" id="tab-all"   onclick="setTab('all')">All Time</button>
-      <button class="tab"        id="tab-today" onclick="setTab('today')">Today</button>
-      <button class="tab"        id="tab-open"  onclick="setTab('open')">Open</button>
-      <button class="tab"        id="tab-won"   onclick="setTab('won')">Won</button>
-      <button class="tab"        id="tab-lost"  onclick="setTab('lost')">Lost</button>
+    <!-- Import Health -->
+    <div class="sidebar-section">
+      <div class="section-label">
+        Import Health
+        <span class="section-label-badge" id="cache-badge" style="color:var(--text-dim)">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">imports today</span>
+        <span class="stat-val" id="imp-today">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">cached slugs</span>
+        <span class="stat-val" id="imp-cached">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">current window</span>
+        <span class="stat-val" id="imp-current">—</span>
+      </div>
+      <div class="stat-row" style="margin-bottom:8px">
+        <span class="stat-label">spent today</span>
+        <span class="stat-val" id="imp-spent">—</span>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-label">Import quota <span id="quota-lbl">0 / 9</span></div>
+        <div class="progress-track"><div class="progress-fill" id="quota-fill" style="width:0%"></div></div>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-label">Daily budget <span id="budget-lbl">$0</span></div>
+        <div class="progress-track"><div class="progress-fill" id="budget-fill" style="width:0%"></div></div>
+      </div>
     </div>
-  </div>
 
-  <!-- Accuracy bar (hidden until data) -->
-  <div class="acc-wrap" id="acc-wrap" style="display:none">
-    <span class="acc-lbl" id="acc-yes-lbl">YES —</span>
-    <div class="acc-track">
-      <div class="acc-yes" id="acc-yes" style="width:50%"></div>
-      <div class="acc-no"  id="acc-no"  style="width:50%"></div>
+    <!-- Today's Decisions -->
+    <div class="sidebar-section">
+      <div class="section-label">
+        Today's Decisions
+        <span class="section-label-badge" id="dec-total" style="color:var(--text-dim)">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">would trade</span>
+        <span class="stat-val green" id="dec-trade">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">blocked</span>
+        <span class="stat-val dim" id="dec-blocked">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">trade rate</span>
+        <span class="stat-val blue" id="dec-rate">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">avg score</span>
+        <span class="stat-val" id="dec-score">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">top block</span>
+        <span class="stat-val amber" id="dec-top" style="font-size:10px;text-align:right;max-width:140px;word-break:break-word">—</span>
+      </div>
     </div>
-    <span class="acc-lbl r" id="acc-no-lbl">NO —</span>
-    <span class="acc-note" id="acc-note">—</span>
+
   </div>
 
-  <!-- P&L chart -->
-  <div class="pnl-chart">
-    <svg id="pnl-svg" viewBox="0 0 1400 80" preserveAspectRatio="none"></svg>
-  </div>
+  <!-- ── MAIN ────────────────────────────────────────────── -->
+  <div class="main">
 
-  <!-- Table -->
-  <div class="tbl-wrap">
-    <table class="tbl">
-      <thead><tr>
-        <th style="width:18px"></th>
-        <th>Date / Time (UTC)</th>
-        <th>Window</th>
-        <th>Side</th>
-        <th class="r">Amount</th>
-        <th class="r">BTC Price</th>
-        <th class="r">Score</th>
-        <th class="r">Conf</th>
-        <th class="r">m5 %</th>
-        <th class="r">vs Ref %</th>
-        <th class="r">Poly Yes</th>
-        <th class="r">Secs Left</th>
-        <th class="r">Filter Reason</th>
-        <th class="r">Outcome</th>
-        <th class="r">P&L</th>
-      </tr></thead>
-      <tbody id="tbl-body">
-        <tr class="empty-r"><td colspan="15">loading trades...</td></tr>
-      </tbody>
-    </table>
-  </div>
+    <!-- Stats strip -->
+    <div class="stats-strip">
+      <div class="stat-card green-top">
+        <div class="stat-card-label">Today P&amp;L</div>
+        <div class="stat-card-value" id="b-today-pnl" style="color:var(--text-dim)">—</div>
+        <div class="stat-card-sub" id="b-today-n">0 trades</div>
+      </div>
+      <div class="stat-card blue-top">
+        <div class="stat-card-label">All-time P&amp;L</div>
+        <div class="stat-card-value" id="b-total-pnl" style="color:var(--text-dim)">—</div>
+        <div class="stat-card-sub" id="b-total-n">—</div>
+      </div>
+      <div class="stat-card amber-top">
+        <div class="stat-card-label">Win Rate</div>
+        <div class="stat-card-value" id="b-wr" style="color:var(--text-dim)">—</div>
+        <div class="stat-card-sub" id="b-wr-sub">resolved</div>
+      </div>
+      <div class="stat-card cyan-top">
+        <div class="stat-card-label">Open Positions</div>
+        <div class="stat-card-value" id="b-open" style="color:var(--text-dim)">—</div>
+        <div class="stat-card-sub">awaiting resolve</div>
+      </div>
+      <div class="stat-card red-top">
+        <div class="stat-card-label">Score: Win / Loss</div>
+        <div class="stat-card-value" id="b-scores" style="color:var(--text-dim);font-size:16px">—</div>
+        <div class="stat-card-sub">avg signal score</div>
+      </div>
+    </div>
 
+    <!-- Cycle feed + Log -->
+    <div class="panels-row">
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Recent Cycles</div>
+          <div class="panel-meta" id="feed-n">—</div>
+        </div>
+        <div class="feed-hdr">
+          <span class="feed-hcol">Time</span>
+          <span class="feed-hcol">Slug</span>
+          <span class="feed-hcol">Secs</span>
+          <span class="feed-hcol">m5 / vsRef</span>
+          <span class="feed-hcol">Score</span>
+          <span class="feed-hcol">Decision</span>
+          <span class="feed-hcol">Out</span>
+        </div>
+        <div class="feed-scroll" id="feed-body">
+          <div class="loading"><span class="spinner"></span>waiting...</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Scheduler Log</div>
+          <div class="panel-meta" id="log-n">—</div>
+        </div>
+        <div class="log-scroll" id="log-body">
+          <div class="loading"><span class="spinner"></span>loading...</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Trades panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Placed Trades</div>
+        <div class="tab-bar">
+          <button class="tab active" id="tab-all"   onclick="setTab('all')">All Time</button>
+          <button class="tab"        id="tab-today" onclick="setTab('today')">Today</button>
+          <button class="tab"        id="tab-open"  onclick="setTab('open')">Open</button>
+          <button class="tab"        id="tab-won"   onclick="setTab('won')">Won</button>
+          <button class="tab"        id="tab-lost"  onclick="setTab('lost')">Lost</button>
+        </div>
+      </div>
+
+      <!-- Accuracy bar -->
+      <div class="acc-bar-wrap" id="acc-wrap" style="display:none">
+        <span class="acc-lbl" id="acc-yes-lbl">YES —</span>
+        <div class="acc-track">
+          <div class="acc-yes" id="acc-yes" style="width:50%"></div>
+          <div class="acc-no"  id="acc-no"  style="width:50%"></div>
+        </div>
+        <span class="acc-lbl r" id="acc-no-lbl">NO —</span>
+        <span class="acc-note" id="acc-note">—</span>
+      </div>
+
+      <!-- P&L chart -->
+      <div class="pnl-chart">
+        <svg id="pnl-svg" viewBox="0 0 1400 80" preserveAspectRatio="none"></svg>
+      </div>
+
+      <!-- Table -->
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr>
+            <th style="width:18px"></th>
+            <th>Date / Time (UTC)</th>
+            <th>Window</th>
+            <th>Side</th>
+            <th class="r">Amount</th>
+            <th class="r">BTC Price</th>
+            <th class="r">Score</th>
+            <th class="r">Conf</th>
+            <th class="r">m5 %</th>
+            <th class="r">vs Ref %</th>
+            <th class="r">Poly Yes</th>
+            <th class="r">Secs Left</th>
+            <th class="r">Filter</th>
+            <th class="r">Outcome</th>
+            <th class="r">P&amp;L</th>
+          </tr></thead>
+          <tbody id="tbl-body">
+            <tr><td colspan="15" style="padding:30px;text-align:center;color:var(--text-dim)"><span class="spinner"></span>loading trades...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
 </div>
 
 <script>
 const API = window.location.origin;
-const $  = id => document.getElementById(id);
+const $   = id => document.getElementById(id);
 
-// Clock
+// UTC clock
 function tick() {
   const n = new Date();
-  $('clock').textContent = [n.getUTCHours(),n.getUTCMinutes(),n.getUTCSeconds()].map(x=>String(x).padStart(2,'0')).join(':') + ' UTC';
+  $('clock').textContent = [n.getUTCHours(), n.getUTCMinutes(), n.getUTCSeconds()]
+    .map(x => String(x).padStart(2,'0')).join(':') + ' UTC';
 }
 setInterval(tick, 1000); tick();
 
 // Formatters
-const pct    = (v,d=3) => v==null?'—':(v>=0?'+':'')+v.toFixed(d)+'%';
-const fix    = (v,d=2) => v==null?'—':v.toFixed(d);
-const dollar = v => v==null?'—':(v>=0?'+$':'-$')+Math.abs(v).toFixed(2);
-const mcol   = v => v==null?'var(--dim)':v>0.05?'var(--green)':v<-0.05?'var(--red)':'var(--text)';
-const scol   = s => s==null?'var(--dim)':s>0.65?'var(--green)':s<0.35?'var(--red)':Math.abs(s-.5)>0.1?'var(--amber)':'var(--text)';
-const pcol   = v => v==null?'var(--dim)':v>0?'var(--green)':v<0?'var(--red)':'var(--text)';
+const pct    = (v, d=3) => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(d) + '%';
+const fix    = (v, d=2) => v == null ? '—' : v.toFixed(d);
+const dollar = v => v == null ? '—' : (v >= 0 ? '+$' : '-$') + Math.abs(v).toFixed(2);
+const mcol   = v => v == null ? 'var(--text-dim)' : v > 0.05 ? 'var(--green)' : v < -0.05 ? 'var(--red)' : 'var(--text)';
+const scol   = s => s == null ? 'var(--text-dim)' : s > 0.65 ? 'var(--green)' : s < 0.35 ? 'var(--red)' : Math.abs(s - .5) > 0.1 ? 'var(--amber)' : 'var(--text)';
+const pcol   = v => v == null ? 'var(--text-dim)' : v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text)';
 
-// Status
+// ── Status ─────────────────────────────────────────────────
 async function fetchStatus() {
   try {
-    const d = await fetch(`${API}/api/status`).then(r=>r.json());
-    if (d.error) { $('sdot').className='sdot err'; $('stext').textContent=d.error; return; }
-    $('sdot').className='sdot live';
-    $('stext').innerHTML=`mode <strong>${d.mode||'?'}</strong> · ${d.market_status||''}`;
-    $('cnum').textContent = d.cycle||'—';
-    if (d.db) $('ocount').textContent = d.db.total||0;
-  } catch(e) { $('sdot').className='sdot err'; $('stext').textContent='monitor unreachable'; }
+    const d = await fetch(`${API}/api/status`).then(r => r.json());
+    const badge = $('market-badge'), dot = $('badge-dot'), txt = $('market-status-text');
+    if (d.error) {
+      badge.className = 'market-badge err';
+      dot.className   = 'badge-dot';
+      txt.textContent = d.error;
+      return;
+    }
+    badge.className = 'market-badge open';
+    dot.className   = 'badge-dot pulse';
+    txt.textContent = `${d.mode || '?'} · ${d.market_status || 'live'}`;
+    $('cnum').textContent = d.cycle || '—';
+  } catch(e) {
+    $('market-badge').className = 'market-badge err';
+    $('market-status-text').textContent = 'monitor unreachable';
+  }
 }
 
-// Current signal
+// ── Current signal ─────────────────────────────────────────
 async function fetchCurrent() {
   try {
-    const d = await fetch(`${API}/api/current`).then(r=>r.json());
+    const d = await fetch(`${API}/api/current`).then(r => r.json());
     if (d.error) return;
-    $('sig-ts').textContent   = d.ts?d.ts.slice(11,19):'—';
-    $('sig-slug').textContent = (d.market_slug||'—').slice(-16);
-    $('sig-secs').textContent = d.seconds_remaining!=null?Math.round(d.seconds_remaining)+'s':'—';
-    $('sig-price').textContent = d.price_now?'$'+Number(d.price_now).toLocaleString('en',{maximumFractionDigits:0}):'—';
 
-    const vs=$('sig-vs'); vs.textContent=pct(d.btc_vs_reference,4);
-    vs.className='sv '+(d.btc_vs_reference>0.02?'g':d.btc_vs_reference!=null&&d.btc_vs_reference<-0.02?'r':'');
-    const m5=$('sig-m5'); m5.textContent=pct(d.momentum_5m,4);
-    m5.className='sv '+(d.momentum_5m>0.05?'g':d.momentum_5m!=null&&d.momentum_5m<-0.05?'r':'');
-    $('sig-poly').textContent=fix(d.poly_yes_price,3);
+    $('sig-ts').textContent    = d.ts ? d.ts.slice(11, 19) : '—';
+    $('sig-slug').textContent  = d.market_slug || '—';
+    $('sig-secs').textContent  = d.seconds_remaining != null ? Math.round(d.seconds_remaining) + 's' : '—';
+    $('sig-price').textContent = d.price_now ? '$' + Number(d.price_now).toLocaleString('en', {maximumFractionDigits:0}) : '—';
 
-    const s=d.signal_score;
-    const se=$('sig-score'); se.textContent=s!=null?s.toFixed(3):'—'; se.style.color=scol(s);
-    const bar=$('sig-bar');
-    if(s!=null){bar.style.width=(s*100)+'%';bar.style.background=s>0.65?'var(--green)':s<0.35?'var(--red)':'var(--amber)';}
-    $('sig-conf').textContent=d.signal_confidence!=null?'conf '+d.signal_confidence.toFixed(2):'conf —';
+    const vsEl = $('sig-vs');
+    vsEl.textContent = pct(d.btc_vs_reference, 4);
+    vsEl.className   = 'stat-val ' + (d.btc_vs_reference > 0.02 ? 'green' : d.btc_vs_reference != null && d.btc_vs_reference < -0.02 ? 'red' : '');
 
-    const pill=$('sig-pill');
-    if(d.would_trade&&d.signal_side){pill.innerHTML=`<span class="spill ${d.signal_side}">${d.signal_side==='yes'?'▲ YES':'▼ NO'}</span>`;}
-    else{pill.innerHTML=`<span class="spill blk">BLOCK</span>`;}
-    const filt=$('sig-filt');
-    if(d.filter_reason){filt.textContent=d.filter_reason;filt.style.display='block';}else{filt.style.display='none';}
-  } catch(e){}
+    const m5El = $('sig-m5');
+    m5El.textContent = pct(d.momentum_5m, 4);
+    m5El.className   = 'stat-val ' + (d.momentum_5m > 0.05 ? 'green' : d.momentum_5m != null && d.momentum_5m < -0.05 ? 'red' : '');
+
+    $('sig-poly').textContent = fix(d.poly_yes_price, 3);
+
+    const s   = d.signal_score;
+    const seE = $('sig-score');
+    seE.textContent = s != null ? s.toFixed(3) : '—';
+    seE.style.color = scol(s);
+
+    const bar = $('sig-bar');
+    if (s != null) {
+      bar.style.width      = (s * 100) + '%';
+      bar.style.background = s > 0.65 ? 'var(--green)' : s < 0.35 ? 'var(--red)' : 'var(--amber)';
+    }
+    $('sig-conf').textContent = d.signal_confidence != null ? 'conf ' + d.signal_confidence.toFixed(2) : 'conf —';
+
+    const pill = $('sig-pill');
+    if (d.would_trade && d.signal_side) {
+      pill.innerHTML = `<span class="sig-pill ${d.signal_side}">${d.signal_side === 'yes' ? '▲ YES' : '▼ NO'}</span>`;
+    } else {
+      pill.innerHTML = `<span class="sig-pill blk">BLOCK</span>`;
+    }
+    const filt = $('sig-filter');
+    if (d.filter_reason) { filt.textContent = d.filter_reason; filt.style.display = 'block'; }
+    else                 { filt.style.display = 'none'; }
+  } catch(e) {}
 }
 
-// Cycle feed
+// ── Cycle feed ─────────────────────────────────────────────
 async function fetchFeed() {
   try {
-    const rows = await fetch(`${API}/api/cycle-feed`).then(r=>r.json());
-    if(rows.error) return;
-    $('feed-n').textContent=rows.length+' cycles';
-    const body=$('feed-body');
-    if(!rows.length){body.innerHTML='<div style="padding:16px;color:var(--dim);text-align:center">no cycles yet</div>';return;}
-    body.innerHTML=rows.map(row=>{
-      const time=row.ts?row.ts.slice(11,19):'—';
-      const sc=row.score!=null?row.score.toFixed(3):'—';
-      const dt=row.decision_type||'';
-      const pill=dt==='trade'
-        ?`<span class="dp dp-t">${row.side==='yes'?'▲ YES':'▼ NO'}</span>`
-        :dt==='block_volume'?`<span class="dp dp-v">LOW VOL</span>`
-        :dt==='block_neutral'?`<span class="dp dp-n">NEUTRAL</span>`
-        :dt==='block_momentum'?`<span class="dp dp-b">WEAK M</span>`
-        :`<span class="dp dp-b">BLOCK</span>`;
-      const out=row.outcome==='up'?'<span style="color:var(--green)">▲</span>':row.outcome==='down'?'<span style="color:var(--red)">▼</span>':'<span style="color:var(--dim)">·</span>';
-      return `<div class="fr${dt==='trade'?' tr':''}">
-        <span class="fc">${time}</span>
-        <span class="fc" style="font-size:9px">${row.slug_short||'—'}</span>
-        <span class="fc">${row.secs!=null?Math.round(row.secs)+'s':'—'}</span>
-        <span class="fc" style="font-size:9px"><span style="color:${mcol(row.m5)}">${pct(row.m5,3)}</span><br><span style="color:${mcol(row.vs_ref)}">${pct(row.vs_ref,3)}</span></span>
-        <span class="fc" style="color:${scol(row.score)}">${sc}</span>
-        <span class="fc">${pill}</span>
-        <span class="fc">${out}</span>
+    const rows = await fetch(`${API}/api/cycle-feed`).then(r => r.json());
+    if (rows.error) return;
+    $('feed-n').textContent = rows.length + ' cycles';
+    const body = $('feed-body');
+    if (!rows.length) { body.innerHTML = '<div class="loading">no cycles yet</div>'; return; }
+    body.innerHTML = rows.map(row => {
+      const time = row.ts ? row.ts.slice(11, 19) : '—';
+      const sc   = row.score != null ? row.score.toFixed(3) : '—';
+      const dt   = row.decision_type || '';
+      const pill = dt === 'trade'
+        ? `<span class="dp dp-trade">${row.side === 'yes' ? '▲ YES' : '▼ NO'}</span>`
+        : dt === 'block_volume'   ? `<span class="dp dp-vol">LOW VOL</span>`
+        : dt === 'block_neutral'  ? `<span class="dp dp-neutral">NEUTRAL</span>`
+        : dt === 'block_momentum' ? `<span class="dp dp-block">WEAK M</span>`
+        : `<span class="dp dp-block">BLOCK</span>`;
+      const out = row.outcome === 'up'   ? '<span style="color:var(--green)">▲</span>'
+                : row.outcome === 'down' ? '<span style="color:var(--red)">▼</span>'
+                : '<span style="color:var(--text-dim)">·</span>';
+      return `<div class="feed-row${dt === 'trade' ? ' trade' : ''}">
+        <span class="feed-col">${time}</span>
+        <span class="feed-col" style="font-size:9px">${row.slug_short || '—'}</span>
+        <span class="feed-col">${row.secs != null ? Math.round(row.secs) + 's' : '—'}</span>
+        <span class="feed-col" style="font-size:9px">
+          <span style="color:${mcol(row.m5)}">${pct(row.m5,3)}</span>
+          <span style="color:var(--text-dim)"> / </span>
+          <span style="color:${mcol(row.vs_ref)}">${pct(row.vs_ref,3)}</span>
+        </span>
+        <span class="feed-col" style="color:${scol(row.score)}">${sc}</span>
+        <span class="feed-col">${pill}</span>
+        <span class="feed-col">${out}</span>
       </div>`;
     }).join('');
-  } catch(e){}
+  } catch(e) {}
 }
 
-// Log
-let _logLen=0;
+// ── Log ────────────────────────────────────────────────────
+let _logLen = 0;
 async function fetchLog() {
   try {
-    const d=await fetch(`${API}/api/logs?n=150`).then(r=>r.json());
-    const lines=d.lines||[];
-    $('log-n').textContent=(d.total_lines||lines.length)+' lines';
-    if(lines.length===_logLen) return;
-    _logLen=lines.length;
-    const body=$('log-body');
-    const atBot=body.scrollHeight-body.scrollTop-body.clientHeight<50;
-    body.innerHTML=lines.map(l=>{
-      const raw=l.raw.replace(/</g,'&lt;').replace(/>/g,'&gt;')
-        .replace(/(\[LIVE\]|\[DRY\])/g,'<strong style="color:var(--cyan)">$1</strong>')
-        .replace(/(WOULD_TRADE|TRADED)/g,'<strong style="color:var(--green)">$1</strong>')
-        .replace(/(BLOCK:|SKIP:)/g,'<strong style="color:var(--amber)">$1</strong>')
-        .replace(/(Rate limited|rate limited|429)/g,'<strong style="color:var(--red)">$1</strong>')
-        .replace(/(score=[\d.]+)/g,'<span style="color:var(--blue)">$1</span>')
-        .replace(/(→ YES|→ NO)/g,m=>`<strong style="color:${m.includes('YES')?'var(--green)':'var(--red)'}">${m}</strong>`);
-      return `<div class="ll ${l.kind||'info'}">${raw}</div>`;
+    const d     = await fetch(`${API}/api/logs?n=150`).then(r => r.json());
+    const lines = d.lines || [];
+    $('log-n').textContent = (d.total_lines || lines.length) + ' lines';
+    if (lines.length === _logLen) return;
+    _logLen = lines.length;
+    const body  = $('log-body');
+    const atBot = body.scrollHeight - body.scrollTop - body.clientHeight < 50;
+    body.innerHTML = lines.map(l => {
+      const raw = l.raw
+        .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/(\[LIVE\]|\[DRY\])/g, '<strong style="color:var(--cyan)">$1</strong>')
+        .replace(/(WOULD_TRADE|TRADED)/g, '<strong style="color:var(--green)">$1</strong>')
+        .replace(/(BLOCK:|SKIP:)/g, '<strong style="color:var(--amber)">$1</strong>')
+        .replace(/(Rate limited|rate limited|429)/g, '<strong style="color:var(--red)">$1</strong>')
+        .replace(/(score=[\d.]+)/g, '<span style="color:var(--blue)">$1</span>')
+        .replace(/(→ YES|→ NO)/g, m => `<strong style="color:${m.includes('YES') ? 'var(--green)' : 'var(--red)'}">${m}</strong>`);
+      return `<div class="log-line ${l.kind || 'info'}">${raw}</div>`;
     }).join('');
-    if(atBot||_logLen<10) body.scrollTop=body.scrollHeight;
-  } catch(e){}
+    if (atBot || _logLen < 10) body.scrollTop = body.scrollHeight;
+  } catch(e) {}
 }
 
-// ═══════════════════════════════════════════════════════════
-// TRADES
-// ═══════════════════════════════════════════════════════════
-let _trades=[], _tab='all';
+// ── Trades ─────────────────────────────────────────────────
+let _trades = [], _tab = 'all';
 
 function setTab(tab) {
-  _tab=tab;
-  ['all','today','open','won','lost'].forEach(t=>$('tab-'+t).classList.toggle('active',t===tab));
+  _tab = tab;
+  ['all','today','open','won','lost'].forEach(t => $('tab-' + t).classList.toggle('active', t === tab));
   renderTrades();
 }
 
 async function fetchTrades() {
   try {
     const [tData, aData, pData] = await Promise.all([
-      fetch(`${API}/api/trades`).then(r=>r.json()),
-      fetch(`${API}/api/accuracy`).then(r=>r.json()),
-      fetch(`${API}/api/pnl-summary`).then(r=>r.json()),
+      fetch(`${API}/api/trades`).then(r => r.json()),
+      fetch(`${API}/api/accuracy`).then(r => r.json()),
+      fetch(`${API}/api/pnl-summary`).then(r => r.json()),
     ]);
-    _trades = Array.isArray(tData)?tData:[];
+    _trades = Array.isArray(tData) ? tData : [];
 
-    // Top bar
-    const tp=$('b-today-pnl'); tp.textContent=dollar(pData.today_pnl); tp.style.color=pcol(pData.today_pnl);
-    $('b-today-n').textContent=(pData.today_trades||0)+' trades today';
-    const ap=$('b-total-pnl'); ap.textContent=dollar(pData.total_pnl); ap.style.color=pcol(pData.total_pnl);
-    $('b-total-n').textContent=(pData.total_trades||0)+' all time';
+    // Stat cards
+    const tp = $('b-today-pnl');
+    tp.textContent = dollar(pData.today_pnl);
+    tp.style.color = pcol(pData.today_pnl);
+    $('b-today-n').textContent = (pData.today_trades || 0) + ' trades today';
 
-    const wrE=$('b-wr');
-    if(aData.win_rate!=null){
-      const w=aData.win_rate; wrE.textContent=Math.round(w*100)+'%';
-      wrE.style.color=w>0.56?'var(--green)':w<0.45?'var(--red)':'var(--amber)';
-      $('b-wr-sub').textContent=aData.correct+'/'+aData.total+' resolved';
-    } else { wrE.textContent='—'; }
+    const ap = $('b-total-pnl');
+    ap.textContent = dollar(pData.total_pnl);
+    ap.style.color = pcol(pData.total_pnl);
+    $('b-total-n').textContent = (pData.total_trades || 0) + ' all time';
 
-    const ye=$('b-yes-wr');
-    if(aData.yes_wr!=null){
-      ye.textContent=Math.round(aData.yes_wr*100)+'%';
-      ye.style.color=aData.yes_wr>0.56?'var(--green)':aData.yes_wr<0.45?'var(--red)':'var(--amber)';
-      $('b-yes-sub').textContent=aData.yes_correct+'/'+aData.yes_total;
-    } else { ye.textContent='—'; }
+    const wrE = $('b-wr');
+    if (aData.win_rate != null) {
+      const w = aData.win_rate;
+      wrE.textContent = Math.round(w * 100) + '%';
+      wrE.style.color = w > 0.56 ? 'var(--green)' : w < 0.45 ? 'var(--red)' : 'var(--amber)';
+      $('b-wr-sub').textContent = aData.correct + '/' + aData.total + ' resolved';
+    } else { wrE.textContent = '—'; }
 
-    const ne=$('b-no-wr');
-    if(aData.no_wr!=null){
-      ne.textContent=Math.round(aData.no_wr*100)+'%';
-      ne.style.color=aData.no_wr>0.56?'var(--green)':aData.no_wr<0.45?'var(--red)':'var(--amber)';
-      $('b-no-sub').textContent=aData.no_correct+'/'+aData.no_total;
-    } else { ne.textContent='—'; }
+    const openN = _trades.filter(t => !t.resolved || !t.outcome).length;
+    const oe    = $('b-open');
+    oe.textContent = openN;
+    oe.style.color = openN > 0 ? 'var(--cyan)' : 'var(--text-dim)';
 
-    const openN=_trades.filter(t=>!t.resolved||!t.outcome).length;
-    const oe=$('b-open'); oe.textContent=openN; oe.style.color=openN>0?'var(--cyan)':'var(--dim)';
-
-    if(aData.avg_score_correct!=null||aData.avg_score_wrong!=null){
-      $('b-scores').textContent=(aData.avg_score_correct||0).toFixed(3)+' / '+(aData.avg_score_wrong||0).toFixed(3);
+    if (aData.avg_score_correct != null || aData.avg_score_wrong != null) {
+      $('b-scores').textContent =
+        (aData.avg_score_correct || 0).toFixed(3) + ' / ' + (aData.avg_score_wrong || 0).toFixed(3);
     }
 
     // Accuracy bar
-    if(aData.total>0){
-      $('acc-wrap').style.display='flex';
-      const y=aData.yes_total||0, n=aData.no_total||0, tot=y+n||1;
-      $('acc-yes').style.width=(y/tot*100).toFixed(1)+'%';
-      $('acc-no').style.width=(n/tot*100).toFixed(1)+'%';
-      $('acc-yes-lbl').textContent='YES '+(aData.yes_wr!=null?Math.round(aData.yes_wr*100)+'% WR':'—')+' ('+y+')';
-      $('acc-no-lbl').textContent='NO '+(aData.no_wr!=null?Math.round(aData.no_wr*100)+'% WR':'—')+' ('+n+')';
-      $('acc-note').textContent=aData.total+' resolved · '+aData.correct+' correct · overall '+Math.round(aData.win_rate*100)+'%';
+    if (aData.total > 0) {
+      $('acc-wrap').style.display = 'flex';
+      const y = aData.yes_total || 0, n = aData.no_total || 0, tot = y + n || 1;
+      $('acc-yes').style.width    = (y / tot * 100).toFixed(1) + '%';
+      $('acc-no').style.width     = (n / tot * 100).toFixed(1) + '%';
+      $('acc-yes-lbl').textContent = 'YES ' + (aData.yes_wr != null ? Math.round(aData.yes_wr * 100) + '% WR' : '—') + ' (' + y + ')';
+      $('acc-no-lbl').textContent  = 'NO '  + (aData.no_wr  != null ? Math.round(aData.no_wr  * 100) + '% WR' : '—') + ' (' + n + ')';
+      $('acc-note').textContent    = aData.total + ' resolved · overall ' + Math.round(aData.win_rate * 100) + '%';
     }
 
-    // P&L chart
-    drawPnl(_trades.filter(t=>t.trade_result!=null).slice().reverse());
-
+    drawPnl(_trades.filter(t => t.trade_result != null).slice().reverse());
     renderTrades();
-  } catch(e){ console.error('fetchTrades',e); }
+  } catch(e) { console.error('fetchTrades', e); }
 }
 
 function renderTrades() {
-  const today=new Date().toISOString().slice(0,10);
-  let rows=_trades;
-  if(_tab==='today') rows=_trades.filter(t=>t.ts&&t.ts.startsWith(today));
-  else if(_tab==='open')  rows=_trades.filter(t=>!t.resolved||!t.outcome);
-  else if(_tab==='won')   rows=_trades.filter(t=>(t.trade_side==='yes'&&t.outcome==='up')||(t.trade_side==='no'&&t.outcome==='down'));
-  else if(_tab==='lost')  rows=_trades.filter(t=>{
-    const s=t.trade_side,o=t.outcome;
-    return(o==='up'||o==='down')&&!((s==='yes'&&o==='up')||(s==='no'&&o==='down'));
+  const today = new Date().toISOString().slice(0, 10);
+  let rows = _trades;
+  if      (_tab === 'today') rows = _trades.filter(t => t.ts && t.ts.startsWith(today));
+  else if (_tab === 'open')  rows = _trades.filter(t => !t.resolved || !t.outcome);
+  else if (_tab === 'won')   rows = _trades.filter(t => (t.trade_side==='yes'&&t.outcome==='up') || (t.trade_side==='no'&&t.outcome==='down'));
+  else if (_tab === 'lost')  rows = _trades.filter(t => {
+    const s = t.trade_side, o = t.outcome;
+    return (o==='up'||o==='down') && !((s==='yes'&&o==='up') || (s==='no'&&o==='down'));
   });
 
-  const tbody=$('tbl-body');
-  if(!rows.length){
-    const msgs={all:'No trades recorded yet — set FASTLOOP_MODE=trade or both.',today:'No trades today yet.',open:'No open positions.',won:'No winning trades yet.',lost:'No losing trades yet.'};
-    tbody.innerHTML=`<tr class="empty-r"><td colspan="15">${msgs[_tab]||'No data.'}</td></tr>`;
+  const tbody = $('tbl-body');
+  if (!rows.length) {
+    const msgs = {all:'No trades recorded yet — set FASTLOOP_MODE=trade or both.',today:'No trades today.',open:'No open positions.',won:'No winning trades yet.',lost:'No losing trades yet.'};
+    tbody.innerHTML = `<tr><td colspan="15" class="empty">${msgs[_tab] || 'No data.'}</td></tr>`;
     return;
   }
 
-  tbody.innerHTML=rows.map(t=>{
-    const side=t.trade_side||'—', out=t.outcome, res=t.resolved;
-    let dc='open', rc='open', outH='<span style="color:var(--blue)">pending ·</span>';
+  tbody.innerHTML = rows.map(t => {
+    const side = t.trade_side || '—', out = t.outcome, res = t.resolved;
+    let dc = 'open', rc = 'open', outH = '<span style="color:var(--blue)">pending</span>';
+    if (res && out === 'up')   { const won = side==='yes'; dc=won?'win':'loss'; rc=dc; outH=`<span class="out-pill up">▲ UP</span>`; }
+    else if (res && out === 'down') { const won = side==='no';  dc=won?'win':'loss'; rc=dc; outH=`<span class="out-pill down">▼ DN</span>`; }
+    else if (res) { dc='unk'; rc=''; outH='<span style="color:var(--text-dim)">unclear</span>'; }
 
-    if(res&&out==='up'){
-      const won=side==='yes'; dc=won?'win':'loss'; rc=won?'win':'loss';
-      outH=`<span style="color:var(--green);font-weight:700">▲ UP</span>`;
-    } else if(res&&out==='down'){
-      const won=side==='no'; dc=won?'win':'loss'; rc=won?'win':'loss';
-      outH=`<span style="color:var(--red);font-weight:700">▼ DN</span>`;
-    } else if(res){
-      dc='unk'; rc=''; outH='<span style="color:var(--dim)">unclear</span>';
-    }
-
-    const pnl=t.trade_result;
-    const score=t.signal_score!=null?t.signal_score.toFixed(3):'—';
-    const conf=t.signal_confidence!=null?t.signal_confidence.toFixed(2):'—';
-    const fr=t.filter_reason?`<span style="color:var(--dim);font-size:9px">${t.filter_reason.slice(0,30)}</span>`:'<span style="color:var(--dim)">—</span>';
-    const price=t.price_now?'$'+Number(t.price_now).toLocaleString('en',{maximumFractionDigits:0}):'—';
+    const pnl   = t.trade_result;
+    const score = t.signal_score != null ? t.signal_score.toFixed(3) : '—';
+    const conf  = t.signal_confidence != null ? t.signal_confidence.toFixed(2) : '—';
+    const fr    = t.filter_reason ? `<span style="color:var(--text-dim);font-size:9px">${t.filter_reason.slice(0,28)}</span>` : '<span style="color:var(--text-dim)">—</span>';
+    const price = t.price_now ? '$' + Number(t.price_now).toLocaleString('en', {maximumFractionDigits:0}) : '—';
 
     return `<tr class="${rc}">
       <td><span class="rd ${dc}"></span></td>
-      <td style="color:var(--dim)"><span style="color:var(--text2)">${t.ts?t.ts.slice(0,10):'—'}</span> <span>${t.ts?t.ts.slice(11,19):'—'}</span></td>
-      <td style="color:var(--text);font-size:10px">${(t.market_slug||'—').slice(-12)}</td>
-      <td><span class="spill ${side}" style="font-size:10px;padding:1px 7px">${side==='yes'?'▲ YES':'▼ NO'}</span></td>
-      <td class="r" style="color:var(--text2)">${t.trade_amount?'$'+t.trade_amount.toFixed(2):'—'}</td>
-      <td class="r" style="color:var(--dim)">${price}</td>
+      <td><span style="color:var(--text)">${t.ts ? t.ts.slice(0,10) : '—'}</span> <span style="color:var(--text-dim)">${t.ts ? t.ts.slice(11,19) : '—'}</span></td>
+      <td style="color:var(--text);font-size:10px">${(t.market_slug || '—').slice(-14)}</td>
+      <td><span class="trade-pill ${side}">${side === 'yes' ? '▲ YES' : '▼ NO'}</span></td>
+      <td class="r" style="color:var(--text)">${t.trade_amount ? '$' + t.trade_amount.toFixed(2) : '—'}</td>
+      <td class="r" style="color:var(--text-dim)">${price}</td>
       <td class="r" style="color:${scol(t.signal_score)}">${score}</td>
-      <td class="r" style="color:var(--dim)">${conf}</td>
+      <td class="r" style="color:var(--text-dim)">${conf}</td>
       <td class="r" style="color:${mcol(t.momentum_5m)}">${pct(t.momentum_5m,3)}</td>
       <td class="r" style="color:${mcol(t.btc_vs_reference)}">${pct(t.btc_vs_reference,3)}</td>
       <td class="r" style="color:var(--text)">${fix(t.poly_yes_price,3)}</td>
-      <td class="r" style="color:var(--dim)">${t.seconds_remaining!=null?Math.round(t.seconds_remaining)+'s':'—'}</td>
+      <td class="r" style="color:var(--text-dim)">${t.seconds_remaining != null ? Math.round(t.seconds_remaining) + 's' : '—'}</td>
       <td class="r">${fr}</td>
       <td class="r">${outH}</td>
       <td class="r" style="color:${pcol(pnl)};font-weight:600">${dollar(pnl)}</td>
@@ -613,37 +905,34 @@ function renderTrades() {
 }
 
 function drawPnl(trades) {
-  const svg=$('pnl-svg');
-  if(!trades.length){
-    svg.innerHTML=`<text x="700" y="46" text-anchor="middle" fill="rgba(255,255,255,0.07)" font-size="12" font-family="monospace">no resolved trades yet</text>`;
+  const svg = $('pnl-svg');
+  if (!trades.length) {
+    svg.innerHTML = `<text x="700" y="46" text-anchor="middle" fill="rgba(255,255,255,0.07)" font-size="12" font-family="monospace">no resolved trades yet</text>`;
     return;
   }
-  const W=1400,H=80,PAD=6;
-  let cum=0;
-  const pts=trades.map((t,i)=>{cum+=t.trade_result||0;return{x:i,y:cum,t};});
-  const minY=Math.min(0,...pts.map(p=>p.y));
-  const maxY=Math.max(0,...pts.map(p=>p.y));
-  const rng=maxY-minY||0.01;
-  const n=pts.length;
-  const tx=i=>PAD+(i/Math.max(n-1,1))*(W-PAD*2);
-  const ty=v=>H-PAD-((v-minY)/rng)*(H-PAD*2);
-  const zY=ty(0);
-  const fin=pts[n-1].y;
-  const lc=fin>=0?'#19e87a':'#f03a50';
+  const W=1400, H=80, PAD=6;
+  let cum = 0;
+  const pts = trades.map((t,i) => { cum += t.trade_result || 0; return {x:i, y:cum, t}; });
+  const minY = Math.min(0, ...pts.map(p => p.y));
+  const maxY = Math.max(0, ...pts.map(p => p.y));
+  const rng  = maxY - minY || 0.01;
+  const n    = pts.length;
+  const tx   = i => PAD + (i / Math.max(n-1,1)) * (W - PAD*2);
+  const ty   = v => H - PAD - ((v - minY) / rng) * (H - PAD*2);
+  const zY   = ty(0);
+  const fin  = pts[n-1].y;
+  const lc   = fin >= 0 ? '#00e676' : '#ff3d57';
 
-  let area=`M${tx(0)},${zY}`;
-  pts.forEach((p,i)=>area+=` L${tx(i)},${ty(p.y)}`);
-  area+=` L${tx(n-1)},${zY} Z`;
-  const line=pts.map((p,i)=>`${i===0?'M':'L'}${tx(i)},${ty(p.y)}`).join(' ');
-
-  const dots=pts.map((p,i)=>{
-    const s=p.t.trade_side,o=p.t.outcome;
-    const won=(s==='yes'&&o==='up')||(s==='no'&&o==='down');
-    const col=won?'#19e87a':'#f03a50';
-    return `<circle cx="${tx(i)}" cy="${ty(p.y)}" r="2.5" fill="${col}" opacity="0.85"/>`;
+  let area = `M${tx(0)},${zY}`;
+  pts.forEach((p,i) => area += ` L${tx(i)},${ty(p.y)}`);
+  area += ` L${tx(n-1)},${zY} Z`;
+  const line = pts.map((p,i) => `${i===0?'M':'L'}${tx(i)},${ty(p.y)}`).join(' ');
+  const dots = pts.map((p,i) => {
+    const won = (p.t.trade_side==='yes'&&p.t.outcome==='up') || (p.t.trade_side==='no'&&p.t.outcome==='down');
+    return `<circle cx="${tx(i)}" cy="${ty(p.y)}" r="2.5" fill="${won?'#00e676':'#ff3d57'}" opacity="0.85"/>`;
   }).join('');
 
-  svg.innerHTML=`
+  svg.innerHTML = `
     <defs><linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="${lc}" stop-opacity="0.12"/>
       <stop offset="100%" stop-color="${lc}" stop-opacity="0"/>
@@ -657,57 +946,58 @@ function drawPnl(trades) {
     <text x="${PAD+4}" y="${H-4}" fill="rgba(255,255,255,0.1)" font-size="9" font-family="monospace">${n} resolved · green=win · red=loss</text>`;
 }
 
-
-// Import status
+// ── Import status ──────────────────────────────────────────
 async function fetchImportStatus() {
   try {
-    const d = await fetch(`${API}/api/import-status`).then(r=>r.json());
+    const d = await fetch(`${API}/api/import-status`).then(r => r.json());
+    $('imp-today').textContent  = d.imports_today + ' / ' + d.import_limit;
+    $('imp-cached').textContent = d.cache_entries;
+    const curEl = $('imp-current');
+    curEl.textContent = d.current_cached ? '✓ cached' : '✗ missing';
+    curEl.className   = 'stat-val ' + (d.current_cached ? 'green' : 'red');
+    $('imp-spent').textContent  = '$' + (d.spent_today || 0).toFixed(2);
 
-    document.getElementById('imp-today').textContent   = d.imports_today + ' / ' + d.import_limit;
-    document.getElementById('imp-cached').textContent  = d.cache_entries;
-    const curEl = document.getElementById('imp-current');
-    curEl.textContent  = d.current_cached ? '✓ cached' : '✗ missing';
-    curEl.style.color  = d.current_cached ? 'var(--green)' : 'var(--red)';
-    document.getElementById('imp-spent').textContent   = '$' + (d.spent_today||0).toFixed(2);
-
-    const qPct = Math.min((d.imports_today / d.import_limit) * 100, 100);
-    const qFill = document.getElementById('quota-fill');
-    qFill.style.width = qPct + '%';
+    const qPct  = Math.min((d.imports_today / d.import_limit) * 100, 100);
+    const qFill = $('quota-fill');
+    qFill.style.width      = qPct + '%';
     qFill.style.background = qPct > 80 ? 'var(--red)' : qPct > 55 ? 'var(--amber)' : 'var(--green)';
-    document.getElementById('quota-lbl').textContent = d.imports_today + ' / ' + d.import_limit;
+    $('quota-lbl').textContent = d.imports_today + ' / ' + d.import_limit;
 
-    const bPct = Math.min((d.spent_today / (d.daily_budget||10)) * 100, 100);
-    const bFill = document.getElementById('budget-fill');
-    bFill.style.width = bPct + '%';
+    const bPct  = Math.min((d.spent_today / (d.daily_budget || 10)) * 100, 100);
+    const bFill = $('budget-fill');
+    bFill.style.width      = bPct + '%';
     bFill.style.background = bPct > 80 ? 'var(--red)' : bPct > 55 ? 'var(--amber)' : 'var(--green)';
-    document.getElementById('budget-lbl').textContent = '$' + (d.spent_today||0).toFixed(2) + ' / $' + (d.daily_budget||10).toFixed(0);
+    $('budget-lbl').textContent = '$' + (d.spent_today || 0).toFixed(2) + ' / $' + (d.daily_budget || 10).toFixed(0);
 
-    const badge = document.getElementById('cache-badge');
-    if (!d.cache_exists)      { badge.textContent='NO CACHE'; badge.style.color='var(--red)'; }
-    else if (!d.current_cached){ badge.textContent='STALE';   badge.style.color='var(--amber)'; }
-    else                       { badge.textContent='OK';      badge.style.color='var(--green)'; }
-  } catch(e){}
+    const badge = $('cache-badge');
+    if (!d.cache_exists)        { badge.textContent = 'NO CACHE'; badge.style.color = 'var(--red)'; }
+    else if (!d.current_cached) { badge.textContent = 'STALE';    badge.style.color = 'var(--amber)'; }
+    else                        { badge.textContent = 'OK';        badge.style.color = 'var(--green)'; }
+  } catch(e) {}
 }
 
-// Decision stats
+// ── Decision stats ─────────────────────────────────────────
 async function fetchDecisionStats() {
   try {
-    const d = await fetch(`${API}/api/decision-stats`).then(r=>r.json());
+    const d = await fetch(`${API}/api/decision-stats`).then(r => r.json());
     if (d.error) return;
-    document.getElementById('dec-total').textContent   = d.total_today + ' cycles';
-    document.getElementById('dec-trade').textContent   = d.would_trade;
-    document.getElementById('dec-blocked').textContent = d.blocked;
-    document.getElementById('dec-rate').textContent    = d.trade_rate != null ? (d.trade_rate*100).toFixed(1)+'%' : '—';
-    document.getElementById('dec-score').textContent   = d.avg_score != null ? d.avg_score.toFixed(3) : '—';
-    const top = Object.entries(d.block_reasons||{}).sort((a,b)=>b[1]-a[1])[0];
-    document.getElementById('dec-top').textContent     = top ? top[0]+' ('+top[1]+')' : '—';
-  } catch(e){}
+    $('dec-total').textContent   = d.total_today + ' cycles';
+    $('dec-trade').textContent   = d.would_trade;
+    $('dec-blocked').textContent = d.blocked;
+    $('dec-rate').textContent    = d.trade_rate != null ? (d.trade_rate * 100).toFixed(1) + '%' : '—';
+    $('dec-score').textContent   = d.avg_score != null ? d.avg_score.toFixed(3) : '—';
+    const top = Object.entries(d.block_reasons || {}).sort((a,b) => b[1] - a[1])[0];
+    $('dec-top').textContent     = top ? top[0] + ' (' + top[1] + ')' : '—';
+  } catch(e) {}
 }
 
-// Refresh
+// ── Refresh ────────────────────────────────────────────────
 async function refreshAll() {
-  await Promise.all([fetchStatus(), fetchCurrent(), fetchFeed(), fetchLog(), fetchTrades(), fetchImportStatus(), fetchDecisionStats()]);
-  $('last-ref').textContent='updated '+new Date().toUTCString().slice(17,25)+' UTC';
+  await Promise.all([
+    fetchStatus(), fetchCurrent(), fetchFeed(), fetchLog(),
+    fetchTrades(), fetchImportStatus(), fetchDecisionStats()
+  ]);
+  $('last-ref').textContent = 'updated ' + new Date().toUTCString().slice(17,25) + ' UTC';
 }
 
 refreshAll();
