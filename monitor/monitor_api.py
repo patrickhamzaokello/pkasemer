@@ -388,64 +388,67 @@ def trades():
     """
     Read executed trades from trade_log.json (written by fast_trader._log_trade_local).
     Returns a flat list, newest-first, with field names the dashboard expects.
-    Mirrors the /api/logs pattern: open TRADE_PATH, parse, map, return.
     """
     n = int(request.args.get("n", 500))
     try:
         with open(TRADE_PATH) as f:
             raw = json.load(f)
+        if not isinstance(raw, list):
+            raw = [raw]   # handle single-object edge case
+        result = []
+        for t in reversed(raw):
+            result.append({
+                "ts":                t.get("timestamp"),
+                "market_slug":       t.get("slug"),
+                "trade_side":        t.get("side"),
+                "signal_side":       t.get("side"),
+                "trade_amount":      t.get("position_size"),
+                "trade_result":      t.get("pnl"),
+                "outcome":           t.get("outcome"),
+                "resolved":          1 if t.get("outcome") is not None else 0,
+                "price_now":         None,
+                "btc_vs_reference":  t.get("vs_ref"),
+                "momentum_5m":       t.get("momentum_pct"),
+                "poly_yes_price":    t.get("poly_yes_price"),
+                "seconds_remaining": t.get("time_remaining"),
+                "signal_score":      t.get("score"),
+                "signal_confidence": t.get("confidence"),
+                "filter_reason":     None,
+            })
+        return jsonify(result[:n])
     except FileNotFoundError:
         return jsonify([])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-    result = []
-    for t in reversed(raw):          # newest-first (mirrors ORDER BY id DESC in old DB query)
-        result.append({
-            "ts":                t.get("timestamp"),          # ISO — slice(0,10)=date, slice(11,19)=time
-            "market_slug":       t.get("slug"),
-            "trade_side":        t.get("side"),
-            "signal_side":       t.get("side"),
-            "trade_amount":      t.get("position_size"),
-            "trade_result":      t.get("pnl"),                # None until market resolves
-            "outcome":           t.get("outcome"),            # "up" | "down" | None
-            "resolved":          1 if t.get("outcome") is not None else 0,
-            "price_now":         None,                        # not captured in trade_log
-            "btc_vs_reference":  t.get("vs_ref"),
-            "momentum_5m":       t.get("momentum_pct"),
-            "poly_yes_price":    t.get("poly_yes_price"),
-            "seconds_remaining": t.get("time_remaining"),
-            "signal_score":      t.get("score"),
-            "signal_confidence": t.get("confidence"),
-            "filter_reason":     None,                        # only for blocked signals, not trades
-        })
-
-    return jsonify(result[:n])
-
 
 @app.route("/api/pnl-summary")
 def pnl_summary():
+    """P&L summary sourced from trade_log.json (same as /api/trades)."""
     try:
-        conn = get_db()
-        rows = conn.execute("""
-            SELECT ts, trade_side, trade_amount, trade_result, outcome, resolved
-            FROM signal_observations WHERE traded = 1
-        """).fetchall()
-        conn.close()
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        total_pnl  = sum(r[3] for r in rows if r[3] is not None)
-        today_rows = [r for r in rows if r[0] and r[0][:10] == today]
-        today_pnl  = sum(r[3] for r in today_rows if r[3] is not None)
-        resolved   = [r for r in rows if r[4] in ("up","down") and r[3] is not None]
-        wins = sum(1 for r in resolved if r[3] > 0)
-        return jsonify({
-            "total_trades": len(rows), "total_pnl": round(total_pnl, 4),
-            "today_trades": len(today_rows), "today_pnl": round(today_pnl, 4),
-            "win_rate": round(wins/len(resolved), 4) if resolved else None,
-            "resolved_trades": len(resolved),
-        })
+        with open(TRADE_PATH) as f:
+            raw = json.load(f)
+        if not isinstance(raw, list):
+            raw = [raw]
+    except FileNotFoundError:
+        raw = []
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_rows = [t for t in raw if (t.get("timestamp") or "")[:10] == today]
+    resolved   = [t for t in raw if t.get("outcome") in ("up", "down") and t.get("pnl") is not None]
+    total_pnl  = sum(t["pnl"] for t in resolved)
+    today_pnl  = sum(t["pnl"] for t in today_rows if t.get("pnl") is not None)
+    wins       = sum(1 for t in resolved if t["pnl"] > 0)
+    return jsonify({
+        "total_trades":    len(raw),
+        "total_pnl":       round(total_pnl, 4),
+        "today_trades":    len(today_rows),
+        "today_pnl":       round(today_pnl, 4),
+        "win_rate":        round(wins / len(resolved), 4) if resolved else None,
+        "resolved_trades": len(resolved),
+    })
 
 
 # ─────────────────────────────────────────────────────────────────────────────
