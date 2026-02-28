@@ -29,7 +29,7 @@ LOG_PATH    = "/app/logs/collector.log"   # unified stdout+stderr via tee (sched
 CACHE_PATH  = "/data/market_id_cache.json"
 SPEND_PATH  = "/data/daily_spend.json"    # on shared volume, written by fast_trader.py
 CONFIG_PATH = "/app/config.json"          # trader/config.json, volume-mounted read-only
-
+TRADE_PATH  = ("/data/trade_log.json")
 
 def _load_config():
     try:
@@ -385,19 +385,76 @@ def accuracy():
 
 @app.route("/api/trades")
 def trades():
+    """
+    Return structured trade records from trade_log.json.
+    Supports ?n=N query param for number of trades to return.
+    """
+    n = int(request.args.get("n", 500))
+
+    trade_log_file = Path("/data/trade_log.json")
+    if not trade_log_file.exists():
+        return jsonify({"trades": [], "error": "trade_log.json not found — no trades yet"})
+
     try:
-        conn = get_db()
-        rows = conn.execute("""
-            SELECT ts, market_slug, trade_side, trade_amount, trade_result,
-                   outcome, resolved, btc_vs_reference, momentum_5m,
-                   poly_yes_price, seconds_remaining, price_to_beat, price_now,
-                   signal_score, signal_confidence, signal_side, filter_reason
-            FROM signal_observations WHERE traded = 1 ORDER BY id DESC LIMIT 500
-        """).fetchall()
-        conn.close()
-        return jsonify([dict(r) for r in rows])
+        raw_trades = json.loads(trade_log_file.read_text())
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"trades": [], "error": f"Failed to read trade log: {str(e)}"}),500
+
+    # Most recent first, apply limit
+    tail = list(reversed(raw_trades))[:n]
+    parsed = []
+
+    for t in tail:
+        # Classify kind for front-end colour coding
+        side = (t.get("side") or "").lower()
+        outcome = t.get("outcome")
+
+        if outcome == "win":
+            kind = "win"
+        elif outcome == "loss":
+            kind = "loss"
+        elif side == "yes":
+            kind = "long"
+        elif side == "no":
+            kind = "short"
+        else:
+            kind = "unknown"
+
+        parsed.append({
+            # Identity
+            "trade_id":          t.get("trade_id"),
+            "ts":                t.get("timestamp"),
+            "hour_utc":          t.get("hour_utc"),
+            "kind":              kind,
+            # Source metadata
+            "source":            t.get("source"),
+            "thesis":            t.get("thesis"),
+            "asset":             t.get("asset"),
+            "signal_source":     t.get("signal_source"),
+            # Market
+            "market_slug":       t.get("slug"),
+            "trade_side":        t.get("side"),
+            "entry_price":       t.get("entry_price"),
+            "shares":            t.get("shares"),
+            "trade_amount":      t.get("position_size"),
+            "seconds_remaining": t.get("time_remaining"),
+            # Signals
+            "signal_score":      t.get("score"),
+            "signal_confidence": t.get("confidence"),
+            "momentum_5m":       t.get("momentum_pct"),
+            "momentum_1m":       t.get("momentum_1m"),
+            "momentum_15m":      t.get("momentum_15m"),
+            "btc_vs_reference":  t.get("vs_ref"),
+            "volume_ratio":      t.get("volume_ratio"),
+            "rsi_14":            t.get("rsi_14"),
+            "poly_yes_price":    t.get("poly_yes_price"),
+            # Result
+            "outcome":           t.get("outcome"),
+            "pnl":               t.get("pnl"),
+            "resolved":          t.get("outcome") is not None,
+        })
+
+    return jsonify({"trades": parsed, "total": len(raw_trades)})
 
 
 @app.route("/api/pnl-summary")

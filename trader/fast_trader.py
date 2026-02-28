@@ -42,7 +42,17 @@ sys.stdout.reconfigure(line_buffering=True)
 from dotenv import load_dotenv
 load_dotenv()
 
-
+try:
+    from tradejournal import log_trade
+    JOURNAL_AVAILABLE = True
+except ImportError:
+    try:
+        from skills.tradejournal import log_trade
+        JOURNAL_AVAILABLE = True
+    except ImportError:
+        JOURNAL_AVAILABLE = False
+        def log_trade(*args, **kwargs):
+            pass
 
 # =============================================================================
 # Constants
@@ -215,6 +225,55 @@ def _save_market_cache(cache):
 
 _market_id_cache = _load_market_cache()
 
+
+# =============================================================================
+# Local Trade Log
+# =============================================================================
+
+_TRADE_LOG_FILE = Path(_DATA_DIR) / "trade_log.json"
+
+def _log_trade_local(trade_id, side, score, confidence, entry_price, position_size,
+                      shares, slug, remaining, cex_signals, poly_signals):
+    """Append trade to local JSON log for analysis."""
+    record = {
+        "timestamp":     datetime.now(timezone.utc).isoformat(),
+        "hour_utc":      datetime.now(timezone.utc).hour,
+        "trade_id":      trade_id,
+        "source":        TRADE_SOURCE,
+        "thesis":        f"{side.upper()} score={score:.3f} conf={confidence:.3f}",
+        "asset":         ASSET,
+        "signal_source": SIGNAL_SOURCE,
+        "slug":          slug,
+        "side":          side,
+        "score":         round(score, 4),
+        "confidence":    round(confidence, 4),
+        "entry_price":   round(entry_price, 4),
+        "position_size": round(position_size, 4),
+        "shares":        round(shares, 2),
+        "time_remaining":int(remaining),
+        # CEX signals
+        "momentum_pct":  round(cex_signals.get("momentum_5m", 0) or 0, 3),
+        "momentum_1m":   round(cex_signals.get("momentum_1m", 0) or 0, 4),
+        "momentum_15m":  round(cex_signals.get("momentum_15m", 0) or 0, 4),
+        "vs_ref":        round(cex_signals.get("btc_vs_reference", 0) or 0, 4),
+        "volume_ratio":  round(cex_signals.get("volume_ratio", 1.0) or 1.0, 2),
+        "rsi_14":        round(cex_signals.get("rsi_14", 50) or 50, 2),
+        # Poly signals
+        "poly_yes_price":round(poly_signals.get("poly_yes_price", 0.5) or 0.5, 4),
+        # Result — filled in later
+        "outcome":       None,
+        "pnl":           None,
+    }
+
+    trades = []
+    if _TRADE_LOG_FILE.exists():
+        try:
+            trades = json.loads(_TRADE_LOG_FILE.read_text())
+        except Exception:
+            trades = []
+
+    trades.append(record)
+    _TRADE_LOG_FILE.write_text(json.dumps(trades, indent=2))
 
 def warm_import_cache(asset="BTC"):
     """
@@ -734,17 +793,24 @@ def run_fast_market_strategy(
             daily_spend["spent"]  += position_size
             daily_spend["trades"] += 1
             _save_daily_spend(daily_spend)
-            if trade_id and JOURNAL_AVAILABLE:
-                log_trade(
-                    trade_id=trade_id,
-                    source=TRADE_SOURCE,
-                    thesis=f"{side.upper()} score={score:.3f} conf={confidence:.3f}",
-                    confidence=round(confidence, 2),
-                    asset=ASSET,
-                    momentum_pct=round(cex_signals.get("momentum_5m", 0), 3),
-                    volume_ratio=round(cex_signals.get("volume_ratio", 1.0), 2),
-                    signal_source=SIGNAL_SOURCE,
-                )
+
+            if trade_id:
+                try:
+                    _log_trade_local(
+                        trade_id=trade_id,
+                        side=side,
+                        score=score,
+                        confidence=confidence,
+                        entry_price=entry_price,
+                        position_size=position_size,
+                        shares=shares,
+                        slug=best["slug"],
+                        remaining=remaining,
+                        cex_signals=cex_signals,
+                        poly_signals=poly_signals,
+                    )
+                except Exception as e:
+                    log(f"  WARNING: trade log failed: {e}", force=True)
         else:
             error = result.get("error", "Unknown") if result else "no response"
             log(f"  ERROR trade failed: {error}", force=True)
