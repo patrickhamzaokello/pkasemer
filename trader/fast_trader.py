@@ -443,8 +443,8 @@ def import_fast_market_market(slug, max_retries=3):
 
     # Guard against exceeding the daily import limit
     imports_used = _get_import_count_today()
-    if imports_used >= IMPORT_DAILY_LIMIT:
-        return None, f"Daily import limit reached ({imports_used}/{IMPORT_DAILY_LIMIT}) — waiting for tomorrow"
+    # if imports_used >= IMPORT_DAILY_LIMIT:
+    #     return None, f"Daily import limit reached ({imports_used}/{IMPORT_DAILY_LIMIT}) — waiting for tomorrow"
 
     print(f"  Import quota: {imports_used}/{IMPORT_DAILY_LIMIT} used today", flush=True)
 
