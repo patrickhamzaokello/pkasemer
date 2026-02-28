@@ -28,6 +28,17 @@ STATUS_PATH = "/data/status.json"
 LOG_PATH    = "/app/logs/collector.log"   # unified stdout+stderr via tee (scheduler + trader)
 CACHE_PATH  = "/data/market_id_cache.json"
 SPEND_PATH  = "/data/daily_spend.json"    # on shared volume, written by fast_trader.py
+CONFIG_PATH = "/app/config.json"          # trader/config.json, volume-mounted read-only
+
+
+def _load_config():
+    try:
+        with open(CONFIG_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+CONFIG = _load_config()
 
 
 def get_db():
@@ -564,7 +575,7 @@ def import_status():
         "spend_exists":    False,
         "spent_today":     0.0,
         "trades_today":    0,
-        "daily_budget":    20.0,
+        "daily_budget":    CONFIG.get("daily_budget", 20.0),
     }
 
     # Cache file
@@ -641,6 +652,18 @@ def decision_stats():
             "avg_score":      round(avg_score, 3) if avg_score else None,
             "block_reasons":  reasons,
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/config")
+def config_endpoint():
+    """Expose trader/config.json to the dashboard (re-read on each call so edits take effect after restart)."""
+    try:
+        with open(CONFIG_PATH) as f:
+            return jsonify(json.load(f))
+    except FileNotFoundError:
+        return jsonify({"error": "config.json not found"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

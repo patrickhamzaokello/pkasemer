@@ -45,6 +45,7 @@ services:
       # ── Live code: only needs `docker compose restart monitor` after changes ──
       - ./monitor/monitor_api.py:/app/monitor_api.py
       - ./shared/composite_signal.py:/app/composite_signal.py
+      - ./trader/config.json:/app/config.json:ro
       # ── Dashboard HTML: no restart needed at all ────────────────────────────
       - ./dashboard:/app/dashboard:ro
     ports:

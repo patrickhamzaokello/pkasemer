@@ -154,7 +154,7 @@ ASSET              = cfg["asset"].upper()
 WINDOW             = cfg["window"]
 VOLUME_CONFIDENCE  = cfg["volume_confidence"]
 DAILY_BUDGET       = cfg["daily_budget"]
-
+MIN_LIQUIDITY_RATIO = 0.20  # minimum volume ratio for order execution
 
 # =============================================================================
 # Daily Budget & Import Tracking
@@ -607,6 +607,15 @@ def run_fast_market_strategy(
 
     side         = signal["side"]
     position_pct = signal["position_pct"]
+
+    # Hard liquidity floor — FAK orders fail on thin books regardless of signal
+    if vol_r < MIN_LIQUIDITY_RATIO:
+        log(
+            f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+            f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} vol={vol_r:.2f}x | "
+            f"score={score:.3f} BLOCK: insufficient liquidity ({vol_r:.2f}x < {MIN_LIQUIDITY_RATIO}x min)"
+        )
+        return
 
     # ── Fee-aware EV check ────────────────────────────────────────────────────
     entry_price = market_yes_price if side == "yes" else (1 - market_yes_price)
