@@ -560,11 +560,11 @@ def import_status():
         "current_cached":  False,
         "next_cached":     False,
         "imports_today":   0,
-        "import_limit":    9,
+        "import_limit":    50,
         "spend_exists":    False,
         "spent_today":     0.0,
         "trades_today":    0,
-        "daily_budget":    10.0,
+        "daily_budget":    20.0,
     }
 
     # Cache file

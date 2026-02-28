@@ -963,11 +963,11 @@ async function fetchImportStatus() {
     qFill.style.background = qPct > 80 ? 'var(--red)' : qPct > 55 ? 'var(--amber)' : 'var(--green)';
     $('quota-lbl').textContent = d.imports_today + ' / ' + d.import_limit;
 
-    const bPct  = Math.min((d.spent_today / (d.daily_budget || 10)) * 100, 100);
+    const bPct  = Math.min((d.spent_today / (d.daily_budget || 20)) * 100, 100);
     const bFill = $('budget-fill');
     bFill.style.width      = bPct + '%';
     bFill.style.background = bPct > 80 ? 'var(--red)' : bPct > 55 ? 'var(--amber)' : 'var(--green)';
-    $('budget-lbl').textContent = '$' + (d.spent_today || 0).toFixed(2) + ' / $' + (d.daily_budget || 10).toFixed(0);
+    $('budget-lbl').textContent = '$' + (d.spent_today || 0).toFixed(2) + ' / $' + (d.daily_budget || 20).toFixed(0);
 
     const badge = $('cache-badge');
     if (!d.cache_exists)        { badge.textContent = 'NO CACHE'; badge.style.color = 'var(--red)'; }

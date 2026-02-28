@@ -252,9 +252,10 @@ def apply_filters(cex, poly, config=None):
 
     # Polymarket already-priced-in filter
     poly_divergence = poly.get("poly_divergence", 0) or 0
-    if m5 is not None and m5 > 0 and poly_divergence > 0.08:
+    # Change from 0.08 to 0.05 — block earlier when Poly has already priced the move
+    if m5 and m5 > 0 and poly_divergence > 0.05:
         return False, f"Poly already priced bullish ({poly_divergence:+.3f}), no edge left"
-    if m5 is not None and m5 < 0 and poly_divergence < -0.08:
+    if m5 and m5 < 0 and poly_divergence < -0.05:
         return False, f"Poly already priced bearish ({poly_divergence:+.3f}), no edge left"
 
     # Volume gate — only when volume_confidence is enabled in config

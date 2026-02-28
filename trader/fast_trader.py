@@ -53,6 +53,8 @@ SMART_SIZING_PCT = 0.05
 MIN_SHARES_PER_ORDER = 5
 MIN_SCORE_TO_IMPORT = 0.65
 IMPORT_DAILY_LIMIT = 50           # Leave 1 buffer from the 10/day free tier
+MIN_ENTRY_PRICE      = 0.35     # skip if market already priced in the move
+
 
 ASSET_SYMBOLS = {
     "BTC": "BTCUSDT",
@@ -650,7 +652,30 @@ def run_fast_market_strategy(
         )
         return
 
-    min_order_usdc = MIN_SHARES_PER_ORDER * entry_price  # 5 shares minimum
+    # Never buy shares priced below 35¢ — market has already priced in the move
+    if entry_price < MIN_ENTRY_PRICE:
+        log(
+            f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+            f"score={score:.3f} → {side.upper()} BLOCK: "
+            f"entry ${entry_price:.2f} < ${MIN_ENTRY_PRICE} min (market already priced in)"
+        )
+        return
+
+    best_ask_raw = best.get("bestAsk")
+    best_bid_raw = best.get("bestBid")
+    if best_ask_raw and best_bid_raw:
+        try:
+            yes_ask = float(best_ask_raw)
+            yes_bid = float(best_bid_raw)
+            # NO ask = 1 - YES bid (complementary market)
+            ask_price = yes_ask if side == "yes" else (1 - yes_bid)
+            ask_price = max(ask_price, entry_price)  # ask always >= mid
+        except (ValueError, TypeError):
+            ask_price = entry_price / 0.90
+    else:
+        ask_price = entry_price / 0.90  # fallback: assume 10% spread
+
+    min_order_usdc = MIN_SHARES_PER_ORDER * ask_price  # 5 shares at ask price
 
     if position_size < min_order_usdc:
         if remaining_budget >= min_order_usdc and min_order_usdc <= MAX_POSITION_USD:
