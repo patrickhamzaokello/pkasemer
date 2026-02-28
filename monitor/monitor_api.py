@@ -386,75 +386,41 @@ def accuracy():
 @app.route("/api/trades")
 def trades():
     """
-    Return structured trade records from trade_log.json.
-    Supports ?n=N query param for number of trades to return.
+    Read executed trades from trade_log.json (written by fast_trader._log_trade_local).
+    Returns a flat list, newest-first, with field names the dashboard expects.
+    Mirrors the /api/logs pattern: open TRADE_PATH, parse, map, return.
     """
     n = int(request.args.get("n", 500))
-
-    trade_log_file = Path("/data/trade_log.json")
-    if not trade_log_file.exists():
-        return jsonify({"trades": [], "error": "trade_log.json not found — no trades yet"})
-
     try:
-        raw_trades = json.loads(trade_log_file.read_text())
+        with open(TRADE_PATH) as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        return jsonify([])
     except Exception as e:
-        return jsonify({"trades": [], "error": f"Failed to read trade log: {str(e)}"}),500
+        return jsonify({"error": str(e)}), 500
 
-    # Most recent first, apply limit
-    tail = list(reversed(raw_trades))[:n]
-    parsed = []
-
-    for t in tail:
-        # Classify kind for front-end colour coding
-        side = (t.get("side") or "").lower()
-        outcome = t.get("outcome")
-
-        if outcome == "win":
-            kind = "win"
-        elif outcome == "loss":
-            kind = "loss"
-        elif side == "yes":
-            kind = "long"
-        elif side == "no":
-            kind = "short"
-        else:
-            kind = "unknown"
-
-        parsed.append({
-            # Identity
-            "trade_id":          t.get("trade_id"),
-            "ts":                t.get("timestamp"),
-            "hour_utc":          t.get("hour_utc"),
-            "kind":              kind,
-            # Source metadata
-            "source":            t.get("source"),
-            "thesis":            t.get("thesis"),
-            "asset":             t.get("asset"),
-            "signal_source":     t.get("signal_source"),
-            # Market
+    result = []
+    for t in reversed(raw):          # newest-first (mirrors ORDER BY id DESC in old DB query)
+        result.append({
+            "ts":                t.get("timestamp"),          # ISO — slice(0,10)=date, slice(11,19)=time
             "market_slug":       t.get("slug"),
             "trade_side":        t.get("side"),
-            "entry_price":       t.get("entry_price"),
-            "shares":            t.get("shares"),
+            "signal_side":       t.get("side"),
             "trade_amount":      t.get("position_size"),
+            "trade_result":      t.get("pnl"),                # None until market resolves
+            "outcome":           t.get("outcome"),            # "up" | "down" | None
+            "resolved":          1 if t.get("outcome") is not None else 0,
+            "price_now":         None,                        # not captured in trade_log
+            "btc_vs_reference":  t.get("vs_ref"),
+            "momentum_5m":       t.get("momentum_pct"),
+            "poly_yes_price":    t.get("poly_yes_price"),
             "seconds_remaining": t.get("time_remaining"),
-            # Signals
             "signal_score":      t.get("score"),
             "signal_confidence": t.get("confidence"),
-            "momentum_5m":       t.get("momentum_pct"),
-            "momentum_1m":       t.get("momentum_1m"),
-            "momentum_15m":      t.get("momentum_15m"),
-            "btc_vs_reference":  t.get("vs_ref"),
-            "volume_ratio":      t.get("volume_ratio"),
-            "rsi_14":            t.get("rsi_14"),
-            "poly_yes_price":    t.get("poly_yes_price"),
-            # Result
-            "outcome":           t.get("outcome"),
-            "pnl":               t.get("pnl"),
-            "resolved":          t.get("outcome") is not None,
+            "filter_reason":     None,                        # only for blocked signals, not trades
         })
 
-    return jsonify({"trades": parsed, "total": len(raw_trades)})
+    return jsonify(result[:n])
 
 
 @app.route("/api/pnl-summary")

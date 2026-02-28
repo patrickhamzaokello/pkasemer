@@ -40,8 +40,8 @@ services:
       LOG_LEVEL: INFO
     env_file: [.env]
     volumes:
-      - fastloop-data:/data          # shared with collector: status.json, db, cache, spend
-      - ./logs:/app/logs             # shared with collector: scheduler.log
+      - fastloop-data:/data          # shared with collector: status.json, db, cache, spend, trade_log.json
+      - ./logs:/app/logs             # shared with collector: collector.log
       # ── Live code: only needs `docker compose restart monitor` after changes ──
       - ./monitor/monitor_api.py:/app/monitor_api.py
       - ./shared/composite_signal.py:/app/composite_signal.py
@@ -81,7 +81,8 @@ volumes:
 #  /data/status.json            ← scheduler status (shared volume)
 #  /data/market_id_cache.json   ← import cache (shared volume)
 #  /data/daily_spend.json       ← budget + quota tracking (shared volume)
-#  /app/logs/scheduler.log      ← log file (bind mount, both containers)
+#  /app/logs/collector.log      ← unified stdout+stderr via tee (bind mount, both containers)
+#  /data/trade_log.json         ← executed trades (shared volume, written by fast_trader)
 #
 # ── Usage ──────────────────────────────────────────────────────────────────
 #
