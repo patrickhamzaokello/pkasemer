@@ -456,7 +456,7 @@ def get_momentum(asset="BTC", source="binance", lookback=5):
 # Simmer API: Import & Trade
 # =============================================================================
 
-def import_fast_market_market(slug, max_retries=3):
+def import_fast_market_market(slug, max_retries=1):
     """
     Import a Polymarket market via Simmer SDK.
 
