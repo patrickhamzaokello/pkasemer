@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FastLoop — How It Works</title>
+<title>Pknwitq — How It Works</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -330,7 +330,7 @@
 
 <!-- WHAT IS THIS -->
 <h2><span class="num">1</span> What Is This?</h2>
-<p>FastLoop is an <strong>algorithmic trading bot</strong> that trades on <strong>Polymarket</strong> — a prediction market where you bet on real-world outcomes using crypto. Specifically, it trades <strong>Bitcoin fast markets</strong>: short-duration markets that ask a simple question:</p>
+<p>Pknwitq is an <strong>algorithmic trading bot</strong> that trades on <strong>Polymarket</strong> — a prediction market where you bet on real-world outcomes using crypto. Specifically, it trades <strong>Bitcoin fast markets</strong>: short-duration markets that ask a simple question:</p>
 
 <div class="callout blue">
   <div class="callout-title">The Market Question</div>
@@ -549,13 +549,13 @@
 <div class="callout amber">
   <div class="callout-title">Phase 2 — Validate (dry run)</div>
   Update <code>config.json</code> signal weights based on correlation analysis.<br>
-  Switch <code>FASTLOOP_MODE=dry</code> in Docker. Bot runs full logic but places no real trades.<br>
+  Switch <code>PKNWITQ_MODE=dry</code> in Docker. Bot runs full logic but places no real trades.<br>
   Watch win rate over 2–3 days. If win rate &gt; 55%, you have edge.
 </div>
 
 <div class="callout blue">
   <div class="callout-title">Phase 3 — Trade Live</div>
-  Switch <code>FASTLOOP_MODE=both</code>. Collector and trader run simultaneously.<br>
+  Switch <code>PKNWITQ_MODE=both</code>. Collector and trader run simultaneously.<br>
   Monitor dashboard at <strong>http://localhost:5000</strong>.<br>
   Re-run <code>--analyze</code> weekly and update weights as market conditions change.
 </div>
@@ -568,11 +568,11 @@
 
 <div class="decision">
   <div class="d-row">
-    <div class="d-label">fastloop-collector</div>
+    <div class="d-label">pknwitq-collector</div>
     <div class="d-val">Runs scheduler.py — enforces market hours, calls collect_one() every 20s, auto-resolves outcomes every 10min</div>
   </div>
   <div class="d-row">
-    <div class="d-label">fastloop-monitor</div>
+    <div class="d-label">pknwitq-monitor</div>
     <div class="d-val">Runs monitor_api.py — Flask API + dashboard at localhost:5000, reads same DB, refreshes every 15s</div>
   </div>
   <div class="d-row">

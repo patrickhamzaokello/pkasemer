@@ -7,18 +7,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.trader
-    container_name: fastloop-collector
+    container_name: pknwitq-collector
     restart: unless-stopped
     environment:
-      FASTLOOP_MODE: both          # collect | trade | both | dry
-      FASTLOOP_INTERVAL: "60"       # seconds between cycles
-      FASTLOOP_ASSET: BTC
-      FASTLOOP_WINDOW: 5m
+      PKNWITQ_MODE: both          # collect | trade | both | dry
+      PKNWITQ_INTERVAL: "60"       # seconds between cycles
+      PKNWITQ_ASSET: BTC
+      PKNWITQ_WINDOW: 5m
       DB_PATH: /data/signal_research.db
       LOG_LEVEL: INFO
     env_file: [.env]
     volumes:
-      - fastloop-data:/data
+      - pknwitq-data:/data
       - ./logs:/app/logs
     command: sh -c "python -u scheduler.py 2>&1 | tee /app/logs/collector.log"
     healthcheck:
@@ -33,14 +33,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.monitor
-    container_name: fastloop-monitor
+    container_name: pknwitq-monitor
     restart: unless-stopped
     environment:
       DB_PATH: /data/signal_research.db
       LOG_LEVEL: INFO
     env_file: [.env]
     volumes:
-      - fastloop-data:/data          # shared with collector: status.json, db, cache, spend, trade_log.json
+      - pknwitq-data:/data          # shared with collector: status.json, db, cache, spend, trade_log.json
       - ./logs:/app/logs             # shared with collector: collector.log
       # ── Live code: only needs `docker compose restart monitor` after changes ──
       - ./monitor/monitor_api.py:/app/monitor_api.py
@@ -60,7 +60,7 @@ services:
       retries: 3
 
 volumes:
-  fastloop-data:
+  pknwitq-data:
     driver: local
     driver_opts:
       type: none
@@ -100,21 +100,21 @@ volumes:
 #   docker compose up -d --build collector
 #
 # Switch to dry-run trading (no real trades):
-#   Set FASTLOOP_MODE=dry, then: docker compose up -d collector
+#   Set PKNWITQ_MODE=dry, then: docker compose up -d collector
 #
 # Switch to live trading:
-#   Set FASTLOOP_MODE=both (collect + trade simultaneously)
+#   Set PKNWITQ_MODE=both (collect + trade simultaneously)
 #   Ensure SIMMER_API_KEY is set in .env
 #   docker compose up -d collector
 #
 # Seed import cache (run when quota is exhausted):
-#   docker exec fastloop-collector python seed_cache.py
+#   docker exec pknwitq-collector python seed_cache.py
 #
 # Run signal analysis:
-#   docker exec fastloop-collector python signal_research.py --analyze --min-n 30
+#   docker exec pknwitq-collector python signal_research.py --analyze --min-n 30
 #
 # Export data:
-#   docker exec fastloop-collector python signal_research.py --export /data/signals.csv
+#   docker exec pknwitq-collector python signal_research.py --export /data/signals.csv
 #
 # Stop everything:
 #   docker compose down

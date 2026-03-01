@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simmer FastLoop Trading Skill
+Simmer Pknwitq Trading Skill
 
 Trades Polymarket BTC 5-minute fast markets using CEX price momentum.
 Default signal: Binance BTCUSDT candles. Agents can customize signal source.
@@ -58,7 +58,7 @@ except ImportError:
 # Constants
 # =============================================================================
 
-TRADE_SOURCE = "sdk:fastloop"
+TRADE_SOURCE = "sdk:pknwitq"
 SMART_SIZING_PCT = 0.05
 MIN_SHARES_PER_ORDER = 5
 MIN_SCORE_TO_IMPORT = 0.65
@@ -364,7 +364,7 @@ def _api_request(url, method="GET", data=None, headers=None, timeout=15):
     try:
         req_headers = headers or {}
         if "User-Agent" not in req_headers:
-            req_headers["User-Agent"] = "simmer-fastloop/1.0"
+            req_headers["User-Agent"] = "simmer-pknwitq/1.0"
         body = None
         if data:
             body = json.dumps(data).encode("utf-8")
@@ -856,7 +856,7 @@ def run_fast_market_strategy(
 # =============================================================================
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Simmer FastLoop Trading Skill")
+    parser = argparse.ArgumentParser(description="Simmer Pknwitq Trading Skill")
     parser.add_argument("--live",         action="store_true", help="Execute real trades")
     parser.add_argument("--dry-run",      action="store_true", help="Show opportunities without trading (default)")
     parser.add_argument("--positions",    action="store_true", help="Show current positions")

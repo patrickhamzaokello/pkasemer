@@ -2,7 +2,7 @@
 """
 test_simmer.py — Simmer API Endpoint Diagnostics
 
-Tests every endpoint used by the FastLoop trading stack, in the correct
+Tests every endpoint used by the Pknwitq trading stack, in the correct
 order, with clear PASS/FAIL output and timing for each step.
 
 Tests covered:
@@ -92,7 +92,7 @@ def _request(method, path, body=None, timeout=20):
     """Make an authenticated request. Returns (response_dict, elapsed_ms, status_code)."""
     url = f"{BASE_URL}{path}"
     headers = {
-        "User-Agent":    "fastloop-test/1.0",
+        "User-Agent":    "pknwitq-test/1.0",
         "Authorization": f"Bearer {API_KEY}",
     }
     if body:
@@ -491,7 +491,7 @@ def test_dry_run_trade(r, verbose, market_id=None):
         "amount":    5.0,
         "venue":     "polymarket",
         "dry_run":   True,
-        "reasoning": "fastloop test script dry run",
+        "reasoning": "pknwitq test script dry run",
     }
     data, ms, status = _post("/api/sdk/trade", body, timeout=30)
     r.elapsed = ms

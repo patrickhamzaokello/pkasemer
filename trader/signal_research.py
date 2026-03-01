@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FastLoop Signal Research Framework
+Pknwitq Signal Research Framework
 
 Collects and logs multi-factor signal candidates alongside actual Polymarket
 outcomes. Run this in dry-run mode to build a dataset, then analyze with
@@ -212,7 +212,7 @@ def init_db(path=DB_PATH):
 
 def _get(url, timeout=8):
     try:
-        req = Request(url, headers={"User-Agent": "fastloop-research/1.0"})
+        req = Request(url, headers={"User-Agent": "pknwitq-research/1.0"})
         with urlopen(req, timeout=timeout) as r:
             return json.loads(r.read())
     except Exception:
@@ -845,7 +845,7 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
 # =============================================================================
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="FastLoop Signal Research")
+    parser = argparse.ArgumentParser(description="Pknwitq Signal Research")
     parser.add_argument("--collect",  action="store_true",
                         help="Collect signals continuously (Ctrl-C to stop)")
     parser.add_argument("--analyze",  action="store_true",

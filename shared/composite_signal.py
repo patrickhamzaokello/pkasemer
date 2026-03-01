@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FastLoop Composite Signal Engine
+Pknwitq Composite Signal Engine
 
 Drop-in replacement for the single-momentum signal in fast_trader.py.
 Combines multiple signal factors into a scored, directional trade decision.

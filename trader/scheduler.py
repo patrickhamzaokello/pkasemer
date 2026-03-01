@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-FastLoop Scheduler
+Pknwitq Scheduler
 
 Runs signal collection and trading 24/7 (Polymarket operates continuously).
 
-Modes (set via FASTLOOP_MODE env var):
+Modes (set via PKNWITQ_MODE env var):
   collect   — run signal_research.py --collect (default)
   trade     — run fast_trader.py --live
   both      — collect + trade in parallel
   dry       — run fast_trader.py --dry-run (no real trades)
 
 Environment variables:
-  FASTLOOP_MODE         collect | trade | both | dry
-  FASTLOOP_INTERVAL     seconds between cycles (default: 20)
-  FASTLOOP_ASSET        BTC | ETH | SOL (default: BTC)
-  FASTLOOP_WINDOW       5m | 15m (default: 5m)
+  PKNWITQ_MODE         collect | trade | both | dry
+  PKNWITQ_INTERVAL     seconds between cycles (default: 20)
+  PKNWITQ_ASSET        BTC | ETH | SOL (default: BTC)
+  PKNWITQ_WINDOW       5m | 15m (default: 5m)
   SIMMER_API_KEY        required for trade/both modes
   LOG_LEVEL             INFO | DEBUG (default: INFO)
 
@@ -42,10 +42,10 @@ from fast_trader import backfill_trade_outcomes, run_redeemer
 # Config
 # ─────────────────────────────────────────────
 
-MODE     = os.environ.get("FASTLOOP_MODE", "collect").lower()
-INTERVAL = int(os.environ.get("FASTLOOP_INTERVAL", "20"))
-ASSET    = os.environ.get("FASTLOOP_ASSET", "BTC").upper()
-WINDOW   = os.environ.get("FASTLOOP_WINDOW", "5m")
+MODE     = os.environ.get("PKNWITQ_MODE", "collect").lower()
+INTERVAL = int(os.environ.get("PKNWITQ_INTERVAL", "20"))
+ASSET    = os.environ.get("PKNWITQ_ASSET", "BTC").upper()
+WINDOW   = os.environ.get("PKNWITQ_WINDOW", "5m")
 DB_PATH  = os.environ.get("DB_PATH", "/data/signal_research.db")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 
@@ -232,7 +232,7 @@ signal.signal(signal.SIGINT, _handle_signal)
 
 def main():
     log.info("=" * 60)
-    log.info("FastLoop Scheduler starting")
+    log.info("Pknwitq Scheduler starting")
     log.info(f"  Mode:     {MODE}")
     log.info(f"  Asset:    {ASSET} {WINDOW}")
     log.info(f"  Interval: {INTERVAL}s")

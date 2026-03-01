@@ -1,4 +1,4 @@
-# FastLoop — Polymarket BTC 5-Minute Trading System
+# Pknwitq — Polymarket BTC 5-Minute Trading System
 
 Automated signal collection and trading system for Polymarket's BTC Up/Down 5-minute fast markets. Fetches real-time Binance price data, computes a multi-factor composite signal score, and places trades when the signal exceeds a confidence threshold.
 
@@ -42,7 +42,7 @@ docker compose logs -f collector
 
 ## Operating Modes
 
-Set `FASTLOOP_MODE` in `docker-compose.yml`:
+Set `PKNWITQ_MODE` in `docker-compose.yml`:
 
 | Mode      | What Runs                                    | Use When                              |
 |-----------|----------------------------------------------|---------------------------------------|
@@ -59,19 +59,19 @@ Set `FASTLOOP_MODE` in `docker-compose.yml`:
 
 ```
 Phase 1 — Data Collection (2–5 days)
-  FASTLOOP_MODE=collect
+  PKNWITQ_MODE=collect
   Goal: Build 200+ resolved observations
   Monitor: http://localhost:5000 (Monitor tab)
-  Check: docker exec fastloop-collector python signal_research.py --analyze --min-n 30
+  Check: docker exec pknwitq-collector python signal_research.py --analyze --min-n 30
 
 Phase 2 — Dry Run Validation
-  FASTLOOP_MODE=dry
+  PKNWITQ_MODE=dry
   Goal: Verify predictions are accurate before spending real money
   Monitor: http://localhost:5000/dry-run.html (Signal Lab tab)
   Check: Prediction vs Outcome table — win rate should exceed 55%
 
 Phase 3 — Live Trading
-  FASTLOOP_MODE=both (collect + trade simultaneously)
+  PKNWITQ_MODE=both (collect + trade simultaneously)
   Ensure SIMMER_API_KEY is set in .env
   Monitor: http://localhost:5000/live.html (Live Trading tab)
 ```
@@ -215,7 +215,7 @@ docker compose restart collector
 After collecting 100+ resolved observations, run the correlation analysis to check if weights need updating:
 
 ```bash
-docker exec fastloop-collector python signal_research.py --analyze --min-n 30
+docker exec pknwitq-collector python signal_research.py --analyze --min-n 30
 ```
 
 Columns to focus on:
@@ -236,17 +236,17 @@ docker compose logs -f collector
 docker compose logs -f monitor
 
 # Run signal correlation analysis
-docker exec fastloop-collector python signal_research.py --analyze --min-n 30
+docker exec pknwitq-collector python signal_research.py --analyze --min-n 30
 
 # Manually trigger outcome resolution
-docker exec fastloop-collector python signal_research.py --resolve
+docker exec pknwitq-collector python signal_research.py --resolve
 
 # Export all observations to CSV
-docker exec fastloop-collector python signal_research.py --export /data/signals.csv
+docker exec pknwitq-collector python signal_research.py --export /data/signals.csv
 # File appears at ./data/signals.csv on host
 
 # Quick DB stats
-docker exec fastloop-collector python -c "
+docker exec pknwitq-collector python -c "
 import sqlite3
 c = sqlite3.connect('/data/signal_research.db')
 total    = c.execute('SELECT COUNT(*) FROM signal_observations').fetchone()[0]
@@ -303,7 +303,7 @@ Each 20-second cycle produces a single line:
 ## File Structure
 
 ```
-polymarket-fast-loop-1.0.12/
+polymarket-pknwitq-1.0.12/
 ├── fast_trader.py          Main trading logic and market discovery
 ├── signal_research.py      Signal collection, DB write, outcome resolution
 ├── composite_signal.py     Weighted signal scoring engine

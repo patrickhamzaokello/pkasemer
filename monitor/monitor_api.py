@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FastLoop Monitor API
+Pknwitq Monitor API
 
 Serves signal data and status to the monitoring dashboard.
 Runs on port 5000 inside the container (mapped to host port).

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FastLoop — Live Trading</title>
+<title>Pknwitq — Live Trading</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
@@ -866,7 +866,7 @@ function renderTrades() {
 
   const tbody = $('tbl-body');
   if (!rows.length) {
-    const msgs = {all:'No trades recorded yet — set FASTLOOP_MODE=trade or both.',today:'No trades today.',open:'No open positions.',won:'No winning trades yet.',lost:'No losing trades yet.'};
+    const msgs = {all:'No trades recorded yet — set PKNWITQ_MODE=trade or both.',today:'No trades today.',open:'No open positions.',won:'No winning trades yet.',lost:'No losing trades yet.'};
     tbody.innerHTML = `<tr><td colspan="15" class="empty">${msgs[_tab] || 'No data.'}</td></tr>`;
     return;
   }

@@ -22,7 +22,7 @@ def get_agent_info():
         "https://api.simmer.markets/api/sdk/agents/me",
         headers={
             "Authorization": f"Bearer {api_key}",
-            "User-Agent": "simmer-fastloop/1.0",
+            "User-Agent": "simmer-pknwitq/1.0",
         }
     )
 

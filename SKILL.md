@@ -1,6 +1,6 @@
 ---
-name: polymarket-fast-loop
-displayName: Polymarket FastLoop Trader
+name: polymarket-pknwitq
+displayName: Polymarket Pknwitq Trader
 description: Trade Polymarket BTC 5-minute and 15-minute fast markets using CEX price momentum signals via Simmer API. Default signal is Binance BTC/USDT klines. Use when user wants to trade sprint/fast markets, automate short-term crypto trading, or use CEX momentum as a Polymarket signal.
 metadata: {"clawdbot":{"emoji":"⚡","requires":{"env":["SIMMER_API_KEY"],"pip":["simmer-sdk"]},"cron":null,"autostart":false}}
 authors:
@@ -9,7 +9,7 @@ version: "1.0.10"
 published: true
 ---
 
-# Polymarket FastLoop Trader
+# Polymarket Pknwitq Trader
 
 Trade Polymarket's 5-minute crypto fast markets using real-time price signals. Default: BTC momentum from Binance. Works with ETH and SOL too.
 
@@ -26,7 +26,7 @@ Trade Polymarket's 5-minute crypto fast markets using real-time price signals. D
 - Works with BTC, ETH, or SOL — just change the asset (`--set asset=ETH`) or ask your bot to look for whatever market you want
 - Runs every 5 minutes to catch each trading window (or every 1 minute for mid-window opportunities)
 
-**You don't need to wait for markets to show up in Simmer.** FastLoop finds them in real-time on Polymarket, then imports and trades them through Simmer.
+**You don't need to wait for markets to show up in Simmer.** Pknwitq finds them in real-time on Polymarket, then imports and trades them through Simmer.
 
 ## When to Use This Skill
 
@@ -64,16 +64,16 @@ When user asks to install or configure this skill:
 export SIMMER_API_KEY="your-key-here"
 
 # Dry run — see what would happen
-python fastloop_trader.py
+python pknwitq_trader.py
 
 # Go live
-python fastloop_trader.py --live
+python pknwitq_trader.py --live
 
 # Live + quiet (for cron/heartbeat loops)
-python fastloop_trader.py --live --quiet
+python pknwitq_trader.py --live --quiet
 
 # Live + smart sizing (5% of balance per trade)
-python fastloop_trader.py --live --smart-sizing --quiet
+python pknwitq_trader.py --live --smart-sizing --quiet
 ```
 
 ## How to Run on a Loop
@@ -82,17 +82,17 @@ The script runs **one cycle** — your bot drives the loop. Set up a cron job or
 
 **Every 5 minutes (one per fast market window):**
 ```
-*/5 * * * * cd /path/to/skill && python fastloop_trader.py --live --quiet
+*/5 * * * * cd /path/to/skill && python pknwitq_trader.py --live --quiet
 ```
 
 **Every 1 minute (more aggressive, catches mid-window opportunities):**
 ```
-* * * * * cd /path/to/skill && python fastloop_trader.py --live --quiet
+* * * * * cd /path/to/skill && python pknwitq_trader.py --live --quiet
 ```
 
 **Via OpenClaw heartbeat:** Add to your HEARTBEAT.md:
 ```
-Run: cd /path/to/fast market && python fastloop_trader.py --live --quiet
+Run: cd /path/to/fast market && python pknwitq_trader.py --live --quiet
 ```
 
 ## Configuration
@@ -101,13 +101,13 @@ Configure via `config.json`, environment variables, or `--set`:
 
 ```bash
 # Change entry threshold
-python fastloop_trader.py --set entry_threshold=0.08
+python pknwitq_trader.py --set entry_threshold=0.08
 
 # Trade ETH instead of BTC
-python fastloop_trader.py --set asset=ETH
+python pknwitq_trader.py --set asset=ETH
 
 # Multiple settings
-python fastloop_trader.py --set min_momentum_pct=0.3 --set max_position=10
+python pknwitq_trader.py --set min_momentum_pct=0.3 --set max_position=10
 ```
 
 ### Settings
@@ -140,13 +140,13 @@ python fastloop_trader.py --set min_momentum_pct=0.3 --set max_position=10
 ## CLI Options
 
 ```bash
-python fastloop_trader.py                    # Dry run
-python fastloop_trader.py --live             # Real trades
-python fastloop_trader.py --live --quiet     # Silent except trades/errors
-python fastloop_trader.py --smart-sizing     # Portfolio-based sizing
-python fastloop_trader.py --positions        # Show open fast market positions
-python fastloop_trader.py --config           # Show current config
-python fastloop_trader.py --set KEY=VALUE    # Update config
+python pknwitq_trader.py                    # Dry run
+python pknwitq_trader.py --live             # Real trades
+python pknwitq_trader.py --live --quiet     # Silent except trades/errors
+python pknwitq_trader.py --smart-sizing     # Portfolio-based sizing
+python pknwitq_trader.py --positions        # Show open fast market positions
+python pknwitq_trader.py --config           # Show current config
+python pknwitq_trader.py --set KEY=VALUE    # Update config
 ```
 
 ## Signal Logic
@@ -174,12 +174,12 @@ Ideas for custom signals:
 - **News:** Breaking news correlation — use your agent's reasoning to interpret headlines
 - **On-chain data:** Whale movements, funding rates, liquidation levels
 
-To customize, edit `get_momentum()` in `fastloop_trader.py` or add your own signal function. The rest of the skill (discovery, import, sizing, fee-aware EV check) stays the same.
+To customize, edit `get_momentum()` in `pknwitq_trader.py` or add your own signal function. The rest of the skill (discovery, import, sizing, fee-aware EV check) stays the same.
 
 ## Example Output
 
 ```
-⚡ Simmer FastLoop Trading Skill
+⚡ Simmer Pknwitq Trading Skill
 ==================================================
 
   [DRY RUN] No trades will be executed. Use --live to enable trading.
@@ -215,7 +215,7 @@ To customize, edit `get_momentum()` in `fastloop_trader.py` or add your own sign
 
 ## Source Tagging
 
-All trades are tagged with `source: "sdk:fastloop"`. This means:
+All trades are tagged with `source: "sdk:pknwitq"`. This means:
 - Portfolio shows breakdown by strategy
 - Other skills won't interfere with your fast market positions
 - You can track fast market P&L separately

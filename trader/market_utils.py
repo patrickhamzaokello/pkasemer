@@ -30,7 +30,7 @@ def _api_request(url, method="GET", data=None, headers=None, timeout=15):
     try:
         req_headers = headers or {}
         if "User-Agent" not in req_headers:
-            req_headers["User-Agent"] = "simmer-fastloop/1.0"
+            req_headers["User-Agent"] = "simmer-pknwitq/1.0"
         body = None
         if data:
             body = json.dumps(data).encode("utf-8")
