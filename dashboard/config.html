@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pknwitq — Config</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080b0f; --surface: #0d1117; --border: #1a2332; --border-bright: #243347;
+    --text: #c8d6e8; --text-dim: #4a6080; --text-bright: #e8f0f8;
+    --green: #00e676; --green-dim: #00c45a; --red: #ff3d57; --amber: #ffb300;
+    --blue: #2196f3; --cyan: #00bcd4;
+    --mono: 'JetBrains Mono', monospace; --display: 'Syne', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 12px; min-height: 100vh; overflow-x: hidden; }
+  body::before { content: ''; position: fixed; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px); pointer-events: none; z-index: 1000; }
+
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 100; }
+  .logo { font-family: var(--display); font-size: 18px; font-weight: 800; letter-spacing: -0.5px; color: var(--text-bright); }
+  .logo span { color: var(--green); }
+  .header-right { display: flex; align-items: center; gap: 14px; }
+
+  /* Kill switch */
+  .kill-btn { background: none; border: 1px solid var(--red); color: var(--red); padding: 4px 12px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px; cursor: pointer; transition: all 0.15s; }
+  .kill-btn:hover { background: rgba(255,61,87,0.12); }
+  .kill-btn.armed { background: var(--red); color: #080b0f; font-weight: 700; }
+
+  .nav { display: flex; gap: 2px; padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 46px; z-index: 90; }
+  .nav-link { padding: 8px 16px; font-size: 11px; letter-spacing: 0.5px; color: var(--text-dim); text-decoration: none; border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s; margin-bottom: -1px; }
+  .nav-link:hover { color: var(--text-bright); }
+  .nav-link.active { color: var(--text-bright); border-bottom-color: var(--cyan); }
+  .nav-logout { margin-left: auto; background: none; border: none; font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px; color: var(--text-dim); cursor: pointer; padding: 8px 4px; transition: color 0.15s; }
+  .nav-logout:hover { color: var(--red); }
+
+  .page { max-width: 860px; margin: 0 auto; padding: 24px 20px; display: flex; flex-direction: column; gap: 20px; }
+
+  .panel { background: var(--surface); border: 1px solid var(--border); overflow: hidden; }
+  .panel-header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .panel-title { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+
+  .field-group { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .field-row { display: grid; grid-template-columns: 200px 1fr; align-items: center; gap: 16px; }
+  .field-label { font-size: 11px; color: var(--text-dim); }
+  .field-label span { display: block; font-size: 9px; color: var(--text-dim); opacity: 0.6; margin-top: 2px; }
+  input[type="number"], input[type="text"], input[type="url"] {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text-bright);
+    font-family: var(--mono); font-size: 12px; padding: 6px 10px; width: 100%; outline: none;
+    transition: border-color 0.15s;
+  }
+  input:focus { border-color: var(--green-dim); }
+
+  /* Weight sliders */
+  .weight-grid { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .weight-row { display: grid; grid-template-columns: 180px 1fr 52px; align-items: center; gap: 12px; }
+  .weight-name { font-size: 11px; color: var(--text); }
+  input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; background: var(--border); border-radius: 2px; outline: none; cursor: pointer; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--amber); border-radius: 50%; cursor: pointer; }
+  input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; background: var(--amber); border-radius: 50%; cursor: pointer; border: none; }
+  .weight-val { font-size: 11px; color: var(--amber); text-align: right; font-weight: 700; }
+  .weight-sum { padding: 8px 16px 14px; font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); }
+  .weight-sum span { font-weight: 700; }
+
+  .save-bar { padding: 14px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+  .btn-save { background: var(--green); color: #080b0f; border: none; font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; padding: 8px 20px; cursor: pointer; transition: background 0.15s; }
+  .btn-save:hover { background: var(--green-dim); }
+  .btn-save:disabled { opacity: 0.4; cursor: not-allowed; }
+  .save-msg { font-size: 11px; }
+  .save-msg.ok  { color: var(--green); }
+  .save-msg.err { color: var(--red); }
+
+  /* Kill switch card */
+  .ks-card { padding: 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+  .ks-info h3 { font-family: var(--display); font-size: 16px; font-weight: 700; color: var(--text-bright); margin-bottom: 4px; }
+  .ks-info p { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+  .ks-status { font-size: 10px; letter-spacing: 1px; color: var(--text-dim); margin-top: 6px; }
+
+  .digest-grid { padding: 14px 16px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .dig-cell { text-align: center; padding: 10px; background: var(--bg); border: 1px solid var(--border); }
+  .dig-label { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px; }
+  .dig-val { font-family: var(--display); font-size: 20px; font-weight: 700; color: var(--text-bright); }
+  .dig-sub { font-size: 9px; color: var(--text-dim); margin-top: 2px; }
+
+  ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: var(--bg); } ::-webkit-scrollbar-thumb { background: var(--border-bright); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">PKN<span>WITQ</span> <span style="font-size:11px;color:var(--text-dim);font-family:var(--mono);font-weight:400">/ config</span></div>
+  <div class="header-right">
+    <span style="font-size:10px;color:var(--text-dim)" id="hdr-time">—</span>
+    <button class="kill-btn" id="kill-btn" onclick="toggleKillSwitch()">⏹ HALT TRADING</button>
+  </div>
+</div>
+
+<nav class="nav">
+  <a href="index.html" class="nav-link">Monitor</a>
+  <a href="dry-run.html" class="nav-link">Signal Lab</a>
+  <a href="live.html" class="nav-link">Live Trading</a>
+  <a href="config.html" class="nav-link active">Config</a>
+  <button class="nav-logout" onclick="logout()">↪ logout</button>
+</nav>
+
+<div class="page">
+
+  <!-- Daily digest -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Today's Digest</div>
+      <div style="font-size:10px;color:var(--text-dim)" id="digest-date">—</div>
+    </div>
+    <div class="digest-grid" id="digest-grid">
+      <div class="dig-cell"><div class="dig-label">Cycles</div><div class="dig-val" id="d-cycles">—</div></div>
+      <div class="dig-cell"><div class="dig-label">Trades Today</div><div class="dig-val" id="d-trades">—</div></div>
+      <div class="dig-cell"><div class="dig-label">Today P&amp;L</div><div class="dig-val" id="d-pnl">—</div></div>
+      <div class="dig-cell"><div class="dig-label">Win Rate</div><div class="dig-val" id="d-wr">—</div></div>
+    </div>
+  </div>
+
+  <!-- Kill switch -->
+  <div class="panel">
+    <div class="panel-header"><div class="panel-title">Emergency Stop</div></div>
+    <div class="ks-card">
+      <div class="ks-info">
+        <h3>Kill Switch</h3>
+        <p>When armed, the trader checks this flag at the start of every cycle and skips execution.<br>
+           Signal collection continues normally. Toggle is instant — no restart needed.</p>
+        <div class="ks-status" id="ks-status">checking...</div>
+      </div>
+      <button class="kill-btn" id="kill-btn-2" onclick="toggleKillSwitch()" style="font-size:12px;padding:10px 24px">⏹ HALT TRADING</button>
+    </div>
+  </div>
+
+  <!-- Core parameters -->
+  <div class="panel">
+    <div class="panel-header"><div class="panel-title">Core Parameters</div></div>
+    <div class="field-group">
+      <div class="field-row">
+        <label class="field-label">Composite Threshold<span>Score above which BUY YES triggers (0.50–0.80)</span></label>
+        <input type="number" id="f-composite" min="0.50" max="0.80" step="0.01">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Entry Threshold<span>Min momentum filter (raw, e.g. 0.03)</span></label>
+        <input type="number" id="f-entry" min="0" max="0.5" step="0.005">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Daily Budget (USDC)<span>Max spend per calendar day</span></label>
+        <input type="number" id="f-budget" min="1" max="1000" step="1">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Max Position (USDC)<span>Max size per single trade</span></label>
+        <input type="number" id="f-maxpos" min="1" max="500" step="0.5">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Min Momentum %<span>Minimum momentum threshold</span></label>
+        <input type="number" id="f-minmom" min="0" max="0.5" step="0.005">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Min Time Remaining (s)<span>Skip markets below this window</span></label>
+        <input type="number" id="f-mintime" min="0" max="900" step="10">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Max Time Remaining (s)<span>Skip markets above this window</span></label>
+        <input type="number" id="f-maxtime" min="60" max="3600" step="30">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Webhook URL<span>Telegram/Discord webhook for trade alerts (optional)</span></label>
+        <input type="url" id="f-webhook" placeholder="https://discord.com/api/webhooks/...">
+      </div>
+    </div>
+  </div>
+
+  <!-- Signal weights -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Signal Weights</div>
+      <div style="font-size:10px;color:var(--text-dim)">must sum to 1.00</div>
+    </div>
+    <div class="weight-grid" id="weight-grid"><!-- populated by JS --></div>
+    <div class="weight-sum">Total: <span id="weight-total">0.000</span></div>
+    <div class="save-bar">
+      <button class="btn-save" id="save-btn" onclick="saveConfig()">Save Config</button>
+      <span class="save-msg" id="save-msg"></span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = window.location.origin;
+let _cfg = null;
+let _ksActive = false;
+
+async function logout() {
+  await fetch('/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+// Clock
+setInterval(() => {
+  const n = new Date();
+  document.getElementById('hdr-time').textContent =
+    [n.getUTCHours(), n.getUTCMinutes(), n.getUTCSeconds()]
+      .map(x => String(x).padStart(2,'0')).join(':') + ' UTC';
+}, 1000);
+
+// ── Kill switch ────────────────────────────────────────────
+async function fetchKillSwitch() {
+  try {
+    const d = await fetch(`${API}/api/kill-switch`).then(r => r.json());
+    _ksActive = d.active;
+    updateKsUI();
+  } catch(e) {}
+}
+
+function updateKsUI() {
+  const btns = [document.getElementById('kill-btn'), document.getElementById('kill-btn-2')];
+  const ks = document.getElementById('ks-status');
+  btns.forEach(b => {
+    if (!b) return;
+    if (_ksActive) {
+      b.textContent = '▶ RESUME TRADING';
+      b.classList.add('armed');
+    } else {
+      b.textContent = '⏹ HALT TRADING';
+      b.classList.remove('armed');
+    }
+  });
+  if (ks) {
+    ks.textContent = _ksActive
+      ? '⚠ KILL SWITCH ARMED — trader will skip execution each cycle'
+      : '✓ Trading active — kill switch is disarmed';
+    ks.style.color = _ksActive ? 'var(--red)' : 'var(--green)';
+  }
+}
+
+async function toggleKillSwitch() {
+  try {
+    const d = await fetch(`${API}/api/kill-switch`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({active: !_ksActive})
+    }).then(r => r.json());
+    _ksActive = d.active;
+    updateKsUI();
+  } catch(e) {}
+}
+
+// ── Daily digest ───────────────────────────────────────────
+async function fetchDigest() {
+  try {
+    const d = await fetch(`${API}/api/daily-digest`).then(r => r.json());
+    document.getElementById('digest-date').textContent = d.date;
+    document.getElementById('d-cycles').textContent = d.cycles_today ?? '—';
+    document.getElementById('d-trades').textContent = d.trades_today ?? '—';
+    const pnl = d.pnl_today;
+    const pnlEl = document.getElementById('d-pnl');
+    pnlEl.textContent = pnl != null ? (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2) : '—';
+    pnlEl.style.color = pnl == null ? 'var(--text-bright)' : pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text-bright)';
+    const wr = d.win_rate_today;
+    const wrEl = document.getElementById('d-wr');
+    wrEl.textContent = wr != null ? Math.round(wr * 100) + '%' : '—';
+    wrEl.style.color = wr == null ? 'var(--text-bright)' : wr > 0.55 ? 'var(--green)' : wr < 0.45 ? 'var(--red)' : 'var(--amber)';
+  } catch(e) {}
+}
+
+// ── Config load / save ─────────────────────────────────────
+const SIGNAL_KEYS = [
+  'btc_vs_reference', 'vol_adjusted_momentum', 'momentum_5m', 'cex_poly_lag',
+  'momentum_1m', 'price_acceleration', 'momentum_15m', 'trade_flow_ratio',
+  'volume_ratio', 'order_imbalance', 'momentum_consistency', 'poly_divergence', 'poly_yes_price'
+];
+
+function buildWeightGrid(weights) {
+  const grid = document.getElementById('weight-grid');
+  grid.innerHTML = SIGNAL_KEYS.map(k => `
+    <div class="weight-row">
+      <span class="weight-name">${k}</span>
+      <input type="range" id="w-${k}" min="0" max="0.6" step="0.005"
+             value="${weights[k] ?? 0}" oninput="onWeightChange()">
+      <span class="weight-val" id="wv-${k}">${((weights[k] ?? 0) * 100).toFixed(1)}%</span>
+    </div>`).join('');
+  updateWeightTotal();
+}
+
+function onWeightChange() {
+  SIGNAL_KEYS.forEach(k => {
+    const v = parseFloat(document.getElementById('w-' + k).value);
+    document.getElementById('wv-' + k).textContent = (v * 100).toFixed(1) + '%';
+  });
+  updateWeightTotal();
+}
+
+function updateWeightTotal() {
+  const total = SIGNAL_KEYS.reduce((s, k) => {
+    const el = document.getElementById('w-' + k);
+    return s + (el ? parseFloat(el.value) : 0);
+  }, 0);
+  const el = document.getElementById('weight-total');
+  el.textContent = total.toFixed(3);
+  el.style.color = Math.abs(total - 1) < 0.01 ? 'var(--green)' : 'var(--amber)';
+}
+
+async function loadConfig() {
+  try {
+    _cfg = await fetch(`${API}/api/config`).then(r => r.json());
+    document.getElementById('f-composite').value = _cfg.composite_threshold ?? 0.62;
+    document.getElementById('f-entry').value     = _cfg.entry_threshold ?? 0.05;
+    document.getElementById('f-budget').value    = _cfg.daily_budget ?? 20;
+    document.getElementById('f-maxpos').value    = _cfg.max_position ?? 5;
+    document.getElementById('f-minmom').value    = _cfg.min_momentum_pct ?? 0.03;
+    document.getElementById('f-mintime').value   = _cfg.min_time_remaining ?? 60;
+    document.getElementById('f-maxtime').value   = _cfg.max_time_remaining ?? 900;
+    document.getElementById('f-webhook').value   = _cfg.webhook_url ?? '';
+    buildWeightGrid(_cfg.signal_weights ?? {});
+  } catch(e) {
+    showMsg('Failed to load config: ' + e.message, 'err');
+  }
+}
+
+async function saveConfig() {
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true;
+  showMsg('Saving…', '');
+
+  const weights = {};
+  SIGNAL_KEYS.forEach(k => {
+    const el = document.getElementById('w-' + k);
+    weights[k] = el ? parseFloat(el.value) : 0;
+  });
+
+  const payload = {
+    ..._cfg,
+    composite_threshold: parseFloat(document.getElementById('f-composite').value),
+    entry_threshold:     parseFloat(document.getElementById('f-entry').value),
+    daily_budget:        parseFloat(document.getElementById('f-budget').value),
+    max_position:        parseFloat(document.getElementById('f-maxpos').value),
+    min_momentum_pct:    parseFloat(document.getElementById('f-minmom').value),
+    min_time_remaining:  parseInt(document.getElementById('f-mintime').value),
+    max_time_remaining:  parseInt(document.getElementById('f-maxtime').value),
+    webhook_url:         document.getElementById('f-webhook').value.trim(),
+    signal_weights:      weights,
+  };
+
+  try {
+    const res = await fetch(`${API}/api/config`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const d = await res.json();
+    if (res.ok) { showMsg('Saved ✓ — restart collector to apply weight changes', 'ok'); }
+    else         { showMsg('Error: ' + d.error, 'err'); }
+  } catch(e) {
+    showMsg('Network error: ' + e.message, 'err');
+  }
+  btn.disabled = false;
+}
+
+function showMsg(text, cls) {
+  const el = document.getElementById('save-msg');
+  el.textContent = text;
+  el.className = 'save-msg' + (cls ? ' ' + cls : '');
+}
+
+// ── Init ───────────────────────────────────────────────────
+loadConfig();
+fetchKillSwitch();
+fetchDigest();
+</script>
+</body>
+</html>

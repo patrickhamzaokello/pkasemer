@@ -91,11 +91,33 @@
   .wt-pill.no  { background: rgba(255,61,87,0.12);  color: var(--red);   border: 1px solid rgba(255,61,87,0.3); }
   .wt-pill.skip { background: rgba(74,96,128,0.12); color: var(--text-dim); border: 1px solid var(--border); }
 
-  /* Sidebar weight bars */
-  .wt-bar-row { margin: 4px 0; }
-  .wt-bar-label { display: flex; justify-content: space-between; margin-bottom: 2px; font-size: 10px; }
-  .wt-bar-track { height: 3px; background: var(--border); border-radius: 1px; overflow: hidden; }
-  .wt-bar-fill { height: 100%; background: var(--amber); border-radius: 1px; }
+  /* Sidebar weight sliders */
+  .wt-slider-row { margin: 5px 0; }
+  .wt-slider-label { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 10px; }
+  .wt-slider-val { color: var(--amber); font-weight: 700; }
+  input[type="range"].wt-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 3px; background: var(--border); border-radius: 2px; outline: none; cursor: pointer; }
+  input[type="range"].wt-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px; background: var(--amber); border-radius: 50%; cursor: pointer; }
+  input[type="range"].wt-slider::-moz-range-thumb { width: 11px; height: 11px; background: var(--amber); border-radius: 50%; border: none; cursor: pointer; }
+  .wt-sum-row { display: flex; justify-content: space-between; padding: 6px 0 2px; font-size: 10px; border-top: 1px solid var(--border); margin-top: 6px; }
+
+  /* Heatmap */
+  .heatmap-wrap { overflow-x: auto; padding: 8px; }
+  .heatmap-table { border-collapse: collapse; font-size: 9px; white-space: nowrap; }
+  .heatmap-table th { padding: 3px 5px; color: var(--text-dim); font-weight: 400; letter-spacing: 0.5px; text-align: center; }
+  .heatmap-table td { padding: 2px 3px; text-align: center; }
+  .hm-cell { width: 36px; height: 18px; display: inline-block; border-radius: 1px; font-size: 8px; line-height: 18px; }
+
+  /* Optimizer */
+  .opt-controls { padding: 12px 16px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--border); }
+  .opt-label { font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+  input[type="range"].opt-slider { flex: 1; -webkit-appearance: none; appearance: none; height: 4px; background: var(--border); border-radius: 2px; outline: none; cursor: pointer; }
+  input[type="range"].opt-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--green); border-radius: 50%; }
+  input[type="range"].opt-slider::-moz-range-thumb { width: 14px; height: 14px; background: var(--green); border-radius: 50%; border: none; }
+  .opt-val { font-size: 14px; font-weight: 700; color: var(--green); min-width: 40px; text-align: right; }
+  .opt-strip { display: flex; gap: 20px; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 11px; }
+  .opt-stat { text-align: center; }
+  .opt-stat-lbl { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 3px; }
+  .opt-stat-val { font-family: var(--display); font-size: 20px; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -112,6 +134,7 @@
   <a href="index.html" class="nav-link">Monitor</a>
   <a href="dry-run.html" class="nav-link active">Signal Lab</a>
   <a href="live.html" class="nav-link">Live Trading</a>
+  <a href="config.html" class="nav-link">Config</a>
   <button class="nav-logout" onclick="logout()">↪ logout</button>
 </nav>
 
@@ -119,8 +142,10 @@
   <div class="sidebar">
 
     <div class="sidebar-section">
-      <div class="section-label">Active Weights</div>
+      <div class="section-label">Signal Weights <span style="font-size:9px;color:var(--text-dim)">(live tuner)</span></div>
       <div id="weights-bars"><div class="loading" style="padding:10px"><span class="spinner"></span></div></div>
+      <div class="wt-sum-row"><span style="color:var(--text-dim)">Total</span><span id="wt-total" style="color:var(--amber)">—</span></div>
+      <button onclick="applyWeights()" style="width:100%;margin-top:6px;background:none;border:1px solid var(--border-bright);color:var(--text-dim);font-family:var(--mono);font-size:9px;padding:4px;cursor:pointer;letter-spacing:0.5px;transition:all 0.15s" onmouseover="this.style.borderColor='var(--amber)';this.style.color='var(--amber)'" onmouseout="this.style.borderColor='var(--border-bright)';this.style.color='var(--text-dim)'">↻ Re-score with these weights</button>
     </div>
 
     <div class="sidebar-section">
@@ -243,6 +268,62 @@
         </div>
       </div>
       <div id="pred-table-wrap"><div class="loading"><span class="spinner"></span>waiting for resolved predictions...</div></div>
+    </div>
+
+    <!-- ── Threshold Optimizer ─────────────────────────── -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Threshold Optimizer</div>
+        <div class="panel-meta">what score cutoff maximises win rate?</div>
+      </div>
+      <div class="opt-controls">
+        <span class="opt-label">Entry threshold</span>
+        <input type="range" class="opt-slider" id="opt-slider" min="0.50" max="0.80" step="0.01" value="0.57" oninput="onOptSlider()">
+        <span class="opt-val" id="opt-val">0.57</span>
+      </div>
+      <div class="opt-strip">
+        <div class="opt-stat"><div class="opt-stat-lbl">Trades at threshold</div><div class="opt-stat-val" id="opt-trades" style="color:var(--cyan)">—</div></div>
+        <div class="opt-stat"><div class="opt-stat-lbl">Win Rate</div><div class="opt-stat-val" id="opt-wr" style="color:var(--text-bright)">—</div></div>
+        <div class="opt-stat"><div class="opt-stat-lbl">Expected Value</div><div class="opt-stat-val" id="opt-ev" style="color:var(--amber)">—</div></div>
+        <div class="opt-stat"><div class="opt-stat-lbl">Recommended</div><div class="opt-stat-val" id="opt-rec" style="color:var(--green)">—</div></div>
+      </div>
+      <div style="padding:8px 16px 14px">
+        <svg id="opt-svg" viewBox="0 0 860 70" preserveAspectRatio="none"
+             style="display:block;width:100%;height:70px;background:rgba(0,0,0,0.2)"></svg>
+      </div>
+    </div>
+
+    <!-- ── Signal Heatmap ────────────────────────────────── -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Signal Heatmap</div>
+        <div class="panel-meta" id="hm-meta">last 40 cycles</div>
+      </div>
+      <div class="heatmap-wrap" id="heatmap-wrap">
+        <div class="loading"><span class="spinner"></span>loading...</div>
+      </div>
+    </div>
+
+    <!-- ── Per-Market Breakdown ──────────────────────────── -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Per-Market Breakdown</div>
+        <div class="panel-meta" id="mkt-meta">win rate by market slug</div>
+      </div>
+      <div id="mkt-wrap"><div class="loading"><span class="spinner"></span>loading...</div></div>
+    </div>
+
+    <!-- ── Observation Replay ────────────────────────────── -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Observation Replay</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <button onclick="replayStep(-1)" style="background:none;border:1px solid var(--border-bright);color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:3px 10px;cursor:pointer">◀ prev</button>
+          <span style="font-size:10px;color:var(--text-dim)" id="replay-pos">— / —</span>
+          <button onclick="replayStep(+1)" style="background:none;border:1px solid var(--border-bright);color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:3px 10px;cursor:pointer">next ▶</button>
+        </div>
+      </div>
+      <div id="replay-wrap"><div class="loading"><span class="spinner"></span>loading...</div></div>
     </div>
 
   </div>
@@ -402,16 +483,21 @@ async function fetchScoreHistory() {
     const trades = [...rows].reverse().filter(r => r.should_trade).slice(0, 30);
     document.getElementById('wt-meta').textContent = `${wouldTrade} crossings in last ${total} cycles`;
 
-    // Sidebar weights (always populate regardless of trade count)
-    const wBars = document.getElementById('weights-bars');
-    wBars.innerHTML = Object.entries(WEIGHTS).filter(([,w]) => w > 0).map(([name, w]) => `
-      <div class="wt-bar-row">
-        <div class="wt-bar-label">
-          <span style="color:var(--text-dim)">${name}</span>
-          <span style="color:var(--amber)">${(w * 100).toFixed(0)}%</span>
-        </div>
-        <div class="wt-bar-track"><div class="wt-bar-fill" style="width:${w * 100}%"></div></div>
-      </div>`).join('');
+    // Sidebar: interactive weight sliders (only build once)
+    if (!document.getElementById('wt-slider-btc_vs_reference')) {
+      const wBars = document.getElementById('weights-bars');
+      wBars.innerHTML = Object.entries(WEIGHTS).map(([name, w]) => `
+        <div class="wt-slider-row">
+          <div class="wt-slider-label">
+            <span style="color:var(--text-dim)">${name}</span>
+            <span class="wt-slider-val" id="wts-v-${name}">${(w * 100).toFixed(0)}%</span>
+          </div>
+          <input type="range" class="wt-slider" id="wt-slider-${name}"
+                 min="0" max="0.6" step="0.01" value="${w}"
+                 oninput="onWtSlide('${name}', this.value)">
+        </div>`).join('');
+      updateWtTotal();
+    }
 
     if (!trades.length) {
       wtWrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-dim)">
@@ -536,12 +622,236 @@ async function fetchPredictions() {
   } catch(e) {}
 }
 
+// ── Interactive weight tuner ────────────────────────────────
+function onWtSlide(name, val) {
+  WEIGHTS[name] = parseFloat(val);
+  document.getElementById('wts-v-' + name).textContent = (val * 100).toFixed(0) + '%';
+  updateWtTotal();
+}
+function updateWtTotal() {
+  const total = Object.values(WEIGHTS).reduce((a, b) => a + b, 0);
+  const el = document.getElementById('wt-total');
+  if (el) { el.textContent = total.toFixed(3); el.style.color = Math.abs(total - 1) < 0.02 ? 'var(--amber)' : 'var(--red)'; }
+}
+function applyWeights() {
+  // Re-fetch composite with current page weights reflected
+  fetchComposite();
+  fetchScoreHistory();
+}
+
+// ── Threshold optimizer ─────────────────────────────────────
+let _optData = null;
+async function fetchOptimizer() {
+  try {
+    const d = await fetch(`${API}/api/optimize-weights`).then(r => r.json());
+    if (d.error) { document.getElementById('opt-rec').textContent = d.error; return; }
+    _optData = d;
+    if (d.recommended_threshold) {
+      document.getElementById('opt-rec').textContent =
+        d.recommended_threshold.toFixed(2) + ' → ' + Math.round(d.recommended_wr * 100) + '%';
+    }
+    drawOptChart(d.scan);
+    onOptSlider();
+  } catch(e) {}
+}
+function onOptSlider() {
+  const t = parseFloat(document.getElementById('opt-slider').value);
+  document.getElementById('opt-val').textContent = t.toFixed(2);
+  if (!_optData) return;
+  const row = _optData.scan.find(s => Math.abs(s.threshold - t) < 0.005);
+  if (!row) return;
+  document.getElementById('opt-trades').textContent = row.trades;
+  const wrEl = document.getElementById('opt-wr');
+  wrEl.textContent = row.trades > 0 ? Math.round(row.win_rate * 100) + '%' : '—';
+  wrEl.style.color = row.win_rate > 0.56 ? 'var(--green)' : row.win_rate < 0.45 ? 'var(--red)' : 'var(--amber)';
+  const evEl = document.getElementById('opt-ev');
+  evEl.textContent = row.trades > 0 ? (row.ev >= 0 ? '+' : '') + (row.ev * 100).toFixed(1) + '%' : '—';
+  evEl.style.color = row.ev > 0 ? 'var(--green)' : row.ev < 0 ? 'var(--red)' : 'var(--text-dim)';
+}
+function drawOptChart(scan) {
+  if (!scan || !scan.length) return;
+  const svg = document.getElementById('opt-svg');
+  const W=860, H=70, PAD=5;
+  const maxWr = Math.max(...scan.map(s => s.win_rate));
+  const maxN  = Math.max(...scan.map(s => s.trades)) || 1;
+  const n = scan.length;
+  const tx = i => PAD + (i / Math.max(n-1,1)) * (W - PAD*2);
+  const ty = v => H - PAD - (v * (H - PAD*2));
+  const wrLine = scan.map((s,i) => `${i===0?'M':'L'}${tx(i).toFixed(1)},${ty(s.win_rate).toFixed(1)}`).join(' ');
+  const bars = scan.map((s,i) => {
+    const bh = (s.trades / maxN) * (H * 0.4);
+    return `<rect x="${(tx(i)-3).toFixed(1)}" y="${(H - PAD - bh).toFixed(1)}" width="6" height="${bh.toFixed(1)}"
+              fill="rgba(33,150,243,0.2)"/>`;
+  }).join('');
+  svg.innerHTML = `
+    ${bars}
+    <line x1="0" y1="${ty(0.5).toFixed(1)}" x2="${W}" y2="${ty(0.5).toFixed(1)}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+    <line x1="0" y1="${ty(0.55).toFixed(1)}" x2="${W}" y2="${ty(0.55).toFixed(1)}" stroke="rgba(0,230,118,0.2)" stroke-width="1" stroke-dasharray="4,3"/>
+    <path d="${wrLine}" fill="none" stroke="var(--green)" stroke-width="2"/>
+    <text x="3" y="${(ty(0.55)-2).toFixed(1)}" fill="rgba(0,230,118,0.5)" font-size="8">55%</text>`;
+}
+
+// ── Signal heatmap ──────────────────────────────────────────
+const HM_SIGNALS = ['btc_vs_reference','momentum_5m','momentum_1m','volume_ratio',
+                    'rsi_14','vol_adjusted_momentum','price_acceleration','cex_poly_lag'];
+async function fetchHeatmap() {
+  try {
+    const rows = await fetch(`${API}/api/signal-heatmap?n=40`).then(r => r.json());
+    if (rows.error || !rows.length) return;
+    document.getElementById('hm-meta').textContent = `${rows.length} cycles`;
+    const wrap = document.getElementById('heatmap-wrap');
+    const minMax = {};
+    HM_SIGNALS.forEach(s => {
+      const vals = rows.map(r => r[s]).filter(v => v != null);
+      minMax[s] = {min: Math.min(...vals), max: Math.max(...vals)};
+    });
+    function hmColor(name, val) {
+      if (val == null) return 'rgba(255,255,255,0.03)';
+      const {min, max} = minMax[name];
+      const rng = max - min || 1;
+      const norm = (val - min) / rng; // 0=min, 1=max
+      if (name === 'rsi_14') {
+        if (val > 70) return 'rgba(255,61,87,0.7)';
+        if (val < 30) return 'rgba(0,230,118,0.7)';
+        return `rgba(255,179,0,${0.2 + Math.abs(val-50)/50*0.5})`;
+      }
+      if (norm > 0.65) return `rgba(0,230,118,${0.3 + norm * 0.6})`;
+      if (norm < 0.35) return `rgba(255,61,87,${0.3 + (1-norm) * 0.6})`;
+      return `rgba(74,96,128,0.3)`;
+    }
+    wrap.innerHTML = `<table class="heatmap-table">
+      <thead><tr>
+        <th style="text-align:left;padding-right:8px">time</th>
+        <th>dec</th>
+        ${HM_SIGNALS.map(s => `<th title="${s}">${s.replace('btc_vs_reference','vs_ref').replace('vol_adjusted_momentum','vol_adj').replace('price_acceleration','accel').replace('momentum_','m').replace('cex_poly_lag','lag').replace('volume_ratio','vol')}</th>`).join('')}
+      </tr></thead>
+      <tbody>${rows.map(r => {
+        const dec = r.would_trade
+          ? `<td><span style="color:var(--green);font-weight:700">${r.signal_side==='yes'?'▲':'▼'}</span></td>`
+          : `<td><span style="color:var(--text-dim)">·</span></td>`;
+        return `<tr>
+          <td style="color:var(--text-dim);padding-right:8px">${(r.ts||'').slice(11,16)}</td>
+          ${dec}
+          ${HM_SIGNALS.map(s => {
+            const v = r[s];
+            const bg = hmColor(s, v);
+            const display = v != null ? (Math.abs(v) < 10 ? v.toFixed(2) : v.toFixed(0)) : '—';
+            return `<td><span class="hm-cell" style="background:${bg}">${display}</span></td>`;
+          }).join('')}
+        </tr>`;
+      }).join('')}</tbody></table>`;
+  } catch(e) {}
+}
+
+// ── Per-market breakdown ────────────────────────────────────
+async function fetchMarketBreakdown() {
+  try {
+    const rows = await fetch(`${API}/api/market-breakdown`).then(r => r.json());
+    if (rows.error || !rows.length) return;
+    document.getElementById('mkt-meta').textContent = `${rows.length} markets`;
+    document.getElementById('mkt-wrap').innerHTML = `<table>
+      <thead><tr>
+        <th>Market Slug</th>
+        <th class="right">Cycles</th><th class="right">Signals</th>
+        <th class="right">Avg Score</th><th class="right">Resolved</th><th class="right">Win Rate</th>
+        <th>Last Seen</th>
+      </tr></thead>
+      <tbody>${rows.map(r => {
+        const wr = r.win_rate;
+        const wrStr = wr != null ? Math.round(wr * 100) + '%' : '—';
+        const wrColor = wr == null ? 'var(--text-dim)' : wr > 0.56 ? 'var(--green)' : wr < 0.45 ? 'var(--red)' : 'var(--amber)';
+        return `<tr>
+          <td style="font-size:10px">${r.market_slug}</td>
+          <td class="right" style="color:var(--text-dim)">${r.total_cycles}</td>
+          <td class="right" style="color:var(--cyan)">${r.trade_signals}</td>
+          <td class="right" style="color:var(--text)">${r.avg_score != null ? r.avg_score.toFixed(3) : '—'}</td>
+          <td class="right" style="color:var(--text-dim)">${r.resolved_trades}</td>
+          <td class="right" style="color:${wrColor};font-weight:700">${wrStr}</td>
+          <td style="color:var(--text-dim);font-size:10px">${(r.last_seen||'').slice(11,19)}</td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+  } catch(e) {}
+}
+
+// ── Observation replay ──────────────────────────────────────
+let _replayObs = [], _replayIdx = 0;
+async function fetchReplayData() {
+  try {
+    const rows = await fetch(`${API}/api/observations`).then(r => r.json());
+    if (rows.error || !rows.length) return;
+    _replayObs = rows.reverse(); // oldest first
+    _replayIdx = _replayObs.length - 1;
+    renderReplay();
+  } catch(e) {}
+}
+function replayStep(dir) {
+  _replayIdx = Math.max(0, Math.min(_replayObs.length - 1, _replayIdx + dir));
+  renderReplay();
+}
+function renderReplay() {
+  if (!_replayObs.length) return;
+  const r = _replayObs[_replayIdx];
+  document.getElementById('replay-pos').textContent = `${_replayIdx + 1} / ${_replayObs.length}`;
+  const REPLAY_SIGS = ['btc_vs_reference','vol_adjusted_momentum','momentum_5m','momentum_1m',
+                       'momentum_15m','price_acceleration','cex_poly_lag','trade_flow_ratio',
+                       'volume_ratio','rsi_14','order_imbalance','volatility_5m'];
+  const score = r.signal_score;
+  const scoreColor = score > 0.62 ? 'var(--green)' : score < 0.38 ? 'var(--red)' : 'var(--amber)';
+  document.getElementById('replay-wrap').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--border)">
+      <div style="padding:12px 16px;border-right:1px solid var(--border)">
+        <div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px">Cycle Info</div>
+        <div style="font-family:var(--display);font-size:32px;font-weight:800;color:${scoreColor}">${score != null ? score.toFixed(4) : '—'}</div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:4px">${r.ts ? r.ts.slice(0,19).replace('T',' ') : '—'} UTC</div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:2px">${r.market_slug || '—'}</div>
+        <div style="margin-top:8px">
+          ${r.would_trade
+            ? `<span class="wt-pill ${r.signal_side}">${r.signal_side==='yes'?'▲ YES SIGNAL':'▼ NO SIGNAL'}</span>`
+            : `<span class="wt-pill skip">BLOCKED</span>
+               <div style="font-size:9px;color:var(--text-dim);margin-top:4px">${r.filter_reason||''}</div>`}
+        </div>
+        <div style="margin-top:8px;font-size:10px;color:var(--text-dim)">
+          secs: ${r.seconds_remaining!=null?Math.round(r.seconds_remaining)+'s':'—'} ·
+          poly: ${r.poly_yes_price!=null?r.poly_yes_price.toFixed(3):'—'} ·
+          outcome: <span style="color:${r.outcome==='up'?'var(--green)':r.outcome==='down'?'var(--red)':'var(--text-dim)'}">${r.outcome||'…'}</span>
+        </div>
+      </div>
+      <div style="padding:12px 16px">
+        <div style="font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px">Signal Values</div>
+        ${REPLAY_SIGS.map(s => {
+          const v = r[s];
+          const fmt = v == null ? '—'
+            : s.includes('momentum')||s.includes('reference')||s.includes('accel') ? (v>=0?'+':'')+v.toFixed(3)+'%'
+            : s==='rsi_14' ? v.toFixed(1)
+            : s==='volume_ratio' ? v.toFixed(2)+'x'
+            : (v>=0?'+':'')+v.toFixed(4);
+          const color = v==null?'var(--text-dim)':v>0?'var(--green)':v<0?'var(--red)':'var(--text-dim)';
+          return `<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:10px">
+            <span style="color:var(--text-dim)">${s}</span>
+            <span style="color:${color}">${fmt}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
 async function refresh() {
   await Promise.all([fetchComposite(), fetchScoreHistory(), fetchPredictions()]);
 }
 
-refresh();
+async function refreshAll() {
+  await Promise.all([
+    refresh(),
+    fetchOptimizer(),
+    fetchHeatmap(),
+    fetchMarketBreakdown(),
+    fetchReplayData(),
+  ]);
+}
+
+refreshAll();
 setInterval(refresh, 15000);
+setInterval(() => { fetchHeatmap(); fetchMarketBreakdown(); }, 60000);
 </script>
 </body>
 </html>

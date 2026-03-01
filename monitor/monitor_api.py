@@ -18,9 +18,10 @@ import sqlite3
 import math
 import re
 from datetime import datetime, timezone, timedelta
-from flask import Flask, jsonify, send_from_directory, request, session, redirect
+from flask import Flask, jsonify, send_from_directory, request, session, redirect, Response, stream_with_context
 from flask_cors import CORS
 from werkzeug.security import check_password_hash
+import time as _time
 
 app = Flask(__name__, static_folder="/app/dashboard")
 CORS(app)
@@ -54,7 +55,8 @@ def _load_config():
 CONFIG = _load_config()
 
 
-USERS_DB = os.environ.get("USERS_DB_PATH", "/data/users.db")
+USERS_DB          = os.environ.get("USERS_DB_PATH",    "/data/users.db")
+KILL_SWITCH_FILE  = os.environ.get("KILL_SWITCH_PATH", "/data/kill_switch.json")
 
 # {ip: {"count": int, "lockout_until": datetime | None}}
 _login_attempts: dict = {}
@@ -833,6 +835,307 @@ def config_endpoint():
         return jsonify({"error": "config.json not found"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NEW: Analytics, operations, real-time stream
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/rolling-winrate")
+def rolling_winrate():
+    window = int(request.args.get("window", 30))
+    try:
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT ts, signal_side, outcome
+            FROM signal_observations
+            WHERE would_trade = 1 AND resolved = 1 AND outcome IN ('up', 'down')
+            ORDER BY id ASC
+        """).fetchall()
+        conn.close()
+        result = []
+        for i in range(len(rows)):
+            w = rows[max(0, i - window + 1):i + 1]
+            correct = sum(
+                1 for r in w
+                if (r["signal_side"] == "yes" and r["outcome"] == "up") or
+                   (r["signal_side"] == "no"  and r["outcome"] == "down")
+            )
+            result.append({"ts": rows[i]["ts"], "win_rate": round(correct / len(w), 4), "n": len(w)})
+        return jsonify({"window": window, "total": len(rows), "data": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/drawdown")
+def drawdown():
+    try:
+        with open(TRADE_PATH) as f:
+            raw = json.load(f)
+        if not isinstance(raw, list):
+            raw = [raw]
+    except FileNotFoundError:
+        return jsonify({"cumulative": [], "max_drawdown": 0, "total_pnl": 0, "peak_pnl": 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    resolved = sorted(
+        [t for t in raw if t.get("pnl") is not None],
+        key=lambda t: t.get("timestamp", ""),
+    )
+    if not resolved:
+        return jsonify({"cumulative": [], "max_drawdown": 0, "total_pnl": 0, "peak_pnl": 0})
+
+    cumulative, running, peak, max_dd = [], 0.0, 0.0, 0.0
+    for t in resolved:
+        running += t["pnl"]
+        peak = max(peak, running)
+        dd = peak - running
+        max_dd = max(max_dd, dd)
+        cumulative.append({"ts": t["timestamp"], "pnl": round(running, 4), "drawdown": round(dd, 4)})
+
+    return jsonify({
+        "cumulative":   cumulative,
+        "max_drawdown": round(max_dd, 4),
+        "total_pnl":    round(running, 4),
+        "peak_pnl":     round(peak, 4),
+    })
+
+
+@app.route("/api/market-breakdown")
+def market_breakdown():
+    try:
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT market_slug,
+                   COUNT(*) as total_cycles,
+                   SUM(would_trade) as trade_signals,
+                   ROUND(AVG(signal_score), 4) as avg_score,
+                   MAX(ts) as last_seen
+            FROM signal_observations
+            WHERE market_slug IS NOT NULL AND market_slug != ''
+            GROUP BY market_slug ORDER BY last_seen DESC LIMIT 30
+        """).fetchall()
+        wr_rows = conn.execute("""
+            SELECT market_slug, signal_side, outcome
+            FROM signal_observations
+            WHERE would_trade = 1 AND resolved = 1
+              AND outcome IN ('up', 'down') AND market_slug IS NOT NULL
+        """).fetchall()
+        conn.close()
+
+        wr = {}
+        for r in wr_rows:
+            s = r["market_slug"]
+            if s not in wr:
+                wr[s] = {"total": 0, "correct": 0}
+            wr[s]["total"] += 1
+            if (r["signal_side"] == "yes" and r["outcome"] == "up") or \
+               (r["signal_side"] == "no"  and r["outcome"] == "down"):
+                wr[s]["correct"] += 1
+
+        result = []
+        for r in rows:
+            slug = r["market_slug"]
+            w = wr.get(slug, {})
+            wt, wc = w.get("total", 0), w.get("correct", 0)
+            result.append({
+                "market_slug":    slug,
+                "slug_short":     slug.split("-")[-1],
+                "total_cycles":   r["total_cycles"],
+                "trade_signals":  r["trade_signals"] or 0,
+                "avg_score":      r["avg_score"],
+                "win_rate":       round(wc / wt, 4) if wt > 0 else None,
+                "resolved_trades": wt,
+                "last_seen":      r["last_seen"],
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/signal-heatmap")
+def signal_heatmap():
+    n = int(request.args.get("n", 50))
+    try:
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT ts, market_slug, signal_score, would_trade, signal_side,
+                   momentum_1m, momentum_5m, momentum_15m, rsi_14, volume_ratio,
+                   order_imbalance, trade_flow_ratio, volatility_5m,
+                   price_acceleration, btc_vs_reference, cex_poly_lag,
+                   momentum_consistency, vol_adjusted_momentum, poly_yes_price
+            FROM signal_observations ORDER BY id DESC LIMIT ?
+        """, (n,)).fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in reversed(rows)])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/optimize-weights")
+def optimize_weights():
+    """Scan score thresholds (0.50–0.80) to find optimal entry point."""
+    try:
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT signal_side, outcome, signal_score
+            FROM signal_observations
+            WHERE resolved = 1 AND outcome IN ('up', 'down') AND signal_score IS NOT NULL
+        """).fetchall()
+        conn.close()
+
+        if len(rows) < 10:
+            return jsonify({"error": "Need ≥10 resolved observations for calibration."})
+
+        scan = []
+        for t_int in range(50, 81):
+            t = t_int / 100.0
+            lo = 1.0 - t
+            trades = [(r["signal_side"], r["outcome"]) for r in rows
+                      if r["signal_score"] > t or r["signal_score"] < lo]
+            correct = sum(1 for side, out in trades
+                          if (side == "yes" and out == "up") or (side == "no" and out == "down"))
+            n = len(trades)
+            wr = correct / n if n > 0 else 0.0
+            scan.append({"threshold": t, "trades": n, "correct": correct,
+                         "win_rate": round(wr, 4), "ev": round(wr * 2 - 1, 4)})
+
+        candidates = [s for s in scan if s["trades"] >= 5]
+        best = max(candidates, key=lambda x: x["win_rate"]) if candidates else None
+        return jsonify({
+            "total_resolved":          len(rows),
+            "scan":                    scan,
+            "recommended_threshold":   best["threshold"] if best else None,
+            "recommended_wr":          best["win_rate"] if best else None,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/daily-digest")
+def daily_digest():
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        conn = get_db()
+        stats = conn.execute("""
+            SELECT COUNT(*) as cycles, SUM(would_trade) as signals,
+                   ROUND(AVG(signal_score), 4) as avg_score, MAX(ts) as last_cycle
+            FROM signal_observations WHERE ts >= ?
+        """, (today,)).fetchone()
+        top_block = conn.execute("""
+            SELECT filter_reason, COUNT(*) as cnt
+            FROM signal_observations
+            WHERE ts >= ? AND would_trade = 0 AND filter_reason IS NOT NULL
+            GROUP BY filter_reason ORDER BY cnt DESC LIMIT 1
+        """, (today,)).fetchone()
+        conn.close()
+    except Exception:
+        stats = top_block = None
+
+    today_trades, pnl, wins, resolved_count = [], 0.0, 0, 0
+    try:
+        with open(TRADE_PATH) as f:
+            all_trades = json.load(f)
+        today_trades = [t for t in all_trades if (t.get("timestamp") or "")[:10] == today]
+        resolved = [t for t in today_trades
+                    if t.get("outcome") in ("up", "down") and t.get("pnl") is not None]
+        pnl = sum(t["pnl"] for t in resolved)
+        wins = sum(1 for t in resolved if t["pnl"] > 0)
+        resolved_count = len(resolved)
+    except Exception:
+        pass
+
+    return jsonify({
+        "date":           today,
+        "cycles_today":   stats["cycles"]  if stats else 0,
+        "signals_today":  int(stats["signals"] or 0) if stats else 0,
+        "avg_score":      stats["avg_score"] if stats else None,
+        "last_cycle":     stats["last_cycle"] if stats else None,
+        "top_block":      top_block["filter_reason"] if top_block else None,
+        "trades_today":   len(today_trades),
+        "pnl_today":      round(pnl, 4),
+        "resolved_today": resolved_count,
+        "win_rate_today": round(wins / resolved_count, 4) if resolved_count > 0 else None,
+    })
+
+
+@app.route("/api/kill-switch", methods=["GET", "POST"])
+def kill_switch():
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        active = bool(data.get("active", False))
+        try:
+            with open(KILL_SWITCH_FILE, "w") as f:
+                json.dump({"active": active,
+                           "set_at": datetime.now(timezone.utc).isoformat()}, f)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+        return jsonify({"active": active, "ok": True})
+
+    try:
+        with open(KILL_SWITCH_FILE) as f:
+            d = json.load(f)
+        return jsonify({"active": d.get("active", False), "set_at": d.get("set_at")})
+    except FileNotFoundError:
+        return jsonify({"active": False, "set_at": None})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/config", methods=["POST"])
+def save_config():
+    try:
+        data = request.get_json(silent=True)
+        if not data or not isinstance(data, dict):
+            return jsonify({"error": "Invalid JSON body"}), 400
+        required = {"entry_threshold", "composite_threshold", "daily_budget", "signal_weights"}
+        missing = required - data.keys()
+        if missing:
+            return jsonify({"error": f"Missing required keys: {missing}"}), 400
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(data, f, indent=2)
+        global CONFIG
+        CONFIG = data
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/stream")
+def event_stream():
+    """Server-Sent Events: pushes new observation row whenever id changes."""
+    def gen():
+        last_id = None
+        while True:
+            try:
+                conn = get_db()
+                row = conn.execute("""
+                    SELECT id, ts, market_slug, seconds_remaining,
+                           signal_score, signal_side, would_trade, filter_reason,
+                           btc_vs_reference, momentum_5m, poly_yes_price
+                    FROM signal_observations ORDER BY id DESC LIMIT 1
+                """).fetchone()
+                conn.close()
+                if row:
+                    d = dict(row)
+                    if d["id"] != last_id:
+                        last_id = d["id"]
+                        yield f"data: {json.dumps(d)}\n\n"
+                    else:
+                        yield ": keep-alive\n\n"
+                else:
+                    yield ": keep-alive\n\n"
+            except Exception:
+                yield ": keep-alive\n\n"
+            _time.sleep(5)
+
+    return Response(
+        stream_with_context(gen()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Connection": "keep-alive"},
+    )
 
 
 @app.route("/", defaults={"path": ""})

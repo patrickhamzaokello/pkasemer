@@ -101,6 +101,7 @@ CONFIG_SCHEMA = {
     "volume_confidence":  {"default": True,      "env": "SIMMER_SPRINT_VOL_CONF",     "type": bool},
     "daily_budget":       {"default": 10.0,      "env": "SIMMER_SPRINT_DAILY_BUDGET", "type": float},
     "composite_threshold":{"default": 0.60,      "env": "SIMMER_SPRINT_COMP_THRESH",  "type": float},
+    "webhook_url":        {"default": "",         "env": "SIMMER_WEBHOOK_URL",          "type": str},
 }
 
 
@@ -230,7 +231,39 @@ _market_id_cache = _load_market_cache()
 # Local Trade Log
 # =============================================================================
 
-_TRADE_LOG_FILE = Path(_DATA_DIR) / "trade_log.json"
+_TRADE_LOG_FILE   = Path(_DATA_DIR) / "trade_log.json"
+_KILL_SWITCH_FILE = Path(_DATA_DIR) / "kill_switch.json"
+
+
+def _is_kill_switch_active() -> bool:
+    """Return True if the UI emergency-stop has been triggered."""
+    try:
+        if _KILL_SWITCH_FILE.exists():
+            return json.loads(_KILL_SWITCH_FILE.read_text()).get("active", False)
+    except Exception:
+        pass
+    return False
+
+
+def _send_webhook(url: str, slug: str, side: str, score: float,
+                  position_size: float, shares: float, entry_price: float) -> None:
+    """POST a trade alert to a Telegram/Discord-compatible webhook URL."""
+    if not url or not url.strip():
+        return
+    arrow = "🟢" if side == "yes" else "🔴"
+    payload = json.dumps({
+        "text": (
+            f"{arrow} TRADE: {side.upper()} | {slug}\n"
+            f"Score: {score:.3f} | ${position_size:.2f} @ ${entry_price:.3f} ({shares:.1f} shares)"
+        )
+    }).encode()
+    try:
+        req = Request(url.strip(), data=payload,
+                      headers={"Content-Type": "application/json"}, method="POST")
+        urlopen(req, timeout=5)
+    except Exception:
+        pass  # webhook failures are non-fatal
+
 
 def _log_trade_local(trade_id, side, score, confidence, entry_price, position_size,
                       shares, slug, remaining, cex_signals, poly_signals):
@@ -591,6 +624,11 @@ def run_fast_market_strategy(
         if not quiet or force:
             print(msg, flush=True)
 
+    # ── Kill switch ───────────────────────────────────────────────────────────
+    if not dry_run and _is_kill_switch_active():
+        log(f"{mode_tag} {now_str} | KILL SWITCH ACTIVE — trading halted this cycle", force=True)
+        return
+
     # ── Config view ───────────────────────────────────────────────────────────
     if show_config:
         daily_spend = _load_daily_spend()
@@ -846,6 +884,15 @@ def run_fast_market_strategy(
                     )
                 except Exception as e:
                     log(f"  WARNING: trade log failed: {e}", force=True)
+            _send_webhook(
+                url=cfg.get("webhook_url", ""),
+                slug=best["slug"],
+                side=side,
+                score=score,
+                position_size=position_size,
+                shares=shares,
+                entry_price=entry_price,
+            )
         else:
             error = result.get("error", "Unknown") if result else "no response"
             log(f"  ERROR trade failed: {error}", force=True)

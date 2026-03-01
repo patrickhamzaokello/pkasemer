@@ -109,6 +109,11 @@
     transition: all 0.15s;
   }
   .refresh-btn:hover { border-color: var(--green); color: var(--green); }
+  .kill-btn { background: none; border: 1px solid var(--red); color: var(--red); padding: 3px 10px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px; cursor: pointer; transition: all 0.15s; border-radius: 2px; }
+  .kill-btn:hover { background: rgba(255,61,87,0.12); }
+  .kill-btn.armed { background: var(--red); color: #080b0f; font-weight: 700; }
+  .sse-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); display: inline-block; transition: background 0.3s; }
+  .sse-dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); }
 
   /* ── Nav ──────────────────────────────────────────────── */
   .nav {
@@ -405,6 +410,7 @@
     </div>
     <span class="last-update">cycle <strong id="cnum" style="color:var(--text)">—</strong></span>
     <span class="utc-clock" id="clock">—</span>
+    <button class="kill-btn" id="kill-btn" onclick="toggleKillSwitch()">⏹ HALT</button>
     <button class="refresh-btn" onclick="refreshAll()">↺ refresh</button>
   </div>
 </div>
@@ -414,6 +420,7 @@
   <a href="index.html" class="nav-link">Monitor</a>
   <a href="dry-run.html" class="nav-link">Signal Lab</a>
   <a href="live.html" class="nav-link active">Live Trading</a>
+  <a href="config.html" class="nav-link">Config</a>
   <div class="nav-right">
     <span class="nav-meta" id="last-ref">—</span>
     <button class="nav-logout" onclick="logout()">↪ logout</button>
@@ -568,7 +575,7 @@
 
       <div class="panel">
         <div class="panel-header">
-          <div class="panel-title">Recent Cycles</div>
+          <div class="panel-title">Recent Cycles <span class="sse-dot" id="sse-dot" title="SSE live feed"></span></div>
           <div class="panel-meta" id="feed-n">—</div>
         </div>
         <div class="feed-hdr">
@@ -651,6 +658,41 @@
           </tbody>
         </table>
       </div>
+    </div>
+
+    <!-- ── Drawdown + Rolling Win Rate ────────────────────── -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+
+      <!-- Drawdown chart -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Cumulative P&amp;L &amp; Drawdown</div>
+          <div class="panel-meta" id="dd-meta">—</div>
+        </div>
+        <svg id="dd-svg" viewBox="0 0 600 90" preserveAspectRatio="none"
+             style="display:block;width:100%;height:90px;background:rgba(0,0,0,0.2)"></svg>
+        <div style="display:flex;gap:20px;padding:8px 14px;font-size:10px;color:var(--text-dim)">
+          <span>Peak: <strong id="dd-peak" style="color:var(--green)">—</strong></span>
+          <span>Max DD: <strong id="dd-maxdd" style="color:var(--red)">—</strong></span>
+          <span>Total P&L: <strong id="dd-total">—</strong></span>
+        </div>
+      </div>
+
+      <!-- Rolling win rate chart -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Rolling Win Rate</div>
+          <div class="panel-meta" id="rwr-meta">30-trade window</div>
+        </div>
+        <svg id="rwr-svg" viewBox="0 0 600 90" preserveAspectRatio="none"
+             style="display:block;width:100%;height:90px;background:rgba(0,0,0,0.2)"></svg>
+        <div style="display:flex;gap:20px;padding:8px 14px;font-size:10px;color:var(--text-dim)">
+          <span>Latest: <strong id="rwr-latest" style="color:var(--cyan)">—</strong></span>
+          <span>Best: <strong id="rwr-best" style="color:var(--green)">—</strong></span>
+          <span>Resolved: <strong id="rwr-n">—</strong></span>
+        </div>
+      </div>
+
     </div>
 
   </div>
@@ -1012,17 +1054,127 @@ async function fetchDecisionStats() {
   } catch(e) {}
 }
 
+// ── Kill switch ─────────────────────────────────────────────
+let _ksActive = false;
+async function fetchKillSwitch() {
+  try {
+    const d = await fetch(`${API}/api/kill-switch`).then(r => r.json());
+    _ksActive = d.active;
+    const btn = $('kill-btn');
+    if (_ksActive) { btn.textContent = '▶ RESUME'; btn.classList.add('armed'); }
+    else            { btn.textContent = '⏹ HALT';  btn.classList.remove('armed'); }
+  } catch(e) {}
+}
+async function toggleKillSwitch() {
+  try {
+    const d = await fetch(`${API}/api/kill-switch`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({active: !_ksActive})
+    }).then(r => r.json());
+    _ksActive = d.active;
+    const btn = $('kill-btn');
+    if (_ksActive) { btn.textContent = '▶ RESUME'; btn.classList.add('armed'); }
+    else            { btn.textContent = '⏹ HALT';  btn.classList.remove('armed'); }
+  } catch(e) {}
+}
+
+// ── Drawdown chart ─────────────────────────────────────────
+async function fetchDrawdown() {
+  try {
+    const d = await fetch(`${API}/api/drawdown`).then(r => r.json());
+    if (d.error || !d.cumulative.length) return;
+    const pts = d.cumulative;
+    const svg = $('dd-svg');
+    const W=600, H=90, PAD=5;
+    const pnlVals = pts.map(p => p.pnl);
+    const minY = Math.min(0, ...pnlVals), maxY = Math.max(0, ...pnlVals);
+    const rng = maxY - minY || 0.01;
+    const n = pts.length;
+    const tx = i => PAD + (i / Math.max(n-1,1)) * (W - PAD*2);
+    const ty = v => H - PAD - ((v - minY) / rng) * (H - PAD*2);
+    const zY = ty(0);
+    const line = pts.map((p,i) => `${i===0?'M':'L'}${tx(i).toFixed(1)},${ty(p.pnl).toFixed(1)}`).join(' ');
+    const ddLine = pts.map((p,i) => `${i===0?'M':'L'}${tx(i).toFixed(1)},${ty(-p.drawdown).toFixed(1)}`).join(' ');
+    svg.innerHTML = `
+      <line x1="0" y1="${zY.toFixed(1)}" x2="${W}" y2="${zY.toFixed(1)}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <path d="${ddLine}" fill="none" stroke="rgba(255,61,87,0.4)" stroke-width="1.5" stroke-dasharray="3,3"/>
+      <path d="${line}" fill="none" stroke="${d.total_pnl>=0?'var(--green)':'var(--red)'}" stroke-width="2"/>
+      <circle cx="${tx(n-1).toFixed(1)}" cy="${ty(pts[n-1].pnl).toFixed(1)}" r="3" fill="${d.total_pnl>=0?'var(--green)':'var(--red)'}"/>`;
+    $('dd-meta').textContent = `${n} resolved trades`;
+    $('dd-peak').textContent  = '+$' + d.peak_pnl.toFixed(2);
+    $('dd-maxdd').textContent = '-$' + d.max_drawdown.toFixed(2);
+    const tot = $('dd-total');
+    tot.textContent = (d.total_pnl >= 0 ? '+$' : '-$') + Math.abs(d.total_pnl).toFixed(2);
+    tot.style.color = d.total_pnl >= 0 ? 'var(--green)' : 'var(--red)';
+  } catch(e) {}
+}
+
+// ── Rolling win rate ───────────────────────────────────────
+async function fetchRollingWinRate() {
+  try {
+    const d = await fetch(`${API}/api/rolling-winrate?window=30`).then(r => r.json());
+    if (d.error || !d.data.length) return;
+    const pts = d.data;
+    const svg = $('rwr-svg');
+    const W=600, H=90, PAD=5;
+    const n = pts.length;
+    const tx = i => PAD + (i / Math.max(n-1,1)) * (W - PAD*2);
+    const ty = v => H - PAD - (v * (H - PAD*2));
+    const line = pts.map((p,i) => `${i===0?'M':'L'}${tx(i).toFixed(1)},${ty(p.win_rate).toFixed(1)}`).join(' ');
+    const ev50 = ty(0.5), ev55 = ty(0.55);
+    svg.innerHTML = `
+      <rect x="0" y="${ev55.toFixed(1)}" width="${W}" height="${(ev50-ev55).toFixed(1)}" fill="rgba(0,230,118,0.04)"/>
+      <line x1="0" y1="${ev50.toFixed(1)}" x2="${W}" y2="${ev50.toFixed(1)}" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+      <line x1="0" y1="${ev55.toFixed(1)}" x2="${W}" y2="${ev55.toFixed(1)}" stroke="rgba(0,230,118,0.25)" stroke-width="1" stroke-dasharray="4,4"/>
+      <path d="${line}" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linejoin="round"/>
+      <circle cx="${tx(n-1).toFixed(1)}" cy="${ty(pts[n-1].win_rate).toFixed(1)}" r="3" fill="var(--cyan)"/>
+      <text x="4" y="${(ev55-2).toFixed(1)}" fill="rgba(0,230,118,0.5)" font-size="8">55%</text>
+      <text x="4" y="${(ev50-2).toFixed(1)}" fill="rgba(255,255,255,0.2)" font-size="8">50%</text>`;
+    $('rwr-meta').textContent  = `${d.window}-trade window · ${d.total} resolved`;
+    $('rwr-latest').textContent = Math.round(pts[n-1].win_rate * 100) + '%';
+    $('rwr-best').textContent   = Math.round(Math.max(...pts.map(p => p.win_rate)) * 100) + '%';
+    $('rwr-n').textContent      = d.total;
+  } catch(e) {}
+}
+
+// ── SSE live feed ──────────────────────────────────────────
+function initSSE() {
+  const dot = $('sse-dot');
+  let es;
+  function connect() {
+    es = new EventSource(`${API}/api/stream`);
+    es.onopen = () => { if (dot) dot.classList.add('live'); };
+    es.onmessage = e => {
+      try {
+        // Flash the dot on new data
+        if (dot) { dot.style.background = 'var(--amber)'; setTimeout(() => dot.classList.add('live'), 300); }
+        // Trigger feed refresh when a new cycle arrives
+        fetchFeed();
+        fetchCurrent();
+      } catch(_) {}
+    };
+    es.onerror = () => {
+      if (dot) dot.classList.remove('live');
+      es.close();
+      setTimeout(connect, 10000); // reconnect after 10s
+    };
+  }
+  connect();
+}
+
 // ── Refresh ────────────────────────────────────────────────
 async function refreshAll() {
   await Promise.all([
     fetchStatus(), fetchCurrent(), fetchFeed(), fetchLog(),
-    fetchTrades(), fetchImportStatus(), fetchDecisionStats()
+    fetchTrades(), fetchImportStatus(), fetchDecisionStats(),
+    fetchKillSwitch(), fetchDrawdown(), fetchRollingWinRate()
   ]);
   $('last-ref').textContent = 'updated ' + new Date().toUTCString().slice(17,25) + ' UTC';
 }
 
 refreshAll();
 setInterval(refreshAll, 10000);
+initSSE();
 </script>
 </body>
 </html>

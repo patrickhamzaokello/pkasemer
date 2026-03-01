@@ -10,6 +10,7 @@
   "volume_confidence": false,
   "daily_budget": 20.0,
   "composite_threshold": 0.62,
+  "webhook_url": "",
   "signal_weights": {
     "btc_vs_reference":      0.380,
     "vol_adjusted_momentum": 0.155,
