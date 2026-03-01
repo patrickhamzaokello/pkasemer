@@ -38,6 +38,8 @@ services:
     environment:
       DB_PATH: /data/signal_research.db
       LOG_LEVEL: INFO
+      SECRET_KEY: "${SECRET_KEY}"
+      USERS_DB_PATH: /data/users.db
     env_file: [.env]
     volumes:
       - pknwitq-data:/data          # shared with collector: status.json, db, cache, spend, trade_log.json
@@ -54,7 +56,7 @@ services:
     depends_on:
       - collector
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/status', timeout=5)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3

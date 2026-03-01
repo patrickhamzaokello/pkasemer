@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pknwitq — Login</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080b0f;
+    --surface: #0d1117;
+    --border: #1a2332;
+    --border-bright: #243347;
+    --text: #c8d6e8;
+    --text-dim: #4a6080;
+    --text-bright: #e8f0f8;
+    --green: #00e676;
+    --green-dim: #00c45a;
+    --red: #ff3d57;
+    --amber: #ffb300;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Syne', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.03) 2px,
+      rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  .login-card {
+    background: var(--surface);
+    border: 1px solid var(--border-bright);
+    padding: 40px 36px;
+    width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .brand {
+    text-align: center;
+  }
+
+  .brand-name {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: 26px;
+    color: var(--text-bright);
+    letter-spacing: 0.05em;
+  }
+
+  .brand-name span {
+    color: var(--green);
+  }
+
+  .brand-sub {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-top: 4px;
+  }
+
+  hr.divider {
+    border: none;
+    border-top: 1px solid var(--border);
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .form-group + .form-group {
+    margin-top: 12px;
+  }
+
+  label {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-bright);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 10px 12px;
+    outline: none;
+    transition: border-color 0.15s;
+    width: 100%;
+  }
+
+  input:focus {
+    border-color: var(--green-dim);
+  }
+
+  input::placeholder {
+    color: var(--text-dim);
+  }
+
+  .btn-submit {
+    background: var(--green);
+    color: #080b0f;
+    border: none;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 12px;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    width: 100%;
+    margin-top: 20px;
+  }
+
+  .btn-submit:hover:not(:disabled) { background: var(--green-dim); }
+  .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .msg {
+    font-size: 11px;
+    padding: 8px 10px;
+    border-left: 3px solid var(--red);
+    background: rgba(255,61,87,0.07);
+    color: var(--red);
+    display: none;
+    margin-top: 12px;
+  }
+
+  .msg.amber {
+    border-color: var(--amber);
+    background: rgba(255,179,0,0.07);
+    color: var(--amber);
+  }
+
+  .msg.visible { display: block; }
+</style>
+</head>
+<body>
+
+<div class="login-card">
+  <div class="brand">
+    <div class="brand-name">PKN<span>WITQ</span></div>
+    <div class="brand-sub">Monitor Dashboard</div>
+  </div>
+
+  <hr class="divider">
+
+  <form id="login-form" onsubmit="handleSubmit(event)">
+    <div class="form-group">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email"
+             placeholder="you@example.com"
+             autocomplete="email" required>
+    </div>
+    <div class="form-group">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password"
+             placeholder="············"
+             autocomplete="current-password" required>
+    </div>
+    <div id="msg" class="msg"></div>
+    <button type="submit" class="btn-submit" id="btn">Sign In</button>
+  </form>
+</div>
+
+<script>
+async function handleSubmit(e) {
+  e.preventDefault();
+  const btn = document.getElementById('btn');
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  hideMsg();
+
+  try {
+    const res = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+
+    if (res.ok) {
+      window.location.href = '/';
+      return;
+    }
+    if (res.status === 429) {
+      const secs = data.retry_after || 900;
+      const mins = Math.ceil(secs / 60);
+      showMsg(`Too many failed attempts. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.`, 'amber');
+    } else {
+      showMsg(data.error || 'Invalid email or password.');
+    }
+  } catch (_) {
+    showMsg('Network error — could not reach the server.');
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Sign In';
+}
+
+function showMsg(text, type) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.className = 'msg visible' + (type ? ' ' + type : '');
+}
+
+function hideMsg() {
+  document.getElementById('msg').className = 'msg';
+}
+</script>
+</body>
+</html>

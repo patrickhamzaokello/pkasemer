@@ -12,16 +12,29 @@ Added endpoints:
 """
 
 import os
+import sys
 import json
 import sqlite3
 import math
 import re
-from datetime import datetime, timezone
-from flask import Flask, jsonify, send_from_directory, request
+from datetime import datetime, timezone, timedelta
+from flask import Flask, jsonify, send_from_directory, request, session, redirect
 from flask_cors import CORS
+from werkzeug.security import check_password_hash
 
 app = Flask(__name__, static_folder="/app/dashboard")
 CORS(app)
+
+# ── Authentication config ──────────────────────────────────────────────────
+_secret_key = os.environ.get("SECRET_KEY")
+if not _secret_key:
+    sys.stderr.write("FATAL: SECRET_KEY environment variable is not set.\n")
+    sys.stderr.write("Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\"\n")
+    sys.exit(1)
+app.secret_key = _secret_key
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Strict"
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 
 DB_PATH     = os.environ.get("DB_PATH", "/data/signal_research.db")
 STATUS_PATH = "/data/status.json"
@@ -41,10 +54,138 @@ def _load_config():
 CONFIG = _load_config()
 
 
+USERS_DB = os.environ.get("USERS_DB_PATH", "/data/users.db")
+
+# {ip: {"count": int, "lockout_until": datetime | None}}
+_login_attempts: dict = {}
+
+
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _init_users_db():
+    """Create users table if it doesn't exist yet."""
+    data_dir = os.path.dirname(os.path.abspath(USERS_DB))
+    os.makedirs(data_dir, exist_ok=True)
+    conn = sqlite3.connect(USERS_DB)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            name          TEXT NOT NULL,
+            email         TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at    TEXT DEFAULT (datetime('now')),
+            last_login    TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+_init_users_db()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auth middleware + routes
+# ─────────────────────────────────────────────────────────────────────────────
+
+_EXEMPT = {"/login", "/auth/login", "/auth/logout", "/health"}
+
+
+@app.before_request
+def require_login():
+    if request.path in _EXEMPT:
+        return None
+    if session.get("logged_in"):
+        return None
+    # Not authenticated
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Unauthorized", "redirect": "/login"}), 401
+    return redirect("/login")
+
+
+@app.route("/health")
+def health():
+    return jsonify({"ok": True})
+
+
+@app.route("/login")
+def login_page():
+    if session.get("logged_in"):
+        return redirect("/")
+    return send_from_directory("/app/dashboard", "login.html")
+
+
+@app.route("/auth/login", methods=["POST"])
+def auth_login():
+    ip = request.remote_addr
+    now = datetime.now(timezone.utc)
+
+    # Rate limit check
+    attempt = _login_attempts.get(ip, {"count": 0, "lockout_until": None})
+    lockout_until = attempt.get("lockout_until")
+    if lockout_until and now < lockout_until:
+        remaining = int((lockout_until - now).total_seconds())
+        return jsonify({"error": f"Too many attempts. Try again in {remaining} seconds.",
+                        "retry_after": remaining}), 429
+
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+
+    # Look up user
+    user = None
+    try:
+        conn = sqlite3.connect(USERS_DB)
+        conn.row_factory = sqlite3.Row
+        user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        conn.close()
+    except Exception:
+        pass
+
+    if not user or not check_password_hash(user["password_hash"], password):
+        count = attempt.get("count", 0) + 1
+        new_lockout = None
+        if count >= 5:
+            new_lockout = now + timedelta(minutes=15)
+            count = 0  # reset counter after lockout is issued
+        _login_attempts[ip] = {"count": count, "lockout_until": new_lockout}
+        return jsonify({"error": "Invalid email or password."}), 401
+
+    # Success: clear rate limit, set session
+    _login_attempts.pop(ip, None)
+    session.permanent = True
+    session["logged_in"] = True
+    session["user_id"] = user["id"]
+    session["name"] = user["name"]
+    session["email"] = user["email"]
+
+    try:
+        conn = sqlite3.connect(USERS_DB)
+        conn.execute("UPDATE users SET last_login = ? WHERE id = ?",
+                     (now.isoformat(), user["id"]))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "name": user["name"]})
+
+
+@app.route("/auth/logout", methods=["POST"])
+def auth_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/me")
+def auth_me():
+    if session.get("logged_in"):
+        return jsonify({"logged_in": True, "name": session.get("name"),
+                        "email": session.get("email")})
+    return jsonify({"logged_in": False}), 401
 
 
 # ─────────────────────────────────────────────────────────────────────────────

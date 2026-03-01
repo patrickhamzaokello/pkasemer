@@ -14,7 +14,8 @@
       "Bash(wc -l \"/c/Users/pkase/Downloads/polymarket-fast-loop-1.0.12\"/*.py)",
       "Bash(git mv:*)",
       "Bash(mkdir:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(grep:*)"
     ]
   }
 }
