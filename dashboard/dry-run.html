@@ -23,10 +23,12 @@
   .last-update { color: var(--text-dim); font-size: 10px; }
   .refresh-btn { background: none; border: 1px solid var(--border-bright); color: var(--text-dim); padding: 3px 8px; font-family: var(--mono); font-size: 10px; cursor: pointer; border-radius: 2px; transition: all 0.15s; }
   .refresh-btn:hover { border-color: var(--green); color: var(--green); }
-  .nav { display: flex; gap: 2px; padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .nav { display: flex; gap: 2px; padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 46px; z-index: 90; }
   .nav-link { padding: 8px 16px; font-size: 11px; letter-spacing: 0.5px; color: var(--text-dim); text-decoration: none; border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s; margin-bottom: -1px; }
   .nav-link:hover { color: var(--text-bright); }
   .nav-link.active { color: var(--text-bright); border-bottom-color: var(--amber); }
+  .nav-logout { margin-left: auto; background: none; border: none; font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px; color: var(--text-dim); cursor: pointer; padding: 8px 4px; transition: color 0.15s; }
+  .nav-logout:hover { color: var(--red); }
   .layout { display: grid; grid-template-columns: 240px 1fr; min-height: calc(100vh - 82px); align-items: start; }
   .sidebar { border-right: 1px solid var(--border); overflow-y: auto; background: var(--surface); position: sticky; top: 82px; height: calc(100vh - 82px); align-self: start; }
   .sidebar-section { border-bottom: 1px solid var(--border); padding: 14px 16px; }
@@ -110,6 +112,7 @@
   <a href="index.html" class="nav-link">Monitor</a>
   <a href="dry-run.html" class="nav-link active">Signal Lab</a>
   <a href="live.html" class="nav-link">Live Trading</a>
+  <button class="nav-logout" onclick="logout()">↪ logout</button>
 </nav>
 
 <div class="layout">
@@ -247,6 +250,11 @@
 
 <script>
 const API = window.location.origin;
+
+async function logout() {
+  await fetch('/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
 
 const WEIGHTS = {
   btc_vs_reference: 0.40, volume_ratio: 0.15, momentum_5m: 0.15,

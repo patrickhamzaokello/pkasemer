@@ -117,6 +117,9 @@
     padding: 0 20px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 46px;
+    z-index: 90;
   }
   .nav-link {
     padding: 8px 16px;
@@ -130,8 +133,20 @@
   }
   .nav-link:hover { color: var(--text-bright); }
   .nav-link.active { color: var(--text-bright); border-bottom-color: var(--green); }
-  .nav-right { margin-left: auto; display: flex; align-items: center; }
+  .nav-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
   .nav-meta { font-size: 10px; color: var(--text-dim); }
+  .nav-logout {
+    background: none;
+    border: none;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 8px 4px;
+    transition: color 0.15s;
+  }
+  .nav-logout:hover { color: var(--red); }
 
   /* ── Scrollbar ────────────────────────────────────────── */
   ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -401,6 +416,7 @@
   <a href="live.html" class="nav-link active">Live Trading</a>
   <div class="nav-right">
     <span class="nav-meta" id="last-ref">—</span>
+    <button class="nav-logout" onclick="logout()">↪ logout</button>
   </div>
 </nav>
 
@@ -643,6 +659,11 @@
 <script>
 const API = window.location.origin;
 const $   = id => document.getElementById(id);
+
+async function logout() {
+  await fetch('/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
 
 // UTC clock
 function tick() {

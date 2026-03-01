@@ -544,6 +544,9 @@
     padding: 0 20px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 46px;
+    z-index: 90;
   }
   .nav-link {
     padding: 8px 16px;
@@ -557,6 +560,19 @@
   }
   .nav-link:hover { color: var(--text-bright); }
   .nav-link.active { color: var(--text-bright); border-bottom-color: var(--green); }
+  .nav-logout {
+    margin-left: auto;
+    background: none;
+    border: none;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 8px 4px;
+    transition: color 0.15s;
+  }
+  .nav-logout:hover { color: var(--red); }
 </style>
 </head>
 <body>
@@ -577,6 +593,7 @@
   <a href="index.html" class="nav-link active">Monitor</a>
   <a href="dry-run.html" class="nav-link">Signal Lab</a>
   <a href="live.html" class="nav-link">Live Trading</a>
+  <button class="nav-logout" onclick="logout()">↪ logout</button>
 </nav>
 
 <div class="layout">
@@ -768,6 +785,11 @@
 
 <script>
 const API = window.location.origin;
+
+async function logout() {
+  await fetch('/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
 
 // UTC clock
 setInterval(() => {
