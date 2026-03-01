@@ -27,6 +27,7 @@ Changes from original:
 """
 
 import os
+import random
 import sys
 import time
 import signal
@@ -34,6 +35,8 @@ import logging
 import sqlite3
 import subprocess
 from datetime import datetime, timezone, timedelta
+
+from fast_trader import backfill_trade_outcomes, run_redeemer
 
 # ─────────────────────────────────────────────
 # Config
@@ -245,6 +248,7 @@ def main():
     cycle       = 0
     last_resolve = datetime.now(timezone.utc)
     last_action  = "starting"
+    log.info(f"  Next resolve/backfill/redeem in 10 minutes")
 
     while _running:
         now = datetime.now(timezone.utc)
@@ -264,15 +268,19 @@ def main():
             ok = run_trader(dry=True)
             last_action = f"dry-run {'ok' if ok else 'err'} @ {now.strftime('%H:%M:%S')}"
 
-        # Resolve outcomes every 10 minutes
+        # Resolve outcomes, backfill trade log, and redeem winning positions every 10 minutes
         if (now - last_resolve).total_seconds() > 600:
             run_resolver()
+            backfill_trade_outcomes()
+            run_redeemer()
             last_resolve = now
 
         write_status(cycle, last_action, True)
 
         # Sleep with interrupt awareness
-        for _ in range(INTERVAL):
+        jitter = random.uniform(0, 10)  # 0-10s random jitter
+        sleep_total = INTERVAL + jitter
+        for _ in range(int(sleep_total)):
             if not _running:
                 break
             time.sleep(1)

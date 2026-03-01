@@ -292,6 +292,51 @@ def warm_import_cache(asset="BTC"):
         time.sleep(12)  # respect 6/min limit
 
 
+def run_redeemer():
+    """Check for redeemable positions and redeem them."""
+    try:
+        positions = get_client().get_positions()
+        from dataclasses import asdict
+        for p in positions:
+            pos = asdict(p)
+            if pos.get("redeemable"):
+                side = "yes" if pos.get("shares_yes", 0) > 0 else "no"
+                result = get_client().redeem(
+                    market_id=pos["market_id"],
+                    side=side
+                )
+                if result.get("success"):
+                    print(f"Redeemed {pos['question'][:40]} {side.upper()}")
+    except Exception as e:
+        print(f"Redeemer error: {e}")
+
+
+def backfill_trade_outcomes():
+    """Fetch trade history from Simmer and update local trade_log.json."""
+    result = _api_request(
+        "https://api.simmer.markets/api/sdk/trades?limit=200&venue=polymarket",
+        headers={"Authorization": f"Bearer {os.environ.get('SIMMER_API_KEY')}"}
+    )
+    simmer_trades = {t["id"]: t for t in result.get("trades", [])}
+
+    if not _TRADE_LOG_FILE.exists():
+        return
+
+    local_trades = json.loads(_TRADE_LOG_FILE.read_text())
+    updated = 0
+
+    for trade in local_trades:
+        tid = trade.get("trade_id")
+        if tid and tid in simmer_trades and trade.get("outcome") is None:
+            st = simmer_trades[tid]
+            # cost=0 means the market resolved against you
+            trade["pnl"] = round(st.get("cost", 0) - trade.get("position_size", 0), 4)
+            trade["outcome"] = "win" if trade["pnl"] > 0 else "loss"
+            updated += 1
+
+    if updated:
+        _TRADE_LOG_FILE.write_text(json.dumps(local_trades, indent=2))
+        print(f"  Backfilled {updated} trade outcomes", flush=True)
 # =============================================================================
 # API Helpers
 # =============================================================================
