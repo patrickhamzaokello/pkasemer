@@ -276,15 +276,6 @@ def _log_trade_local(trade_id, side, score, confidence, entry_price, position_si
     _TRADE_LOG_FILE.write_text(json.dumps(trades, indent=2))
 
 def warm_import_cache(asset="BTC"):
-    """
-    Pre-import the current and next 5m market slugs at startup.
-    Called once when the scheduler starts so that live trade cycles
-    always find a cached market_id and never hit the import endpoint
-    mid-signal.
-
-    Uses the same import quota tracking — skips if limit already reached.
-    Logs clearly so you can see what was cached vs skipped.
-    """
     from market_utils import get_fast_market_slugs
     slugs = get_fast_market_slugs(asset, include_next=True)
     print(f"  [cache warm] checking {len(slugs)} slugs for {asset}...", flush=True)
@@ -292,14 +283,13 @@ def warm_import_cache(asset="BTC"):
         if slug in _market_id_cache:
             print(f"  [cache warm] {slug[-19:]} already cached ✓", flush=True)
             continue
-        market_id, err = import_fast_market_market(slug)
+        # Single attempt only — no retries during warm
+        market_id, err = import_fast_market_market(slug, max_retries=1)
         if market_id:
-            print(f"  [cache warm] {slug[-19:]} imported → {market_id[:8]}... ✓", flush=True)
-        elif err == "429_rate_limited":
-            print(f"  [cache warm] {slug[-19:]} rate limited — will cache on first signal", flush=True)
+            print(f"  [cache warm] {slug[-19:]} imported ✓", flush=True)
         else:
             print(f"  [cache warm] {slug[-19:]} skipped: {err}", flush=True)
-        time.sleep(12)  # 6/min limit = 1 per 10s; 12s gives comfortable headroom
+        time.sleep(12)  # respect 6/min limit
 
 
 # =============================================================================

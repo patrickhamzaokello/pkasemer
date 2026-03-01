@@ -256,6 +256,7 @@ def main():
             last_action = f"collect {'ok' if ok else 'err'} @ {now.strftime('%H:%M:%S')}"
 
         if MODE in ("trade", "both"):
+            time.sleep(5) # small gap between collect and trade to avoid request bunching
             ok = run_trader(dry=False)
             last_action = f"trade {'ok' if ok else 'err'} @ {now.strftime('%H:%M:%S')}"
 
