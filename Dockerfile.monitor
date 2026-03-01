@@ -2,6 +2,8 @@ FROM python:3.11-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
 COPY requirements.monitor.txt .
+COPY create_user.py .
+COPY tests/ .
 RUN pip install --no-cache-dir -r requirements.monitor.txt
 RUN mkdir -p /app/logs
 # Python code is volume-mounted at runtime — no COPY needed
