@@ -62,7 +62,7 @@ TRADE_SOURCE = "sdk:fastloop"
 SMART_SIZING_PCT = 0.05
 MIN_SHARES_PER_ORDER = 5
 MIN_SCORE_TO_IMPORT = 0.65
-IMPORT_DAILY_LIMIT = 50           # Leave 1 buffer from the 10/day free tier
+IMPORT_DAILY_LIMIT = 1000           
 MIN_ENTRY_PRICE      = 0.35     # skip if market already priced in the move
 
 
