@@ -74,6 +74,10 @@ DB_PATH = os.environ.get("DB_PATH", os.path.join(_DATA_DIR, "signal_research.db"
 # BINANCE_TRADES      = "https://api.binance.com/api/v3/trades"
 # BINANCE_KLINES      = "https://api.binance.com/api/v3/klines"
 
+BINANCE_WS_SNAPSHOT = "https://api.binance.us/api/v3/depth"
+BINANCE_TRADES      = "https://api.binance.us/api/v3/trades"
+BINANCE_KLINES      = "https://api.binance.us/api/v3/klines"
+
 https://api.binance.us/api/v3/trades
 POLY_CLOB           = "https://clob.polymarket.com"
 GAMMA_API           = "https://gamma-api.polymarket.com"
