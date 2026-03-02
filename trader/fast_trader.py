@@ -314,14 +314,14 @@ def warm_import_cache(asset="BTC"):
     print(f"  [cache warm] checking {len(slugs)} slugs for {asset}...", flush=True)
     for slug in slugs:
         if slug in _market_id_cache:
-            print(f"  [cache warm] {slug[-19:]} already cached ✓", flush=True)
+            print(f"  [cache warm] {slug[-24:]} already cached ✓", flush=True)
             continue
         # Single attempt only — no retries during warm
         market_id, err = import_fast_market_market(slug, max_retries=1)
         if market_id:
-            print(f"  [cache warm] {slug[-19:]} imported ✓", flush=True)
+            print(f"  [cache warm] {slug[-24:]} imported ✓", flush=True)
         else:
-            print(f"  [cache warm] {slug[-19:]} skipped: {err}", flush=True)
+            print(f"  [cache warm] {slug[-24:]} skipped: {err}", flush=True)
         time.sleep(12)  # respect 6/min limit
 
 
