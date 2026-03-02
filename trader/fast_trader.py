@@ -678,7 +678,7 @@ def run_fast_market_strategy(
 
     end_time  = best.get("end_time")
     remaining = (end_time - datetime.now(timezone.utc)).total_seconds() if end_time else 0
-    slug_short = best.get("slug", "")[-19:]
+    slug_short = best.get("slug", "")[-24:]
 
     # Parse YES price; fall back to 0.5 only on genuine parse failure
     try:
