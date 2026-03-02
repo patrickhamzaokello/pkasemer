@@ -820,7 +820,7 @@ def run_fast_market_strategy(
     min_order_usdc = MIN_SHARES_PER_ORDER * ask_price  # 5 shares at ask price
 
     if position_size < min_order_usdc:
-        if remaining_budget >= min_order_usdc and min_order_usdc <= MAX_POSITION_USD:
+        if remaining_budget >= min_order_usdc:
             position_size = min_order_usdc  # bump up to meet minimum
         else:
             log(
