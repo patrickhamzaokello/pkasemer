@@ -383,8 +383,6 @@ def get_client():
     global _client
     if _client is None:
         try:
-            import sys as _sys; from pathlib import Path as _P
-            _sys.path.insert(0, str(_P(__file__).parent.parent))
             from polymarket_sdk import get_poly_client
         except ImportError as e:
             print(f"Error: polymarket_sdk not found. {e}")
