@@ -106,7 +106,7 @@ volumes:
 #
 # Switch to live trading:
 #   Set PKNWITQ_MODE=both (collect + trade simultaneously)
-#   Ensure SIMMER_API_KEY is set in .env
+#   Ensure POLY_PRIVATE_KEY and POLY_API_KEY are set in .env
 #   docker compose up -d collector
 #
 # Seed import cache (run when quota is exhausted):

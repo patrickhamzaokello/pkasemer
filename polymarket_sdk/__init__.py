@@ -40,6 +40,7 @@ from .poly_positions import get_positions, is_redeemable
 from .poly_portfolio import get_portfolio
 from .poly_history   import get_trade_history, build_trade_index
 from .poly_redeem    import redeem_position, redeem_all_redeemable, is_market_resolved
+from .poly_approve   import check_approvals, set_approvals
 
 __all__ = [
     # Main client (primary entry point)
@@ -65,6 +66,9 @@ __all__ = [
     "redeem_position",
     "redeem_all_redeemable",
     "is_market_resolved",
+    # One-time approval setup
+    "check_approvals",
+    "set_approvals",
 ]
 
 __version__ = "1.0.0"
