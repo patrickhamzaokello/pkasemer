@@ -12,7 +12,10 @@ Usage:
     python fast_trader.py --quiet      # Only output on trades/errors
 
 Requires:
-    SIMMER_API_KEY environment variable (get from simmer.markets/dashboard)
+    POLY_PRIVATE_KEY   Polygon wallet private key
+    POLY_API_KEY       Polymarket CLOB API key (or derived automatically)
+    POLY_API_SECRET    Polymarket CLOB API secret
+    POLY_API_PASSPHRASE  Polymarket CLOB API passphrase
 
 Changes from original:
     - Fixed import_fast_market_market(): result was fetched but never parsed —
@@ -322,7 +325,6 @@ def warm_import_cache(asset="BTC"):
             print(f"  [cache warm] {slug[-24:]} imported ✓", flush=True)
         else:
             print(f"  [cache warm] {slug[-24:]} skipped: {err}", flush=True)
-        time.sleep(12)  # respect 6/min limit
 
 
 def run_redeemer():
@@ -345,12 +347,12 @@ def run_redeemer():
 
 
 def backfill_trade_outcomes():
-    """Fetch trade history from Simmer and update local trade_log.json."""
-    result = _api_request(
-        "https://api.simmer.markets/api/sdk/trades?limit=200&venue=polymarket",
-        headers={"Authorization": f"Bearer {os.environ.get('SIMMER_API_KEY')}"}
-    )
-    simmer_trades = {t["id"]: t for t in result.get("trades", [])}
+    """Fetch trade history from Polymarket Data API and update local trade_log.json."""
+    try:
+        poly_trades = get_client().get_trade_history_index(limit=200)
+    except Exception as e:
+        print(f"  Backfill fetch error: {e}", flush=True)
+        return
 
     if not _TRADE_LOG_FILE.exists():
         return
@@ -360,12 +362,12 @@ def backfill_trade_outcomes():
 
     for trade in local_trades:
         tid = trade.get("trade_id")
-        if tid and tid in simmer_trades and trade.get("outcome") is None:
-            st = simmer_trades[tid]
-            # cost=0 means the market resolved against you
-            trade["pnl"] = round(st.get("cost", 0) - trade.get("position_size", 0), 4)
-            trade["outcome"] = "win" if trade["pnl"] > 0 else "loss"
-            updated += 1
+        if tid and tid in poly_trades and trade.get("outcome") is None:
+            pt = poly_trades[tid]
+            if pt.get("pnl") is not None:
+                trade["pnl"]     = round(pt["pnl"], 4)
+                trade["outcome"] = "win" if trade["pnl"] > 0 else "loss"
+                updated += 1
 
     if updated:
         _TRADE_LOG_FILE.write_text(json.dumps(local_trades, indent=2))
@@ -381,15 +383,13 @@ def get_client():
     global _client
     if _client is None:
         try:
-            from simmer_sdk import SimmerClient
-        except ImportError:
-            print("Error: simmer-sdk not installed. Run: pip install simmer-sdk")
+            import sys as _sys; from pathlib import Path as _P
+            _sys.path.insert(0, str(_P(__file__).parent.parent))
+            from polymarket_sdk import get_poly_client
+        except ImportError as e:
+            print(f"Error: polymarket_sdk not found. {e}")
             sys.exit(1)
-        api_key = os.environ.get("SIMMER_API_KEY")
-        if not api_key:
-            print("Error: SIMMER_API_KEY environment variable not set")
-            sys.exit(1)
-        _client = SimmerClient(api_key=api_key, venue="polymarket")
+        _client = get_poly_client()
     return _client
 
 
@@ -487,22 +487,20 @@ def get_momentum(asset="BTC", source="binance", lookback=5):
 
 
 # =============================================================================
-# Simmer API: Import & Trade
+# Polymarket API: Import & Trade
 # =============================================================================
 
 def import_fast_market_market(slug, max_retries=1):
     """
-    Import a Polymarket market via Simmer SDK.
+    Resolve a Polymarket market slug to a condition_id via polymarket_sdk.
 
     Returns (market_id, None) on success or (None, error_str) on failure.
-    Cache hits are returned immediately without consuming the import quota.
+    Cache hits are returned immediately without an API call.
 
-    Retries up to max_retries times on 429 with exponential backoff:
+    Retries up to max_retries times on rate errors with exponential backoff:
       attempt 1: wait 10s
       attempt 2: wait 20s
       attempt 3: wait 40s
-    After all retries exhausted returns (None, "429_rate_limited") so the
-    caller can log it as a soft skip rather than a hard error.
     """
     global _market_id_cache
 

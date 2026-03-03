@@ -15,7 +15,7 @@ Environment variables:
   PKNWITQ_INTERVAL     seconds between cycles (default: 20)
   PKNWITQ_ASSET        BTC | ETH | SOL (default: BTC)
   PKNWITQ_WINDOW       5m | 15m (default: 5m)
-  SIMMER_API_KEY        required for trade/both modes
+  POLY_PRIVATE_KEY      required for trade/both modes
   LOG_LEVEL             INFO | DEBUG (default: INFO)
 
 Changes from original:
@@ -124,10 +124,9 @@ def run_cache_warm():
     """
     Pre-import current + next 5m market slugs before the trade loop starts.
 
-    This is the fix for "Rate limited — will retry next cycle" appearing on
-    every trade attempt. Without this, the cache is empty on startup and
-    every cycle tries to import from scratch, immediately hitting the
-    6/min rate limit on the Simmer import endpoint.
+    Pre-resolves slugs → condition_ids via Gamma/CLOB API before cycle 1.
+    Without this, the cache is empty on startup and every cycle makes
+    API calls to resolve the same slugs.
 
     With this, the cache is populated before cycle 1 runs. Subsequent cycles
     find the slug in cache and never touch the import endpoint.
@@ -241,8 +240,6 @@ def main():
     log.info("=" * 60)
 
     # ── Startup: warm the market ID cache before cycle 1 ─────────────────────
-    # Without this, every trade cycle imports from scratch and hits the
-    # 6/min rate limit on the Simmer import endpoint.
     run_cache_warm()
 
     cycle       = 0
