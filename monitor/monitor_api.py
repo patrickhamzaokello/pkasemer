@@ -740,7 +740,7 @@ def import_status():
         "current_cached":  False,
         "next_cached":     False,
         "imports_today":   0,
-        "import_limit":    50,
+        "import_limit":    "Infinite" if CONFIG.get("daily_import_limit") is None else CONFIG.get("daily_import_limit"),
         "spend_exists":    False,
         "spent_today":     0.0,
         "trades_today":    0,

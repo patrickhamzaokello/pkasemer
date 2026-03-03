@@ -9,6 +9,7 @@
   "signal_source": "binance",
   "volume_confidence": false,
   "daily_budget": 20.0,
+  "daily_import_limit": 1000.0,
   "composite_threshold": 0.62,
   "webhook_url": "",
   "signal_weights": {
