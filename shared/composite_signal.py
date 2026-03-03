@@ -113,6 +113,7 @@ def normalize_momentum_5m(m, clip_pct=1.0):
     """
     5m momentum in percent. Clip to ±1.0%, then sigmoid to (0,1).
     A ±1% move over 5m is large; clip prevents extreme outliers dominating.
+    
     """
     if m is None:
         return None
