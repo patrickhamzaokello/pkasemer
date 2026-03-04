@@ -816,14 +816,24 @@ def run_fast_market_strategy(
     min_order_usdc = MIN_SHARES_PER_ORDER * ask_price  # 5 shares at ask price
 
     if position_size < min_order_usdc:
-        if remaining_budget >= min_order_usdc:
+        if remaining_budget >= min_order_usdc and min_order_usdc <= MAX_POSITION_USD:
             position_size = min_order_usdc  # bump up to meet minimum
         else:
+            reason = []
+            if remaining_budget < min_order_usdc:
+                reason.append(
+                    f"insufficient budget (${remaining_budget:.2f} < ${min_order_usdc:.2f})"
+                )
+            if min_order_usdc > MAX_POSITION_USD:
+                reason.append(
+                    f"exceeds max position (${min_order_usdc:.2f} > ${MAX_POSITION_USD:.2f})"
+                )
+
             log(
                 f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
                 f"score={score:.3f} → {side.upper()} BLOCK: "
-                f"can't meet {MIN_SHARES_PER_ORDER}-share min ${min_order_usdc:.2f} "
-                f"(budget=${remaining_budget:.2f})"
+                f"min {MIN_SHARES_PER_ORDER} shares = ${min_order_usdc:.2f} | "
+                + " & ".join(reason)
             )
             return
 
