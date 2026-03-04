@@ -70,7 +70,7 @@ def _get_usdc_balance() -> float:
         client = get_clob_client()
         params = BalanceAllowanceParams(
             asset_type=_USDC_ASSET_TYPE,
-            signature_type=1,          # EOA wallet (0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE)
+            signature_type=0,          # EOA wallet (0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE)
         )
         resp = client.get_balance_allowance(params)
 

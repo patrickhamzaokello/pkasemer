@@ -61,13 +61,28 @@ def _build_client() -> ClobClient:
     api_passphrase = os.environ.get("POLY_API_PASSPHRASE", "").strip()
     funder         = os.environ.get("POLY_FUNDER", "").strip() or None
 
-    creds = None
     if api_key and api_secret and api_passphrase:
         creds = ApiCreds(
             api_key=api_key,
             api_secret=api_secret,
             api_passphrase=api_passphrase,
         )
+    else:
+        # Auto-derive L2 credentials from the L1 wallet key.
+        # This makes a signed request to the CLOB — save the output to .env
+        # (POLY_API_KEY / POLY_API_SECRET / POLY_API_PASSPHRASE) to skip this
+        # on every startup.
+        print("[poly_auth] POLY_API_KEY not set — deriving L2 credentials from wallet key...")
+        temp  = ClobClient(host=CLOB_HOST, chain_id=chain_id, key=private_key)
+        raw   = temp.create_or_derive_api_creds()
+        _key  = raw.api_key        if hasattr(raw, "api_key")        else raw["api_key"]
+        _sec  = raw.api_secret     if hasattr(raw, "api_secret")     else raw["api_secret"]
+        _pass = raw.api_passphrase if hasattr(raw, "api_passphrase") else raw["api_passphrase"]
+        creds = ApiCreds(api_key=_key, api_secret=_sec, api_passphrase=_pass)
+        print("[poly_auth] L2 credentials derived. Add these to your .env to skip this step:")
+        print(f"  POLY_API_KEY={_key}")
+        print(f"  POLY_API_SECRET={_sec}")
+        print(f"  POLY_API_PASSPHRASE={_pass}")
 
     client = ClobClient(
         host=CLOB_HOST,
