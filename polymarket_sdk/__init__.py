@@ -41,6 +41,7 @@ from .poly_portfolio import get_portfolio
 from .poly_history   import get_trade_history, build_trade_index
 from .poly_redeem    import redeem_position, redeem_all_redeemable, is_market_resolved
 from .poly_approve   import check_approvals, set_approvals
+from .poly_export    import export_trades
 
 __all__ = [
     # Main client (primary entry point)
@@ -69,6 +70,8 @@ __all__ = [
     # One-time approval setup
     "check_approvals",
     "set_approvals",
+    # CSV export
+    "export_trades",
 ]
 
 __version__ = "1.0.0"
