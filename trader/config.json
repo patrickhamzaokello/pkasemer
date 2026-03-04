@@ -12,7 +12,7 @@
   "daily_import_limit": 1000.0,
   "composite_threshold": 0.62,
   "webhook_url": "",
-  "telegramlink": "",
+  "telegramlink": "configure bot",
   "signal_weights": {
     "btc_vs_reference":      0.380,
     "vol_adjusted_momentum": 0.155,
