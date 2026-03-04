@@ -8,7 +8,7 @@
   "window": "5m",
   "signal_source": "binance",
   "volume_confidence": false,
-  "daily_budget": 40.0,
+  "daily_budget": 1000.0,
   "daily_import_limit": 1000.0,
   "composite_threshold": 0.62,
   "webhook_url": "",
