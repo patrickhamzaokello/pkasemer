@@ -257,28 +257,31 @@ def redeem_position(
 
         # indexSets: 1 = YES (binary 01 = first partition), 2 = NO (binary 10)
         index_sets     = [1, 2]
-        index_set_val  = index_sets[0]
 
         parent_collection_id = b"\x00" * 32  # bytes32(0) for top-level market
 
         # Pre-check: verify wallet holds tokens before submitting tx.
         # Attempting redeemPositions with a zero balance reverts on-chain.
         try:
-            collection_id = ctf.functions.getCollectionId(
-                parent_collection_id, cid, index_set_val
-            ).call()
-            position_id = ctf.functions.getPositionId(
-                w3.to_checksum_address(USDC_POLYGON_ADDR), collection_id
-            ).call()
-            balance = ctf.functions.balanceOf(address, position_id).call()
-            if balance == 0:
+            has_tokens = False
+            for idx in [1, 2]:
+                collection_id = ctf.functions.getCollectionId(
+                    parent_collection_id, cid, idx
+                ).call()
+                position_id = ctf.functions.getPositionId(
+                    w3.to_checksum_address(USDC_POLYGON_ADDR), collection_id
+                ).call()
+                balance = ctf.functions.balanceOf(address, position_id).call()
+                if balance > 0:
+                    has_tokens = True
+                    label = "YES" if idx == 1 else "NO"
+                    print(f"  {label} token balance: {balance / 1e6:.4f} shares", flush=True)
+
+            if not has_tokens:
                 return {
                     "success": False,
                     "tx_hash": None,
-                    "error": (
-                        f"No {side.upper()} tokens in wallet (balance=0) — "
-                        "position already redeemed or tokens held elsewhere"
-                    ),
+                    "error": "No tokens in wallet (balance=0) — already redeemed or held elsewhere",
                 }
             print(f"  Token balance: {balance / 1e6:.4f} shares — proceeding", flush=True)
         except Exception as bal_err:
