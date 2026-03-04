@@ -118,5 +118,13 @@
     "question": "Bitcoin Up or Down - March 3, 7:05PM-7:10PM ET",
     "end_time": "2026-03-04T00:10:00Z",
     "slug": "btc-updown-5m-1772582700"
+  },
+  "btc-updown-5m-1772583300": {
+    "condition_id": "0x7c4db52e5a13abe92b7e4338201c4acb89f552634653cda91be8a5f0481219ac",
+    "yes_token_id": "79826054189496926308419386889201124257160188476224872514554972322856312710460",
+    "no_token_id": "45522147612727420928421558736499896904511677251417583024330828807293283554808",
+    "question": "Bitcoin Up or Down - March 3, 7:15PM-7:20PM ET",
+    "end_time": "2026-03-04T00:20:00Z",
+    "slug": "btc-updown-5m-1772583300"
   }
 }
