@@ -11,7 +11,7 @@ This is an ON-CHAIN TRANSACTION — it costs a small amount of MATIC for gas.
 The wallet (POLY_PRIVATE_KEY) must have MATIC for gas fees.
 
 Contract addresses (Polygon mainnet, chain_id=137):
-  ConditionalTokens (CTF): 0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E
+  ConditionalTokens (CTF): 0x4D97DCd97eC945f40cF65F87097ACe5EA0476045
   USDC (PolyUSDC / USDC.e): 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
 
 Usage:
@@ -31,7 +31,7 @@ import os
 from typing import Any
 
 # CTF (ConditionalTokens) contract address on Polygon
-CONDITIONAL_TOKENS_ADDR = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
+CONDITIONAL_TOKENS_ADDR = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
 USDC_POLYGON_ADDR       = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
 CHAIN_ID                = 137
 
@@ -256,7 +256,7 @@ def redeem_position(
         cid = _normalise_condition_id(condition_id, w3)
 
         # indexSets: 1 = YES (binary 01 = first partition), 2 = NO (binary 10)
-        index_sets     = [1] if side.lower() == "yes" else [2]
+        index_sets     = [1, 2]
         index_set_val  = index_sets[0]
 
         parent_collection_id = b"\x00" * 32  # bytes32(0) for top-level market
