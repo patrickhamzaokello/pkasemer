@@ -9,6 +9,9 @@ Added endpoints:
   /api/logs          — tail scheduler.log for live activity feed
   /api/cycle-feed    — last N cycles with signal + decision summary
   /api/import-status — cache file state + daily quota usage
+  /api/poly-metrics  — real P&L, win rate, YES/NO breakdown from Polymarket
+  /api/poly-trades   — full trade history from Polymarket Data API (paginated)
+  /api/poly-positions— current open positions from Polymarket
 """
 
 import os
@@ -17,7 +20,10 @@ import json
 import sqlite3
 import math
 import re
+import threading
 from datetime import datetime, timezone, timedelta
+from urllib.request import urlopen, Request as _URLRequest
+from urllib.error import HTTPError, URLError
 from flask import Flask, jsonify, send_from_directory, request, session, redirect, Response, stream_with_context
 from flask_cors import CORS
 from werkzeug.security import check_password_hash
@@ -592,6 +598,292 @@ def pnl_summary():
         "win_rate":        round(wins / len(resolved), 4) if resolved else None,
         "resolved_trades": len(resolved),
     })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Polymarket Data API — real trade history, positions, metrics
+# ─────────────────────────────────────────────────────────────────────────────
+
+_POLY_DATA_API  = "https://data-api.polymarket.com"
+_POLY_CACHE_TTL = 120   # seconds between refreshes
+_poly_cache: dict = {}
+_poly_cache_lock = threading.Lock()
+
+
+def _poly_http(url: str, timeout: int = 20):
+    try:
+        req = _URLRequest(url, headers={"User-Agent": "polymarket-monitor/1.0"})
+        with urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except HTTPError as e:
+        try:
+            return {"error": json.loads(e.read().decode()).get("detail", str(e))}
+        except Exception:
+            return {"error": str(e)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _poly_cached(key: str, url: str):
+    with _poly_cache_lock:
+        entry = _poly_cache.get(key)
+    if entry and (_time.time() - entry["ts"]) < _POLY_CACHE_TTL:
+        return entry["data"]
+    data = _poly_http(url)
+    with _poly_cache_lock:
+        _poly_cache[key] = {"ts": _time.time(), "data": data}
+    return data
+
+
+def _poly_wallet():
+    """Resolve wallet address from environment variables."""
+    for var in ("POLY_FUNDER", "POLY_WALLET_ADDRESS"):
+        v = os.environ.get(var, "").strip()
+        if v:
+            return v
+    pk = os.environ.get("POLY_PRIVATE_KEY", "").strip()
+    if pk:
+        try:
+            from eth_account import Account
+            if not pk.startswith("0x"):
+                pk = "0x" + pk
+            return Account.from_key(pk).address
+        except Exception:
+            pass
+    return None
+
+
+def _fetch_all_activity(address: str) -> list:
+    """Paginate through all /activity records for an address (cached)."""
+    cache_key = f"activity:{address}"
+    with _poly_cache_lock:
+        entry = _poly_cache.get(cache_key)
+    if entry and (_time.time() - entry["ts"]) < _POLY_CACHE_TTL:
+        return entry["data"]
+
+    all_records, offset, page_size = [], 0, 500
+    while True:
+        url = f"{_POLY_DATA_API}/activity?user={address}&limit={page_size}&offset={offset}"
+        result = _poly_http(url)
+        if not result or (isinstance(result, dict) and result.get("error")):
+            break
+        page = result if isinstance(result, list) else result.get("history", [])
+        if not page:
+            break
+        all_records.extend(page)
+        if len(page) < page_size:
+            break
+        offset += page_size
+
+    with _poly_cache_lock:
+        _poly_cache[cache_key] = {"ts": _time.time(), "data": all_records}
+    return all_records
+
+
+def _ts_to_iso(ts) -> str:
+    if not ts:
+        return ""
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return str(ts)
+
+
+def _normalise_activity(raw: dict) -> dict | None:
+    trade_type = (raw.get("type") or "TRADE").upper()
+    if trade_type not in ("TRADE", "REDEMPTION", "REDEEM"):
+        return None
+    outcome    = raw.get("outcome") or ""
+    side       = outcome.lower() if outcome else "yes"
+    shares     = float(raw.get("shares")  or raw.get("size")    or 0)
+    price      = float(raw.get("price")   or 0)
+    amount     = float(raw.get("amount")  or raw.get("usdcSize") or (shares * price))
+    timestamp  = int(raw.get("timestamp") or raw.get("createdAt") or 0)
+    payout_raw = raw.get("payout")
+    resolved   = bool(raw.get("marketClosed") or raw.get("closed") or raw.get("resolved"))
+    pnl = None
+    if resolved and payout_raw is not None:
+        try:
+            pnl = round(float(payout_raw) - amount, 4)
+        except Exception:
+            pass
+    result_label = None
+    if pnl is not None:
+        result_label = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAK_EVEN")
+    elif resolved:
+        result_label = "RESOLVED"
+    return {
+        "trade_id":        raw.get("id") or raw.get("transactionHash") or "",
+        "condition_id":    raw.get("conditionId") or raw.get("market") or "",
+        "token_id":        raw.get("asset") or "",
+        "question":        raw.get("title") or raw.get("question") or "",
+        "side":            side,
+        "type":            trade_type,
+        "shares":          round(shares, 4),
+        "price":           round(price, 4),
+        "amount_paid":     round(amount, 4),
+        "timestamp":       timestamp,
+        "timestamp_iso":   _ts_to_iso(timestamp),
+        "market_resolved": resolved,
+        "payout":          float(payout_raw) if payout_raw is not None else None,
+        "pnl":             pnl,
+        "result":          result_label,
+    }
+
+
+@app.route("/api/poly-metrics")
+def poly_metrics():
+    """
+    Real performance metrics computed from Polymarket trade history.
+    Win rate, total P&L, by-side breakdown, unrealized P&L from open positions.
+    Cached for 120 s to avoid hammering the Data API.
+    """
+    address = _poly_wallet()
+    if not address:
+        return jsonify({"error": "Wallet address not configured — set POLY_PRIVATE_KEY or POLY_FUNDER"}), 200
+
+    try:
+        # Activity (all pages, cached)
+        raw_records = _fetch_all_activity(address)
+        trades = [t for raw in raw_records for t in [_normalise_activity(raw)] if t]
+
+        # Positions (cached)
+        pos_url = f"{_POLY_DATA_API}/positions?user={address}&sizeThreshold=0.01&limit=500"
+        pos_result = _poly_cached(f"positions:{address}", pos_url)
+        positions = pos_result if isinstance(pos_result, list) else \
+                    (pos_result.get("positions", []) if isinstance(pos_result, dict) else [])
+
+        active_cids = {
+            p.get("conditionId") or p.get("market", "")
+            for p in positions
+            if not p.get("closed") and float(p.get("size", 0) or 0) > 0.01
+        }
+
+        # Unrealized P&L from open positions
+        unrealized = sum(
+            float(p.get("currentValue") or 0) - float(p.get("initialValue") or 0)
+            for p in positions
+            if not p.get("closed") and float(p.get("size", 0) or 0) > 0.01
+        )
+
+        closed_pnl = [t for t in trades if t["condition_id"] not in active_cids and t["pnl"] is not None]
+        open_trades = [t for t in trades if t["condition_id"] in active_cids]
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today_closed = [t for t in closed_pnl if t["timestamp_iso"][:10] == today]
+
+        total_pnl  = sum(t["pnl"] for t in closed_pnl)
+        today_pnl  = sum(t["pnl"] for t in today_closed)
+        wins       = [t for t in closed_pnl if t["pnl"] > 0]
+        losses     = [t for t in closed_pnl if t["pnl"] < 0]
+
+        yes_trades = [t for t in closed_pnl if t["side"] == "yes"]
+        no_trades  = [t for t in closed_pnl if t["side"] == "no"]
+        yes_wins   = [t for t in yes_trades if t["pnl"] > 0]
+        no_wins    = [t for t in no_trades  if t["pnl"] > 0]
+
+        best  = max(closed_pnl, key=lambda t: t["pnl"])  if closed_pnl else None
+        worst = min(closed_pnl, key=lambda t: t["pnl"])  if closed_pnl else None
+
+        return jsonify({
+            "address":            address,
+            "total_trades":       len(trades),
+            "resolved_trades":    len(closed_pnl),
+            "open_positions":     len(active_cids),
+            "total_pnl":          round(total_pnl, 4),
+            "today_pnl":          round(today_pnl, 4),
+            "today_trades":       len(today_closed),
+            "unrealized_pnl":     round(unrealized, 4),
+            "win_count":          len(wins),
+            "loss_count":         len(losses),
+            "win_rate":           round(len(wins) / len(closed_pnl), 4) if closed_pnl else None,
+            "avg_pnl":            round(total_pnl / len(closed_pnl), 4) if closed_pnl else None,
+            "best_trade_pnl":     round(best["pnl"],  4) if best  else None,
+            "worst_trade_pnl":    round(worst["pnl"], 4) if worst else None,
+            "yes_total":          len(yes_trades),
+            "yes_wins":           len(yes_wins),
+            "yes_win_rate":       round(len(yes_wins) / len(yes_trades), 4) if yes_trades else None,
+            "no_total":           len(no_trades),
+            "no_wins":            len(no_wins),
+            "no_win_rate":        round(len(no_wins) / len(no_trades), 4) if no_trades else None,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/poly-trades")
+def poly_trades():
+    """
+    Full trade history from Polymarket Data API with active/closed status.
+    Paginated internally; result is cached for 120 s.
+    """
+    address = _poly_wallet()
+    if not address:
+        return jsonify({"error": "Wallet address not configured", "trades": [], "total": 0}), 200
+
+    try:
+        raw_records = _fetch_all_activity(address)
+        trades = [t for raw in raw_records for t in [_normalise_activity(raw)] if t]
+
+        pos_url = f"{_POLY_DATA_API}/positions?user={address}&sizeThreshold=0.01&limit=500"
+        pos_result = _poly_cached(f"positions:{address}", pos_url)
+        positions = pos_result if isinstance(pos_result, list) else \
+                    (pos_result.get("positions", []) if isinstance(pos_result, dict) else [])
+
+        active_cids = {
+            p.get("conditionId") or p.get("market", "")
+            for p in positions
+            if not p.get("closed") and float(p.get("size", 0) or 0) > 0.01
+        }
+
+        for t in trades:
+            t["status"] = "active" if t["condition_id"] in active_cids else "closed"
+
+        return jsonify({"trades": trades, "total": len(trades)})
+    except Exception as e:
+        return jsonify({"error": str(e), "trades": [], "total": 0}), 500
+
+
+@app.route("/api/poly-positions")
+def poly_positions_endpoint():
+    """Current open positions from Polymarket (cached 60 s)."""
+    address = _poly_wallet()
+    if not address:
+        return jsonify({"error": "Wallet address not configured", "positions": [], "total": 0}), 200
+
+    try:
+        url = f"{_POLY_DATA_API}/positions?user={address}&sizeThreshold=0.01&limit=500"
+        result = _poly_cached(f"positions:{address}", url)
+        if isinstance(result, dict) and result.get("error"):
+            return jsonify({"error": result["error"], "positions": [], "total": 0}), 200
+
+        positions = result if isinstance(result, list) else result.get("positions", [])
+        out = []
+        for p in positions:
+            if not p:
+                continue
+            outcome  = (p.get("outcome") or "").lower()
+            size     = float(p.get("size") or 0)
+            avg_px   = float(p.get("avgPrice") or p.get("avg_price") or 0.5)
+            init_val = float(p.get("initialValue") or (size * avg_px))
+            cur_val  = float(p.get("currentValue") or init_val)
+            out.append({
+                "condition_id":   p.get("conditionId") or p.get("market") or "",
+                "question":       p.get("title") or p.get("question") or "",
+                "side":           outcome or "yes",
+                "size":           round(size, 4),
+                "entry_price":    round(avg_px, 4),
+                "current_price":  round(float(p.get("curPrice") or avg_px), 4),
+                "initial_value":  round(init_val, 4),
+                "current_value":  round(cur_val, 4),
+                "unrealized_pnl": round(cur_val - init_val, 4),
+                "redeemable":     bool(p.get("redeemable", False)),
+                "closed":         bool(p.get("closed", False)),
+                "end_date":       p.get("endDate") or "",
+            })
+        return jsonify({"positions": out, "total": len(out)})
+    except Exception as e:
+        return jsonify({"error": str(e), "positions": [], "total": 0}), 500
 
 
 # ─────────────────────────────────────────────────────────────────────────────

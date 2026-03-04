@@ -564,9 +564,38 @@
         <div class="stat-card-sub">awaiting resolve</div>
       </div>
       <div class="stat-card red-top">
-        <div class="stat-card-label">Score: Win / Loss</div>
-        <div class="stat-card-value" id="b-scores" style="color:var(--text-dim);font-size:16px">—</div>
-        <div class="stat-card-sub">avg signal score</div>
+        <div class="stat-card-label">Unrealized P&amp;L</div>
+        <div class="stat-card-value" id="b-unrealized" style="color:var(--text-dim)">—</div>
+        <div class="stat-card-sub" id="b-open-pos-sub">open positions</div>
+      </div>
+    </div>
+
+    <!-- Polymarket side breakdown row -->
+    <div class="stats-strip" style="margin-top:8px">
+      <div class="stat-card" style="border-top:2px solid var(--green)">
+        <div class="stat-card-label">YES Win Rate</div>
+        <div class="stat-card-value" id="pm-yes-wr" style="color:var(--text-dim)">—</div>
+        <div class="stat-card-sub" id="pm-yes-sub">— trades</div>
+      </div>
+      <div class="stat-card" style="border-top:2px solid var(--red)">
+        <div class="stat-card-label">NO Win Rate</div>
+        <div class="stat-card-value" id="pm-no-wr" style="color:var(--text-dim)">—</div>
+        <div class="stat-card-sub" id="pm-no-sub">— trades</div>
+      </div>
+      <div class="stat-card" style="border-top:2px solid var(--cyan)">
+        <div class="stat-card-label">Avg P&amp;L / Trade</div>
+        <div class="stat-card-value" id="pm-avg-pnl" style="color:var(--text-dim)">—</div>
+        <div class="stat-card-sub" id="pm-resolved-sub">— resolved</div>
+      </div>
+      <div class="stat-card" style="border-top:2px solid var(--green)">
+        <div class="stat-card-label">Best Trade</div>
+        <div class="stat-card-value" id="pm-best" style="color:var(--green)">—</div>
+        <div class="stat-card-sub">all time</div>
+      </div>
+      <div class="stat-card" style="border-top:2px solid var(--red)">
+        <div class="stat-card-label">Worst Trade</div>
+        <div class="stat-card-value" id="pm-worst" style="color:var(--red)">—</div>
+        <div class="stat-card-sub">all time</div>
       </div>
     </div>
 
@@ -615,17 +644,6 @@
           <button class="tab"        id="tab-won"   onclick="setTab('won')">Won</button>
           <button class="tab"        id="tab-lost"  onclick="setTab('lost')">Lost</button>
         </div>
-      </div>
-
-      <!-- Accuracy bar -->
-      <div class="acc-bar-wrap" id="acc-wrap" style="display:none">
-        <span class="acc-lbl" id="acc-yes-lbl">YES —</span>
-        <div class="acc-track">
-          <div class="acc-yes" id="acc-yes" style="width:50%"></div>
-          <div class="acc-no"  id="acc-no"  style="width:50%"></div>
-        </div>
-        <span class="acc-lbl r" id="acc-no-lbl">NO —</span>
-        <span class="acc-note" id="acc-note">—</span>
       </div>
 
       <!-- P&L chart -->
@@ -693,6 +711,52 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- ── Polymarket Trades ──────────────────────────────── -->
+    <div class="panel" style="margin-top:14px">
+      <div class="panel-header">
+        <div class="panel-title">Polymarket Trade History <span style="color:var(--text-dim);font-size:10px;margin-left:6px">live from chain</span></div>
+        <div class="tab-bar">
+          <button class="tab active" id="ptab-all"    onclick="setPTab('all')">All</button>
+          <button class="tab"        id="ptab-active" onclick="setPTab('active')">Active</button>
+          <button class="tab"        id="ptab-closed" onclick="setPTab('closed')">Closed</button>
+          <button class="tab"        id="ptab-won"    onclick="setPTab('won')">Won</button>
+          <button class="tab"        id="ptab-lost"   onclick="setPTab('lost')">Lost</button>
+        </div>
+      </div>
+
+      <!-- Accuracy bar for Polymarket YES vs NO -->
+      <div class="acc-bar-wrap" id="pm-acc-wrap" style="display:none">
+        <span class="acc-lbl" id="pm-acc-yes-lbl">YES —</span>
+        <div class="acc-track">
+          <div class="acc-yes" id="pm-acc-yes" style="width:50%"></div>
+          <div class="acc-no"  id="pm-acc-no"  style="width:50%"></div>
+        </div>
+        <span class="acc-lbl r" id="pm-acc-no-lbl">NO —</span>
+        <span class="acc-note"  id="pm-acc-note">—</span>
+      </div>
+
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr>
+            <th style="width:18px"></th>
+            <th>Date / Time (UTC)</th>
+            <th>Market</th>
+            <th>Side</th>
+            <th class="r">Shares</th>
+            <th class="r">Entry</th>
+            <th class="r">Spent (USDC)</th>
+            <th class="r">Payout</th>
+            <th class="r">P&amp;L</th>
+            <th class="r">Status</th>
+          </tr></thead>
+          <tbody id="ptbl-body">
+            <tr><td colspan="10" style="padding:30px;text-align:center;color:var(--text-dim)"><span class="spinner"></span>loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:8px 14px;font-size:10px;color:var(--text-dim)" id="ptbl-footer">—</div>
     </div>
 
   </div>
@@ -853,7 +917,7 @@ async function fetchLog() {
   } catch(e) {}
 }
 
-// ── Trades ─────────────────────────────────────────────────
+// ── Trades (local log) ────────────────────────────────────
 let _trades = [], _tab = 'all';
 
 function setTab(tab) {
@@ -864,56 +928,177 @@ function setTab(tab) {
 
 async function fetchTrades() {
   try {
-    const [tData, aData, pData] = await Promise.all([
-      fetch(`${API}/api/trades`).then(r => r.json()),
-      fetch(`${API}/api/accuracy`).then(r => r.json()),
-      fetch(`${API}/api/pnl-summary`).then(r => r.json()),
-    ]);
+    const tData = await fetch(`${API}/api/trades`).then(r => r.json());
     _trades = Array.isArray(tData) ? tData : [];
-
-    // Stat cards
-    const tp = $('b-today-pnl');
-    tp.textContent = dollar(pData.today_pnl);
-    tp.style.color = pcol(pData.today_pnl);
-    $('b-today-n').textContent = (pData.today_trades || 0) + ' trades today';
-
-    const ap = $('b-total-pnl');
-    ap.textContent = dollar(pData.total_pnl);
-    ap.style.color = pcol(pData.total_pnl);
-    $('b-total-n').textContent = (pData.total_trades || 0) + ' all time';
-
-    const wrE = $('b-wr');
-    if (aData.win_rate != null) {
-      const w = aData.win_rate;
-      wrE.textContent = Math.round(w * 100) + '%';
-      wrE.style.color = w > 0.56 ? 'var(--green)' : w < 0.45 ? 'var(--red)' : 'var(--amber)';
-      $('b-wr-sub').textContent = aData.correct + '/' + aData.total + ' resolved';
-    } else { wrE.textContent = '—'; }
-
-    const openN = _trades.filter(t => !t.resolved || !t.outcome).length;
-    const oe    = $('b-open');
-    oe.textContent = openN;
-    oe.style.color = openN > 0 ? 'var(--cyan)' : 'var(--text-dim)';
-
-    if (aData.avg_score_correct != null || aData.avg_score_wrong != null) {
-      $('b-scores').textContent =
-        (aData.avg_score_correct || 0).toFixed(3) + ' / ' + (aData.avg_score_wrong || 0).toFixed(3);
-    }
-
-    // Accuracy bar
-    if (aData.total > 0) {
-      $('acc-wrap').style.display = 'flex';
-      const y = aData.yes_total || 0, n = aData.no_total || 0, tot = y + n || 1;
-      $('acc-yes').style.width    = (y / tot * 100).toFixed(1) + '%';
-      $('acc-no').style.width     = (n / tot * 100).toFixed(1) + '%';
-      $('acc-yes-lbl').textContent = 'YES ' + (aData.yes_wr != null ? Math.round(aData.yes_wr * 100) + '% WR' : '—') + ' (' + y + ')';
-      $('acc-no-lbl').textContent  = 'NO '  + (aData.no_wr  != null ? Math.round(aData.no_wr  * 100) + '% WR' : '—') + ' (' + n + ')';
-      $('acc-note').textContent    = aData.total + ' resolved · overall ' + Math.round(aData.win_rate * 100) + '%';
-    }
-
     drawPnl(_trades.filter(t => t.trade_result != null).slice().reverse());
     renderTrades();
   } catch(e) { console.error('fetchTrades', e); }
+}
+
+// ── Polymarket real metrics & trades ──────────────────────
+let _polyTrades = [], _pTab = 'all';
+
+function setPTab(tab) {
+  _pTab = tab;
+  ['all','active','closed','won','lost'].forEach(t => $('ptab-' + t).classList.toggle('active', t === tab));
+  renderPolyTrades();
+}
+
+async function fetchPolyMetrics() {
+  try {
+    const d = await fetch(`${API}/api/poly-metrics`).then(r => r.json());
+    if (d.error) {
+      // Fallback to local pnl-summary if poly not configured
+      const [pData, aData] = await Promise.all([
+        fetch(`${API}/api/pnl-summary`).then(r => r.json()),
+        fetch(`${API}/api/accuracy`).then(r => r.json()),
+      ]);
+      const tp = $('b-today-pnl');
+      tp.textContent = dollar(pData.today_pnl);
+      tp.style.color = pcol(pData.today_pnl);
+      $('b-today-n').textContent = (pData.today_trades || 0) + ' trades today';
+      const ap = $('b-total-pnl');
+      ap.textContent = dollar(pData.total_pnl);
+      ap.style.color = pcol(pData.total_pnl);
+      $('b-total-n').textContent = (pData.total_trades || 0) + ' all time';
+      const wrE = $('b-wr');
+      if (aData.win_rate != null) {
+        const w = aData.win_rate;
+        wrE.textContent = Math.round(w * 100) + '%';
+        wrE.style.color = w > 0.56 ? 'var(--green)' : w < 0.45 ? 'var(--red)' : 'var(--amber)';
+        $('b-wr-sub').textContent = (aData.correct||0) + '/' + (aData.total||0) + ' resolved';
+      }
+      return;
+    }
+
+    // ── Stat strip (top row) ──────────────────────────────
+    const tp = $('b-today-pnl');
+    tp.textContent = dollar(d.today_pnl);
+    tp.style.color = pcol(d.today_pnl);
+    $('b-today-n').textContent = (d.today_trades || 0) + ' trades today';
+
+    const ap = $('b-total-pnl');
+    ap.textContent = dollar(d.total_pnl);
+    ap.style.color = pcol(d.total_pnl);
+    $('b-total-n').textContent = (d.total_trades || 0) + ' all time';
+
+    const wrE = $('b-wr');
+    if (d.win_rate != null) {
+      const w = d.win_rate;
+      wrE.textContent = Math.round(w * 100) + '%';
+      wrE.style.color = w >= 0.56 ? 'var(--green)' : w < 0.45 ? 'var(--red)' : 'var(--amber)';
+      $('b-wr-sub').textContent = `${d.win_count}W / ${d.loss_count}L · ${d.resolved_trades} resolved`;
+    } else { wrE.textContent = '—'; $('b-wr-sub').textContent = 'no resolved trades'; }
+
+    const oe = $('b-open');
+    oe.textContent = d.open_positions;
+    oe.style.color = d.open_positions > 0 ? 'var(--cyan)' : 'var(--text-dim)';
+
+    const ue = $('b-unrealized');
+    ue.textContent = dollar(d.unrealized_pnl);
+    ue.style.color = pcol(d.unrealized_pnl);
+    $('b-open-pos-sub').textContent = d.open_positions + ' open position' + (d.open_positions !== 1 ? 's' : '');
+
+    // ── Side breakdown row ─────────────────────────────────
+    const yw = $('pm-yes-wr');
+    yw.textContent = d.yes_win_rate != null ? Math.round(d.yes_win_rate * 100) + '%' : '—';
+    yw.style.color = d.yes_win_rate != null ? (d.yes_win_rate >= 0.5 ? 'var(--green)' : 'var(--red)') : 'var(--text-dim)';
+    $('pm-yes-sub').textContent = `${d.yes_wins||0}W / ${d.yes_total - (d.yes_wins||0)}L (${d.yes_total||0})`;
+
+    const nw = $('pm-no-wr');
+    nw.textContent = d.no_win_rate != null ? Math.round(d.no_win_rate * 100) + '%' : '—';
+    nw.style.color = d.no_win_rate != null ? (d.no_win_rate >= 0.5 ? 'var(--green)' : 'var(--red)') : 'var(--text-dim)';
+    $('pm-no-sub').textContent = `${d.no_wins||0}W / ${d.no_total - (d.no_wins||0)}L (${d.no_total||0})`;
+
+    const avg = $('pm-avg-pnl');
+    avg.textContent = dollar(d.avg_pnl);
+    avg.style.color = pcol(d.avg_pnl);
+    $('pm-resolved-sub').textContent = d.resolved_trades + ' resolved';
+
+    $('pm-best').textContent  = d.best_trade_pnl  != null ? '+$' + d.best_trade_pnl.toFixed(2)        : '—';
+    $('pm-worst').textContent = d.worst_trade_pnl != null ? '-$' + Math.abs(d.worst_trade_pnl).toFixed(2) : '—';
+
+    // ── Accuracy bar in Polymarket trades panel ────────────
+    if (d.yes_total > 0 || d.no_total > 0) {
+      $('pm-acc-wrap').style.display = 'flex';
+      const y = d.yes_total || 0, n = d.no_total || 0, tot = y + n || 1;
+      $('pm-acc-yes').style.width    = (y / tot * 100).toFixed(1) + '%';
+      $('pm-acc-no').style.width     = (n / tot * 100).toFixed(1) + '%';
+      $('pm-acc-yes-lbl').textContent = 'YES ' + (d.yes_win_rate != null ? Math.round(d.yes_win_rate * 100) + '% WR' : '—') + ' (' + y + ')';
+      $('pm-acc-no-lbl').textContent  = 'NO '  + (d.no_win_rate  != null ? Math.round(d.no_win_rate  * 100) + '% WR' : '—') + ' (' + n + ')';
+      $('pm-acc-note').textContent    = `${d.resolved_trades} resolved · overall ${d.win_rate != null ? Math.round(d.win_rate * 100) : '—'}%`;
+    }
+  } catch(e) { console.error('fetchPolyMetrics', e); }
+}
+
+async function fetchPolyTrades() {
+  try {
+    const d = await fetch(`${API}/api/poly-trades`).then(r => r.json());
+    _polyTrades = Array.isArray(d.trades) ? d.trades : [];
+    renderPolyTrades();
+  } catch(e) { console.error('fetchPolyTrades', e); }
+}
+
+function renderPolyTrades() {
+  const today = new Date().toISOString().slice(0, 10);
+  let rows = _polyTrades;
+  if      (_pTab === 'active') rows = _polyTrades.filter(t => t.status === 'active');
+  else if (_pTab === 'closed') rows = _polyTrades.filter(t => t.status === 'closed');
+  else if (_pTab === 'won')    rows = _polyTrades.filter(t => t.result === 'WIN');
+  else if (_pTab === 'lost')   rows = _polyTrades.filter(t => t.result === 'LOSS');
+
+  const tbody = $('ptbl-body');
+  const footer = $('ptbl-footer');
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="10" class="empty">No trades for this filter.</td></tr>`;
+    footer.textContent = _polyTrades.length + ' total trades fetched from Polymarket';
+    return;
+  }
+
+  const wins   = rows.filter(t => t.result === 'WIN').length;
+  const losses = rows.filter(t => t.result === 'LOSS').length;
+  const resolv = rows.filter(t => t.pnl != null).length;
+  const totalPnl = rows.reduce((s, t) => s + (t.pnl || 0), 0);
+  const wr = resolv > 0 ? (wins / resolv * 100).toFixed(1) : '—';
+
+  footer.textContent = `${rows.length} trades shown · ${wins}W / ${losses}L · Win rate ${wr}% · Net P&L ${dollar(totalPnl)}`;
+
+  tbody.innerHTML = rows.map(t => {
+    const isActive  = t.status === 'active';
+    const isWin     = t.result === 'WIN';
+    const isLoss    = t.result === 'LOSS';
+    const rowClass  = isWin ? 'win' : isLoss ? 'loss' : '';
+    const dotClass  = isActive ? 'open' : isWin ? 'win' : isLoss ? 'loss' : 'unk';
+
+    const statusPill = isActive
+      ? `<span class="trade-pill" style="background:rgba(0,188,212,0.15);color:var(--cyan);border:1px solid rgba(0,188,212,0.3)">ACTIVE</span>`
+      : t.result === 'WIN'
+        ? `<span class="out-pill up">WIN</span>`
+        : t.result === 'LOSS'
+          ? `<span class="out-pill down">LOSS</span>`
+          : `<span style="color:var(--text-dim)">${t.result || (t.market_resolved ? 'RESOLVED' : 'PENDING')}</span>`;
+
+    const sidePill = t.side === 'yes'
+      ? `<span class="trade-pill yes">▲ YES</span>`
+      : `<span class="trade-pill no">▼ NO</span>`;
+
+    const question = (t.question || t.condition_id || '—').slice(0, 52);
+    const pnlColor = t.pnl == null ? 'var(--text-dim)' : t.pnl > 0 ? 'var(--green)' : t.pnl < 0 ? 'var(--red)' : 'var(--text)';
+
+    return `<tr class="${rowClass}">
+      <td><span class="rd ${dotClass}"></span></td>
+      <td><span style="color:var(--text)">${t.timestamp_iso ? t.timestamp_iso.slice(0,10) : '—'}</span> <span style="color:var(--text-dim)">${t.timestamp_iso ? t.timestamp_iso.slice(11,19) : '—'}</span></td>
+      <td style="font-size:10px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.question || t.condition_id}">${question}</td>
+      <td>${sidePill}</td>
+      <td class="r" style="color:var(--text)">${t.shares != null ? t.shares.toFixed(2) : '—'}</td>
+      <td class="r" style="color:var(--text-dim)">${t.price != null ? t.price.toFixed(4) : '—'}</td>
+      <td class="r" style="color:var(--text)">$${t.amount_paid != null ? t.amount_paid.toFixed(2) : '—'}</td>
+      <td class="r" style="color:var(--text-dim)">${t.payout != null ? '$' + t.payout.toFixed(2) : isActive ? '<span style="color:var(--cyan)">open</span>' : '—'}</td>
+      <td class="r" style="color:${pnlColor};font-weight:600">${t.pnl != null ? dollar(t.pnl) : isActive ? '<span style="color:var(--cyan)">—</span>' : '—'}</td>
+      <td class="r">${statusPill}</td>
+    </tr>`;
+  }).join('');
 }
 
 function renderTrades() {
@@ -1166,14 +1351,15 @@ function initSSE() {
 async function refreshAll() {
   await Promise.all([
     fetchStatus(), fetchCurrent(), fetchFeed(), fetchLog(),
-    fetchTrades(), fetchImportStatus(), fetchDecisionStats(),
+    fetchTrades(), fetchPolyMetrics(), fetchPolyTrades(),
+    fetchImportStatus(), fetchDecisionStats(),
     fetchKillSwitch(), fetchDrawdown(), fetchRollingWinRate()
   ]);
   $('last-ref').textContent = 'updated ' + new Date().toUTCString().slice(17,25) + ' UTC';
 }
 
 refreshAll();
-setInterval(refreshAll, 10000);
+setInterval(refreshAll, 15000);
 initSSE();
 </script>
 </body>
