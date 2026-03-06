@@ -745,9 +745,10 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
     # FIX: only seed reference price in the first 60s after window opens.
     # Seeding on every cycle would reset btc_vs_reference to 0 on restart.
     event_start = best.get("event_start")
-    window_just_opened = bool(
-        event_start and (now - event_start).total_seconds() < 60
-    )
+    if event_start is not None:
+        window_just_opened = (now - event_start).total_seconds() < 60
+    else:
+        window_just_opened = best.get("slug", "") not in _load_ref_cache()
     price_to_beat = get_window_reference_price(
         best.get("slug", ""),
         cex_price_now=cex.get("price_now"),

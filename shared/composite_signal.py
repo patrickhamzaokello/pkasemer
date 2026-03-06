@@ -59,17 +59,17 @@ from datetime import datetime, timezone
 # =============================================================================
 
 DEFAULT_WEIGHTS = {
-    "btc_vs_reference":      0.45,
-    "vol_adjusted_momentum": 0.22,
-    "price_acceleration":    0.13,
-    "momentum_15m":          0.12,
-    "momentum_1m":           0.08,
-    "momentum_5m":           0.00,
-    "cex_poly_lag":          0.00,
-    "volume_ratio":          0.00,
-    "trade_flow_ratio":      0.00,
-    "order_imbalance":       0.00,
-    "momentum_consistency":  0.00,
+    "btc_vs_reference":      0.315,   # dominant signal, corr=0.263
+    "vol_adjusted_momentum": 0.194,   # corr=0.206
+    "momentum_5m":           0.136,   # corr=0.173
+    "cex_poly_lag":          0.136,   # corr=0.172 -- the arb signal
+    "momentum_1m":           0.111,   # corr=0.156, was underweighted
+    "price_acceleration":    0.074,   # corr=0.098
+    "momentum_15m":          0.034,   # corr=0.071, trend confirmation only
+    "volume_ratio":          0.000,   # handled as pre-filter, not scorer
+    "trade_flow_ratio":      0.000,   # corr=0.051, noise
+    "order_imbalance":       0.000,   # corr=0.034, near zero
+    "momentum_consistency":  0.000,   # corr=-0.021, negative
 }
 
 # =============================================================================
@@ -82,8 +82,8 @@ MIN_MOMENTUM_ABS   = 0.05          # minimum |momentum_5m| to consider (filter n
 MAX_VOLATILITY_5M  = 2.0           # skip if 5m volatility too high (chaotic market)
 MIN_POLY_SPREAD    = 0.04          # FIX: was 0.10 — never fired since real spreads
                                    # are 0.01-0.03. Now correctly catches illiquid windows.
-RSI_OVERBOUGHT     = 72            # avoid chasing already-overbought
-RSI_OVERSOLD       = 28            # avoid chasing already-oversold
+RSI_OVERBOUGHT     = 85            # only block extreme exhaustion spikes
+RSI_OVERSOLD       = 15            # only block extreme capitulation
 
 
 # =============================================================================
@@ -231,37 +231,57 @@ def apply_filters(cex, poly, config=None):
     vol_ratio  = cex.get("volume_ratio", 1.0)
     poly_spread = poly.get("poly_spread")
 
-    # Minimum momentum filter
-    if m5 is not None and abs(m5) < MIN_MOMENTUM_ABS:
-        return False, f"momentum too weak ({m5:+.3f}% < ±{MIN_MOMENTUM_ABS}%)"
+    # Minimum momentum filter -- read from config, fall back to module default
+    min_mom = (config or {}).get("min_momentum_pct", MIN_MOMENTUM_ABS)
+    if m5 is not None and abs(m5) < min_mom:
+        return False, f"momentum too weak ({m5:+.3f}% < ±{min_mom}%)"
 
     # Volatility filter
     if vol5 is not None and vol5 > MAX_VOLATILITY_5M:
         return False, f"volatility too high ({vol5:.3f} > {MAX_VOLATILITY_5M})"
 
-    # RSI filters — only apply when we have both RSI and a clear direction
+    # RSI filters -- thresholds read from config if available, else module defaults
+    rsi_ob = (config or {}).get("rsi_overbought", RSI_OVERBOUGHT)
+    rsi_os = (config or {}).get("rsi_oversold",   RSI_OVERSOLD)
     if rsi is not None:
-        if m5 is not None and m5 > 0 and rsi > RSI_OVERBOUGHT:
-            return False, f"RSI overbought ({rsi:.0f} > {RSI_OVERBOUGHT}), skip long"
-        if m5 is not None and m5 < 0 and rsi < RSI_OVERSOLD:
-            return False, f"RSI oversold ({rsi:.0f} < {RSI_OVERSOLD}), skip short"
+        if m5 is not None and m5 > 0 and rsi > rsi_ob:
+            return False, f"RSI overbought ({rsi:.0f} > {rsi_ob}), skip long"
+        if m5 is not None and m5 < 0 and rsi < rsi_os:
+            return False, f"RSI oversold ({rsi:.0f} < {rsi_os}), skip short"
 
     # Polymarket spread filter — catches illiquid windows
     # FIX: threshold was 0.10 (never fired). Fast markets trade at 0.01-0.03 spread.
     if poly_spread is not None and poly_spread > MIN_POLY_SPREAD:
         return False, f"Poly spread too wide ({poly_spread:.3f} > {MIN_POLY_SPREAD})"
 
-    # Polymarket already-priced-in filter
-    poly_divergence = poly.get("poly_divergence", 0) or 0
-    # Change from 0.08 to 0.05 — block earlier when Poly has already priced the move
-    if m5 and m5 > 0 and poly_divergence > 0.05:
-        return False, f"Poly already priced bullish ({poly_divergence:+.3f}), no edge left"
-    if m5 and m5 < 0 and poly_divergence < -0.05:
-        return False, f"Poly already priced bearish ({poly_divergence:+.3f}), no edge left"
+    # Polymarket directional gate -- block when market has already priced in the move.
+    # Use poly_yes_price absolute value (not divergence) for reliable filtering.
+    # Edge zone: poly near 0.45-0.55 while CEX has moved = latency arb opportunity.
+    poly_price = poly.get("poly_yes_price", 0.5) or 0.5
+    cex_lag    = cex.get("cex_poly_lag", 0.0) or 0.0
 
-    # Volume gate — only when volume_confidence is enabled in config
-    volume_confidence = config.get("volume_confidence", True) if config else True
-    if volume_confidence and vol_ratio is not None and vol_ratio < 0.3:
+    MAX_ENTRY_YES    = (config or {}).get("max_entry_yes",    0.72)
+    MIN_ENTRY_YES    = (config or {}).get("min_entry_yes",    0.35)
+    MIN_ENTRY_NO     = (config or {}).get("min_entry_no",     0.28)
+    MAX_ENTRY_NO     = (config or {}).get("max_entry_no",     0.65)
+    MIN_LAG_OVERRIDE = (config or {}).get("min_lag_override", 0.15)
+
+    if m5 is not None and m5 > 0:  # signal wants YES
+        if poly_price > MAX_ENTRY_YES:
+            return False, f"Market priced in YES ({poly_price:.3f} > {MAX_ENTRY_YES}) -- no edge"
+        if poly_price < MIN_ENTRY_YES and abs(cex_lag) < MIN_LAG_OVERRIDE:
+            return False, f"Poly disagrees ({poly_price:.3f}) and CEX lag too small ({cex_lag:.4f})"
+
+    if m5 is not None and m5 < 0:  # signal wants NO
+        if poly_price < MIN_ENTRY_NO:
+            return False, f"Market priced in NO ({poly_price:.3f} < {MIN_ENTRY_NO}) -- no edge"
+        if poly_price > MAX_ENTRY_NO and cex_lag > -MIN_LAG_OVERRIDE:
+            return False, f"Poly says UP ({poly_price:.3f}), CEX lag insufficient ({cex_lag:.4f})"
+
+    # Volume gate -- only when volume_confidence is enabled in config.
+    # Skip when vol_ratio == 1.0 (fallback sentinel = no avg data yet).
+    volume_confidence = config.get("volume_confidence", False) if config else False
+    if volume_confidence and vol_ratio is not None and vol_ratio != 1.0 and vol_ratio < 0.3:
         return False, f"Volume too low ({vol_ratio:.2f}x avg)"
 
     return True, "ok"

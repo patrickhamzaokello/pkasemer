@@ -63,7 +63,7 @@ except ImportError:
 
 TRADE_SOURCE = "sdk:pknwitq"
 SMART_SIZING_PCT = 0.05
-MIN_SHARES_PER_ORDER = 5.1
+MIN_SHARES_PER_ORDER = 6.0
 MIN_SCORE_TO_IMPORT = 0.65
 IMPORT_DAILY_LIMIT = 1000           
 MIN_ENTRY_PRICE      = 0.35     # skip if market already priced in the move
@@ -98,7 +98,8 @@ CONFIG_SCHEMA = {
     "max_position":       {"default": 5.0,       "env": "SIMMER_SPRINT_MAX_POSITION", "type": float},
     "signal_source":      {"default": "binance", "env": "SIMMER_SPRINT_SIGNAL",       "type": str},
     "lookback_minutes":   {"default": 5,         "env": "SIMMER_SPRINT_LOOKBACK",     "type": int},
-    "min_time_remaining": {"default": 30,        "env": "SIMMER_SPRINT_MIN_TIME",     "type": int},
+    "min_time_remaining": {"default": 120,       "env": "SIMMER_SPRINT_MIN_TIME",     "type": int},
+    "max_time_remaining": {"default": 420,       "env": "SIMMER_SPRINT_MAX_TIME",     "type": int},
     "asset":              {"default": "BTC",     "env": "SIMMER_SPRINT_ASSET",        "type": str},
     "window":             {"default": "5m",      "env": "SIMMER_SPRINT_WINDOW",       "type": str},
     "volume_confidence":  {"default": True,      "env": "SIMMER_SPRINT_VOL_CONF",     "type": bool},
@@ -164,6 +165,7 @@ MAX_POSITION_USD   = cfg["max_position"]
 SIGNAL_SOURCE      = cfg["signal_source"]
 LOOKBACK_MINUTES   = cfg["lookback_minutes"]
 MIN_TIME_REMAINING = cfg["min_time_remaining"]
+MAX_TIME_REMAINING = cfg.get("max_time_remaining", 420)
 ASSET              = cfg["asset"].upper()
 WINDOW             = cfg["window"]
 VOLUME_CONFIDENCE  = cfg["volume_confidence"]
@@ -676,6 +678,13 @@ def run_fast_market_strategy(
     remaining = (end_time - datetime.now(timezone.utc)).total_seconds() if end_time else 0
     slug_short = best.get("slug", "")[-24:]
 
+    if remaining > MAX_TIME_REMAINING:
+        log(
+            f"{mode_tag} {now_str} | {slug_short} {remaining:.0f}s | "
+            f"SKIP: too early ({remaining:.0f}s > {MAX_TIME_REMAINING}s max) -- vs_ref not seeded yet"
+        )
+        return
+
     # Parse YES price; fall back to 0.5 only on genuine parse failure
     try:
         prices = json.loads(best.get("outcome_prices", "[]"))
@@ -697,15 +706,23 @@ def run_fast_market_strategy(
 
     poly_signals = extract_poly_signals(best)
 
-    # Only seed the reference price in the first ~60s after window opens.
-    # If seeded on every cycle, a restart mid-window resets btc_vs_reference to 0.
+    now_utc     = datetime.now(timezone.utc)
+    market_slug = best.get("slug", "")
+
+    # Determine if the window just opened. Use event_start if available,
+    # otherwise fall back to: window is "just opened" if no cached reference
+    # price exists yet for this slug. This fixes the 47% vs_ref=0 rate caused
+    # by event_start being None in the Gamma API response.
     event_start = best.get("event_start")
-    now_utc = datetime.now(timezone.utc)
-    window_just_opened = bool(
-        event_start and (now_utc - event_start).total_seconds() < 60
-    )
+    if event_start is not None:
+        window_just_opened = (now_utc - event_start).total_seconds() < 60
+    else:
+        # No event_start from API -- treat as newly opened if not yet cached
+        from signal_research import _load_ref_cache
+        window_just_opened = market_slug not in _load_ref_cache()
+
     price_to_beat = get_window_reference_price(
-        best.get("slug", ""),
+        market_slug,
         cex_price_now=cex_signals.get("price_now"),
         window_open=window_just_opened,
     )
@@ -719,6 +736,16 @@ def run_fast_market_strategy(
     m5         = cex_signals.get("momentum_5m", 0) or 0
     vol_r      = cex_signals.get("volume_ratio", 1.0) or 1.0
     poly_p     = poly_signals.get("poly_yes_price", 0.5) or 0.5
+
+    # Block trade if dominant signal (btc_vs_reference, weight=0.315) is missing.
+    # A score built without it is unreliable -- better to skip than trade blind.
+    if vs_ref is None or vs_ref == 0.0:
+        log(
+            f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+            f"m5={m5:+.3f}% vs_ref=MISSING poly={poly_p:.3f} vol={vol_r:.2f}x | "
+            f"score=n/a BLOCK: btc_vs_reference not seeded"
+        )
+        return
 
     # ── Step 4: Composite signal ──────────────────────────────────────────────
     signal     = get_composite_signal(cex_signals, poly_signals, config=cfg)
