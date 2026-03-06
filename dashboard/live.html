@@ -8,21 +8,21 @@
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #080b0f;
-    --surface: #0d1117;
-    --border: #1a2332;
-    --border-bright: #243347;
-    --text: #c8d6e8;
-    --text-dim: #4a6080;
-    --text-bright: #e8f0f8;
-    --green: #00e676;
-    --green-dim: #00c45a;
-    --red: #ff3d57;
-    --red-dim: #cc2a40;
-    --amber: #ffb300;
-    --blue: #2196f3;
-    --blue-dim: #1565c0;
-    --cyan: #00bcd4;
+    --bg: #070c16;
+    --surface: #0d1828;
+    --border: #182038;
+    --border-bright: #1e3050;
+    --text: #a8c4e0;
+    --text-dim: #3d5a7a;
+    --text-bright: #d8eeff;
+    --green: #38bdf8;
+    --green-dim: #0ea5e9;
+    --red: #6b8fb8;
+    --red-dim: #4a6a88;
+    --amber: #7dd3fc;
+    --blue: #38bdf8;
+    --blue-dim: #0284c7;
+    --cyan: #67e8f9;
     --mono: 'JetBrains Mono', monospace;
     --display: 'Syne', sans-serif;
   }
@@ -396,6 +396,32 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading { color: var(--text-dim); font-size: 11px; padding: 20px; text-align: center; }
   .empty   { padding: 30px; text-align: center; color: var(--text-dim); font-size: 11px; }
+
+  /* ── Deploy tracker bar ──────────────────────────────────── */
+  .deploy-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+    font-family: var(--mono);
+    position: sticky;
+    top: 88px;
+    z-index: 80;
+  }
+  .deploy-label {
+    color: var(--text-dim);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    font-weight: 500;
+  }
+  .deploy-sep { color: var(--border-bright); }
+  #deploy-count { color: var(--blue); font-weight: 600; }
+  #deploy-ts { color: var(--text); }
 </style>
 </head>
 <body>
@@ -426,6 +452,14 @@
     <button class="nav-logout" onclick="logout()">↪ logout</button>
   </div>
 </nav>
+
+<div class="deploy-bar" id="deploy-bar">
+  <span class="deploy-label">BUILD</span>
+  <span id="deploy-count">#—</span>
+  <span class="deploy-sep">·</span>
+  <span class="deploy-label">DEPLOYED</span>
+  <span id="deploy-ts">—</span>
+</div>
 
 <!-- LAYOUT -->
 <div class="layout">
@@ -1361,6 +1395,23 @@ async function refreshAll() {
 refreshAll();
 setInterval(refreshAll, 15000);
 initSSE();
+
+// Deploy tracker
+(async () => {
+  try {
+    const d = await fetch(`${API}/api/deploy-info`).then(r => r.json());
+    if (d && d.count) {
+      document.getElementById('deploy-count').textContent = `#${d.count}`;
+      if (d.last_deployed) {
+        const dt = new Date(d.last_deployed);
+        const pad = n => String(n).padStart(2, '0');
+        document.getElementById('deploy-ts').textContent =
+          `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth()+1)}-${pad(dt.getUTCDate())} ` +
+          `${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())} UTC`;
+      }
+    }
+  } catch(e) {}
+})();
 </script>
 </body>
 </html>

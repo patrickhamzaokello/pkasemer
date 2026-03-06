@@ -761,10 +761,10 @@ def run_fast_market_strategy(
 
     # Block trade if dominant signal (btc_vs_reference, weight=0.315) is missing.
     # A score built without it is unreliable -- better to skip than trade blind.
-    if vs_ref is None or vs_ref == 0.0:
+    if vs_ref is None:
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
-            f"m5={m5:+.3f}% vs_ref=MISSING poly={poly_p:.3f} lag={cex_lag_str} vol={vol_r:.2f}x | "
+            f"m5={m5:+.3f}% vs_ref=UNSEEDED poly={poly_p:.3f} lag={cex_lag_str} vol={vol_r:.2f}x | "
             f"score=n/a BLOCK: btc_vs_reference not seeded"
         )
         return

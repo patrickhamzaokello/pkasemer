@@ -43,13 +43,33 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Strict"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 
-DB_PATH     = os.environ.get("DB_PATH", "/data/signal_research.db")
-STATUS_PATH = "/data/status.json"
-LOG_PATH    = "/app/logs/collector.log"   # unified stdout+stderr via tee (scheduler + trader)
-CACHE_PATH  = "/data/market_id_cache.json"
-SPEND_PATH  = "/data/daily_spend.json"    # on shared volume, written by fast_trader.py
-CONFIG_PATH = "/app/config.json"          # trader/config.json, volume-mounted read-only
-TRADE_PATH  = ("/data/trade_log.json")
+DB_PATH      = os.environ.get("DB_PATH", "/data/signal_research.db")
+STATUS_PATH  = "/data/status.json"
+LOG_PATH     = "/app/logs/collector.log"   # unified stdout+stderr via tee (scheduler + trader)
+CACHE_PATH   = "/data/market_id_cache.json"
+SPEND_PATH   = "/data/daily_spend.json"    # on shared volume, written by fast_trader.py
+CONFIG_PATH  = "/app/config.json"          # trader/config.json, volume-mounted read-only
+TRADE_PATH   = "/data/trade_log.json"
+DEPLOY_PATH  = "/data/deploy_info.json"    # deploy counter + timestamp
+
+
+def _bump_deploy_info():
+    """Increment deploy count and record timestamp when monitor starts up."""
+    try:
+        try:
+            with open(DEPLOY_PATH) as _f:
+                info = json.load(_f)
+        except Exception:
+            info = {"count": 0, "last_deployed": None}
+        info["count"] = info.get("count", 0) + 1
+        info["last_deployed"] = datetime.now(timezone.utc).isoformat()
+        with open(DEPLOY_PATH, "w") as _f:
+            json.dump(info, _f)
+    except Exception as e:
+        sys.stderr.write(f"[deploy-tracker] failed to update {DEPLOY_PATH}: {e}\n")
+
+
+_bump_deploy_info()
 
 def _load_config():
     try:
@@ -117,6 +137,15 @@ def require_login():
 @app.route("/health")
 def health():
     return jsonify({"ok": True})
+
+
+@app.route("/api/deploy-info")
+def deploy_info():
+    try:
+        with open(DEPLOY_PATH) as f:
+            return jsonify(json.load(f))
+    except Exception:
+        return jsonify({"count": 0, "last_deployed": None})
 
 
 @app.route("/login")

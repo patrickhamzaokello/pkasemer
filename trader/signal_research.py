@@ -242,7 +242,8 @@ def fetch_binance_klines(symbol="BTCUSDT", interval="1m", limit=20):
             return result
     url = f"{BINANCE_KLINES}?symbol={symbol}&interval={interval}&limit={limit}"
     result = _get(url)
-    _klines_cache[key] = (now, result)
+    if result is not None:
+        _klines_cache[key] = (now, result)
     return result
 
 
