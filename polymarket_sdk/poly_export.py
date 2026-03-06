@@ -211,9 +211,10 @@ def export_trades(
             if pos:
                 trade["question"] = pos.get("question", "")
 
-    # --- Step 4: Split active vs closed ---
+    # --- Step 4: Split active vs closed ----
     active_trades: list[dict] = []
     closed_trades: list[dict] = []
+    redeemed_trades: list[dict] = []
 
     for trade in all_trades:
         cid = trade["condition_id"]
@@ -233,7 +234,11 @@ def export_trades(
                     trade["result"] = "BREAK_EVEN"
             else:
                 trade["result"] = "RESOLVED" if trade["market_resolved"] else "CLOSED"
-            closed_trades.append(trade)
+            
+            if(trade["type"] in ("REDEMPTION", "REDEEM")):
+                redeemed_trades.append(trade)
+            elif(trade["type"] == "TRADE"):
+                closed_trades.append(trade)
 
     # --- Step 5: Write CSVs ---
     out_path = Path(output_dir)
@@ -241,6 +246,7 @@ def export_trades(
 
     active_path = str(out_path / "active_trades.csv")
     closed_path = str(out_path / "closed_trades.csv")
+    redeemed_path = str(out_path / "redeemed_trades.csv")
 
     active_fields = [
         "trade_id",
@@ -283,10 +289,16 @@ def export_trades(
         writer.writeheader()
         writer.writerows(closed_trades)
 
+    with open(redeemed_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=closed_fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(redeemed_trades)
+
     print(f"[poly_export] Active trades : {len(active_trades):>5}  → {active_path}")
     print(f"[poly_export] Closed trades : {len(closed_trades):>5}  → {closed_path}")
+    print(f"[poly_export] Closed trades : {len(redeemed_trades):>5}  → {redeemed_path}")
 
-    return active_path, closed_path
+    return active_path, closed_path,redeemed_path
 
 
 # ---------------------------------------------------------------------------
@@ -315,10 +327,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    active_csv, closed_csv = export_trades(
+    active_csv, closed_csv, redeemed_csv = export_trades(
         address=args.address,
         output_dir=args.output_dir,
     )
     print("\nDone!")
     print(f"  Active trades : {active_csv}")
     print(f"  Closed trades : {closed_csv}")
+    print(f"  redeemed trades : {redeemed_csv}")

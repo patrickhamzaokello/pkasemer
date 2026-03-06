@@ -10,8 +10,8 @@ services:
     container_name: pknwitq-collector
     restart: unless-stopped
     environment:
-      PKNWITQ_MODE: both          # collect | trade | both | dry
-      PKNWITQ_INTERVAL: "60"       # seconds between cycles
+      PKNWITQ_MODE: dry          # collect | trade | both | dry
+      PKNWITQ_INTERVAL: "20"       # seconds between cycles
       PKNWITQ_ASSET: BTC
       PKNWITQ_WINDOW: 5m
       DB_PATH: /data/signal_research.db
