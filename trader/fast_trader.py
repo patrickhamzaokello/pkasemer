@@ -35,8 +35,8 @@ from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
 from pathlib import Path
 
-from composite_signal import get_composite_signal
-from signal_research import extract_cex_signals, extract_poly_signals, get_window_reference_price
+from composite_signal import get_composite_signal, _calc_cex_poly_lag
+from signal_research import extract_cex_signals, extract_poly_signals, get_window_reference_price, _load_ref_cache
 from market_utils import discover_fast_market_markets, find_best_fast_market
 
 # Force line-buffered stdout for non-TTY environments (cron, Docker, OpenClaw)
@@ -159,6 +159,14 @@ def _update_config(updates, skill_file, config_filename="config.json"):
 
 # Load config at module level
 cfg = _load_config(CONFIG_SCHEMA, __file__)
+# raw_cfg: full config.json including signal_weights, rsi thresholds,
+# poly gate bounds, etc. Passed to get_composite_signal so all config
+# values take effect without needing entries in CONFIG_SCHEMA.
+try:
+    with open(_get_config_path(__file__)) as _f:
+        raw_cfg = json.load(_f)
+except Exception:
+    raw_cfg = cfg  # fall back to schema-filtered cfg
 ENTRY_THRESHOLD    = cfg["entry_threshold"]
 MIN_MOMENTUM_PCT   = cfg["min_momentum_pct"]
 MAX_POSITION_USD   = cfg["max_position"]
@@ -718,14 +726,26 @@ def run_fast_market_strategy(
         window_just_opened = (now_utc - event_start).total_seconds() < 60
     else:
         # No event_start from API -- treat as newly opened if not yet cached
-        from signal_research import _load_ref_cache
         window_just_opened = market_slug not in _load_ref_cache()
 
-    price_to_beat = get_window_reference_price(
-        market_slug,
-        cex_price_now=cex_signals.get("price_now"),
-        window_open=window_just_opened,
-    )
+    # Use Poly own priceToBeat if populated -- more accurate than our Binance snapshot.
+    # Falls back to our window_refs cache when Poly does not populate it (the common case).
+    poly_price_to_beat = best.get("price_to_beat")
+    if poly_price_to_beat:
+        try:
+            price_to_beat = float(poly_price_to_beat)
+        except (ValueError, TypeError):
+            price_to_beat = get_window_reference_price(
+                market_slug,
+                cex_price_now=cex_signals.get("price_now"),
+                window_open=window_just_opened,
+            )
+    else:
+        price_to_beat = get_window_reference_price(
+            market_slug,
+            cex_price_now=cex_signals.get("price_now"),
+            window_open=window_just_opened,
+        )
     if price_to_beat and cex_signals.get("price_now"):
         cex_signals["btc_vs_reference"] = (
             (cex_signals["price_now"] - price_to_beat) / price_to_beat * 100
@@ -736,19 +756,21 @@ def run_fast_market_strategy(
     m5         = cex_signals.get("momentum_5m", 0) or 0
     vol_r      = cex_signals.get("volume_ratio", 1.0) or 1.0
     poly_p     = poly_signals.get("poly_yes_price", 0.5) or 0.5
+    cex_lag_val = _calc_cex_poly_lag(cex_signals, poly_signals) or 0.0
+    cex_lag_str = f"{cex_lag_val:+.3f}"
 
     # Block trade if dominant signal (btc_vs_reference, weight=0.315) is missing.
     # A score built without it is unreliable -- better to skip than trade blind.
     if vs_ref is None or vs_ref == 0.0:
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
-            f"m5={m5:+.3f}% vs_ref=MISSING poly={poly_p:.3f} vol={vol_r:.2f}x | "
+            f"m5={m5:+.3f}% vs_ref=MISSING poly={poly_p:.3f} lag={cex_lag_str} vol={vol_r:.2f}x | "
             f"score=n/a BLOCK: btc_vs_reference not seeded"
         )
         return
 
     # ── Step 4: Composite signal ──────────────────────────────────────────────
-    signal     = get_composite_signal(cex_signals, poly_signals, config=cfg)
+    signal     = get_composite_signal(cex_signals, poly_signals, config=raw_cfg)
     score      = signal["score"]
     confidence = signal["confidence"]
 
@@ -756,7 +778,7 @@ def run_fast_market_strategy(
         reason = signal.get("filter_reason", "neutral band")
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
-            f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} vol={vol_r:.2f}x | "
+            f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} lag={cex_lag_str} vol={vol_r:.2f}x | "
             f"score={score:.3f} BLOCK: {reason}"
         )
         return
@@ -844,7 +866,13 @@ def run_fast_market_strategy(
 
     if position_size < min_order_usdc:
         if remaining_budget >= min_order_usdc and min_order_usdc <= MAX_POSITION_USD:
+            calc_size     = position_size  # save before bump for log
             position_size = min_order_usdc  # bump up to meet minimum
+            log(
+                f"  SIZE BUMP: ${calc_size:.2f} → ${min_order_usdc:.2f} "
+                f"(min {MIN_SHARES_PER_ORDER:.0f} shares @ ${ask_price:.3f}; "
+                f"max_pos=${MAX_POSITION_USD:.2f})"
+            )
         else:
             reason = []
             if remaining_budget < min_order_usdc:
@@ -867,7 +895,7 @@ def run_fast_market_strategy(
     # ── Step 5: Import & execute ──────────────────────────────────────────────
     log(
         f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
-        f"m5={m5:+.3f}% vs_ref={vs_ref_str} vol={vol_r:.2f}x | "
+        f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} lag={cex_lag_str} vol={vol_r:.2f}x | "
         f"score={score:.3f} conf={confidence:.2f} → {side.upper()} ${position_size:.2f}"
     )
 

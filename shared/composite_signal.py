@@ -258,7 +258,7 @@ def apply_filters(cex, poly, config=None):
     # Use poly_yes_price absolute value (not divergence) for reliable filtering.
     # Edge zone: poly near 0.45-0.55 while CEX has moved = latency arb opportunity.
     poly_price = poly.get("poly_yes_price", 0.5) or 0.5
-    cex_lag    = cex.get("cex_poly_lag", 0.0) or 0.0
+    cex_lag    = _calc_cex_poly_lag(cex, poly) or 0.0  # compute live; not in cex dict yet
 
     MAX_ENTRY_YES    = (config or {}).get("max_entry_yes",    0.72)
     MIN_ENTRY_YES    = (config or {}).get("min_entry_yes",    0.35)
