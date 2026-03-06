@@ -224,9 +224,26 @@ def _get(url, timeout=8):
         return None
 
 
+# Short-lived klines cache so collector and trader share the same candle data
+# within one scheduler cycle. Eliminates the candle race at 5m boundaries where
+# the collector fetches the last completed candle and the trader (5s later)
+# gets the brand-new one that just opened flat at 0.000%.
+_klines_cache: dict = {}
+_KLINES_CACHE_TTL = 15  # seconds -- covers collect-to-trade gap (~5s) with margin
+
+
 def fetch_binance_klines(symbol="BTCUSDT", interval="1m", limit=20):
+    key = (symbol, interval, limit)
+    now = time.monotonic()
+    cached = _klines_cache.get(key)
+    if cached is not None:
+        ts, result = cached
+        if now - ts < _KLINES_CACHE_TTL:
+            return result
     url = f"{BINANCE_KLINES}?symbol={symbol}&interval={interval}&limit={limit}"
-    return _get(url)
+    result = _get(url)
+    _klines_cache[key] = (now, result)
+    return result
 
 
 def fetch_binance_orderbook(symbol="BTCUSDT", limit=20):

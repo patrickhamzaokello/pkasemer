@@ -786,8 +786,10 @@ def run_fast_market_strategy(
     side         = signal["side"]
     position_pct = signal["position_pct"]
 
-    # Hard liquidity floor — FAK orders fail on thin books regardless of signal
-    if vol_r < MIN_LIQUIDITY_RATIO:
+    # Hard liquidity floor — FAK orders fail on thin books regardless of signal.
+    # Skip sentinels: vol_r <= 0.05 means new candle with sub-second volume accumulated
+    # (not a thin book); vol_r == 1.0 is the fallback when avg_vol has not computed yet.
+    if vol_r > 0.05 and vol_r != 1.0 and vol_r < MIN_LIQUIDITY_RATIO:
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
             f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} vol={vol_r:.2f}x | "
