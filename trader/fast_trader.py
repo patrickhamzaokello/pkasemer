@@ -431,8 +431,8 @@ def _api_request(url, method="GET", data=None, headers=None, timeout=15):
 
 def get_binance_momentum(symbol="BTCUSDT", lookback_minutes=5):
     url = (
-        # f"https://api.binance.com/api/v3/klines" --global binance
-        f"https://api.binance.us/api/v3/klines",
+        f"https://api.binance.com/api/v3/klines" 
+        # f"https://api.binance.us/api/v3/klines",
         f"?symbol={symbol}&interval=1m&limit={lookback_minutes}"
     )
     result = _api_request(url)
