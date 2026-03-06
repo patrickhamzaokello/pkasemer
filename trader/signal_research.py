@@ -239,10 +239,45 @@ def fetch_binance_recent_trades(symbol="BTCUSDT", limit=500):
     return _get(url)
 
 
+import json
+from urllib.request import Request, urlopen
+
+# Constants
+GAMMA_API = "https://gamma-api.polymarket.com"
+POLY_CLOB = "https://clob.polymarket.com"
+
+def _get(url, timeout=8):
+    try:
+        req = Request(url, headers={"User-Agent": "pknwitq-research/1.0"})
+        with urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        print(f"Error fetching {url}: {e}")
+        return None
+
 def fetch_poly_clob_orderbook(condition_id):
-    """Fetch Polymarket CLOB order book for a condition."""
-    url = f"{POLY_CLOB}/book?token_id={condition_id}"
-    return _get(url)
+    """
+    1. Resolve the condition_id to a specific token_id (Yes token).
+    2. Fetch the actual CLOB order book.
+    """
+    # Step 1: Get market metadata from Gamma
+    market_url = f"{GAMMA_API}/markets?condition_id={condition_id}"
+    market_data = _get(market_url)
+    
+    if not market_data or len(market_data) == 0:
+        return {"error": "Market not found"}
+
+    # Step 2: Extract the first token_id (usually the 'Yes' side)
+    try:
+        # clobTokenIds is stored as a stringified JSON array in Gamma
+        token_ids = json.loads(market_data[0]["clobTokenIds"])
+        yes_token_id = token_ids[0] 
+    except (KeyError, IndexError, TypeError):
+        return {"error": "Could not parse token IDs"}
+
+    # Step 3: Fetch the book using the resolved token_id
+    book_url = f"{POLY_CLOB}/book?token_id={yes_token_id}"
+    return _get(book_url)
 
 
 def fetch_poly_market(condition_id):

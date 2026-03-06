@@ -353,6 +353,18 @@ def _calc_cex_poly_lag(cex, poly):
     return m5 * (0.15 - max(-0.15, min(0.15, poly_div))) / 0.15
 
 
+def calculate_fee_adjusted_threshold(poly_price, base_threshold):
+    """
+    Polymarket 2026 dynamic fees can reach ~3.15% near 0.50.
+    Adjust the entry threshold so we only trade if edge > fee.
+    """
+    # Fee is highest at 0.50, tapering off as it nears 0 or 1
+    dist_from_pin = abs(poly_price - 0.5)
+    dynamic_fee_estimate = max(0.001, 0.0315 * (1 - (dist_from_pin / 0.5)))
+    
+    # Increase the required composite score to cover the fee
+    return base_threshold + (dynamic_fee_estimate * 2.0)
+
 # =============================================================================
 # Main Interface
 # =============================================================================

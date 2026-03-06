@@ -134,8 +134,8 @@ def discover_fast_market_markets(asset="BTC", window="5m"):
 
             fee_bps = int(
                 _first_not_none(
-                    m.get("makerBaseFee"),
-                    m.get("feeRateBps"),
+                    m.get("maker_base_fee"),
+                    m.get("fee_rate_bps"),
                     m.get("fee_rate_bps"),
                 )
             )
