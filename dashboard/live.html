@@ -701,7 +701,7 @@
             <th class="r">vs Ref %</th>
             <th class="r">Poly Yes</th>
             <th class="r">Secs Left</th>
-            <th class="r">Filter</th>
+            <th class="r">Lag</th>
             <th class="r">Outcome</th>
             <th class="r">P&amp;L</th>
           </tr></thead>
@@ -1140,11 +1140,8 @@ function renderTrades() {
   let rows = _trades;
   if      (_tab === 'today') rows = _trades.filter(t => t.ts && t.ts.startsWith(today));
   else if (_tab === 'open')  rows = _trades.filter(t => !t.resolved || !t.outcome);
-  else if (_tab === 'won')   rows = _trades.filter(t => (t.trade_side==='yes'&&t.outcome==='up') || (t.trade_side==='no'&&t.outcome==='down'));
-  else if (_tab === 'lost')  rows = _trades.filter(t => {
-    const s = t.trade_side, o = t.outcome;
-    return (o==='up'||o==='down') && !((s==='yes'&&o==='up') || (s==='no'&&o==='down'));
-  });
+  else if (_tab === 'won')   rows = _trades.filter(t => t.trade_outcome === 'win');
+  else if (_tab === 'lost')  rows = _trades.filter(t => t.trade_outcome === 'loss');
 
   const tbody = $('tbl-body');
   if (!rows.length) {
@@ -1155,16 +1152,22 @@ function renderTrades() {
 
   tbody.innerHTML = rows.map(t => {
     const side = t.trade_side || '—', out = t.outcome, res = t.resolved;
-    let dc = 'open', rc = 'open', outH = '<span style="color:var(--blue)">pending</span>';
-    if (res && out === 'up')   { const won = side==='yes'; dc=won?'win':'loss'; rc=dc; outH=`<span class="out-pill up">▲ UP</span>`; }
-    else if (res && out === 'down') { const won = side==='no';  dc=won?'win':'loss'; rc=dc; outH=`<span class="out-pill down">▼ DN</span>`; }
-    else if (res) { dc='unk'; rc=''; outH='<span style="color:var(--text-dim)">unclear</span>'; }
+    const won  = t.trade_outcome === 'win';
+    const lost = t.trade_outcome === 'loss';
+    let dc = res ? (won ? 'win' : lost ? 'loss' : 'unk') : 'open';
+    let rc = res ? (won ? 'win' : lost ? 'loss' : '') : 'open';
+    let outH = res
+      ? (out === 'up'   ? `<span class="out-pill up">▲ UP</span>`
+       : out === 'down' ? `<span class="out-pill down">▼ DN</span>`
+       :                  `<span style="color:var(--text-dim)">unclear</span>`)
+      : '<span style="color:var(--blue)">pending</span>';
 
     const pnl   = t.trade_result;
     const score = t.signal_score != null ? t.signal_score.toFixed(3) : '—';
     const conf  = t.signal_confidence != null ? t.signal_confidence.toFixed(2) : '—';
-    const fr    = t.filter_reason ? `<span style="color:var(--text-dim);font-size:9px">${t.filter_reason.slice(0,28)}</span>` : '<span style="color:var(--text-dim)">—</span>';
-    const price = t.price_now ? '$' + Number(t.price_now).toLocaleString('en', {maximumFractionDigits:0}) : '—';
+    const lag   = t.cex_poly_lag != null ? (t.cex_poly_lag >= 0 ? '+' : '') + t.cex_poly_lag.toFixed(3) : '—';
+    const lagCol = t.cex_poly_lag != null ? (t.cex_poly_lag > 0.05 ? 'var(--green)' : t.cex_poly_lag < -0.05 ? 'var(--red)' : 'var(--text-dim)') : 'var(--text-dim)';
+    const price = t.entry_price ? '$' + t.entry_price.toFixed(3) : '—';
 
     return `<tr class="${rc}">
       <td><span class="rd ${dc}"></span></td>
@@ -1179,7 +1182,7 @@ function renderTrades() {
       <td class="r" style="color:${mcol(t.btc_vs_reference)}">${pct(t.btc_vs_reference,3)}</td>
       <td class="r" style="color:var(--text)">${fix(t.poly_yes_price,3)}</td>
       <td class="r" style="color:var(--text-dim)">${t.seconds_remaining != null ? Math.round(t.seconds_remaining) + 's' : '—'}</td>
-      <td class="r">${fr}</td>
+      <td class="r" style="color:${lagCol}">${lag}</td>
       <td class="r">${outH}</td>
       <td class="r" style="color:${pcol(pnl)};font-weight:600">${dollar(pnl)}</td>
     </tr>`;
@@ -1210,7 +1213,7 @@ function drawPnl(trades) {
   area += ` L${tx(n-1)},${zY} Z`;
   const line = pts.map((p,i) => `${i===0?'M':'L'}${tx(i)},${ty(p.y)}`).join(' ');
   const dots = pts.map((p,i) => {
-    const won = (p.t.trade_side==='yes'&&p.t.outcome==='up') || (p.t.trade_side==='no'&&p.t.outcome==='down');
+    const won = p.t.trade_outcome === 'win';
     return `<circle cx="${tx(i)}" cy="${ty(p.y)}" r="2.5" fill="${won?'#22c55e':'#ef4444'}" opacity="0.85"/>`;
   }).join('');
 

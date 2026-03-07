@@ -564,34 +564,103 @@ def accuracy():
 @app.route("/api/trades")
 def trades():
     """
-    Read executed trades from trade_log.json (written by fast_trader._log_trade_local).
-    Returns a flat list, newest-first, with field names the dashboard expects.
+    Read executed trades from the SQLite `trades` table (primary) with JSON fallback.
+    Returns a flat list, newest-first, with all signal + resolution fields.
     """
     n = int(request.args.get("n", 500))
     try:
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT trade_id, timestamp, slug, side, score, confidence, entry_price,
+                   position_size, shares, time_remaining,
+                   momentum_5m, momentum_1m, momentum_15m, vs_ref, volume_ratio, rsi_14,
+                   cex_poly_lag, price_acceleration, vol_adjusted_momentum,
+                   poly_yes_price, market_outcome, trade_outcome, pnl, resolved, resolve_ts
+            FROM trades
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (n,)).fetchall()
+        conn.close()
+
+        if rows:
+            result = []
+            for r in rows:
+                (trade_id, ts, slug, side, score, confidence, entry_price,
+                 position_size, shares, time_remaining,
+                 m5, m1, m15, vs_ref, vol_ratio, rsi,
+                 lag, price_accel, vol_adj_mom,
+                 poly_price, market_outcome, trade_outcome, pnl, resolved, resolve_ts) = r
+                result.append({
+                    "ts":                    ts,
+                    "trade_id":              trade_id,
+                    "market_slug":           slug,
+                    "trade_side":            side,
+                    "signal_side":           side,
+                    "trade_amount":          position_size,
+                    "shares":                shares,
+                    "entry_price":           entry_price,
+                    "trade_result":          pnl,
+                    "pnl":                   pnl,
+                    "outcome":               market_outcome,
+                    "trade_outcome":         trade_outcome,
+                    "resolved":              resolved,
+                    "resolve_ts":            resolve_ts,
+                    "btc_vs_reference":      vs_ref,
+                    "momentum_5m":           m5,
+                    "momentum_1m":           m1,
+                    "momentum_15m":          m15,
+                    "volume_ratio":          vol_ratio,
+                    "rsi_14":                rsi,
+                    "cex_poly_lag":          lag,
+                    "price_acceleration":    price_accel,
+                    "vol_adjusted_momentum": vol_adj_mom,
+                    "poly_yes_price":        poly_price,
+                    "seconds_remaining":     time_remaining,
+                    "signal_score":          score,
+                    "signal_confidence":     confidence,
+                })
+            return jsonify(result)
+
+        # Fallback: read from trade_log.json for pre-DB trades
         with open(TRADE_PATH) as f:
             raw = json.load(f)
         if not isinstance(raw, list):
-            raw = [raw]   # handle single-object edge case
+            raw = [raw]
         result = []
         for t in reversed(raw):
+            side = t.get("side")
+            out  = t.get("market_outcome") or t.get("outcome")
+            to   = t.get("trade_outcome") or (
+                "win"  if (side == "yes" and out == "up") or (side == "no" and out == "down") else
+                "loss" if out in ("up", "down") else None
+            )
             result.append({
-                "ts":                t.get("timestamp"),
-                "market_slug":       t.get("slug"),
-                "trade_side":        t.get("side"),
-                "signal_side":       t.get("side"),
-                "trade_amount":      t.get("position_size"),
-                "trade_result":      t.get("pnl"),
-                "outcome":           t.get("outcome"),
-                "resolved":          1 if t.get("outcome") is not None else 0,
-                "price_now":         None,
-                "btc_vs_reference":  t.get("vs_ref"),
-                "momentum_5m":       t.get("momentum_pct"),
-                "poly_yes_price":    t.get("poly_yes_price"),
-                "seconds_remaining": t.get("time_remaining"),
-                "signal_score":      t.get("score"),
-                "signal_confidence": t.get("confidence"),
-                "filter_reason":     None,
+                "ts":                    t.get("timestamp"),
+                "trade_id":              t.get("trade_id"),
+                "market_slug":           t.get("slug"),
+                "trade_side":            side,
+                "signal_side":           side,
+                "trade_amount":          t.get("position_size"),
+                "shares":                t.get("shares"),
+                "entry_price":           t.get("entry_price"),
+                "trade_result":          t.get("pnl"),
+                "pnl":                   t.get("pnl"),
+                "outcome":               out,
+                "trade_outcome":         to,
+                "resolved":              t.get("resolved", 1 if out else 0),
+                "btc_vs_reference":      t.get("vs_ref"),
+                "momentum_5m":           t.get("momentum_5m") or t.get("momentum_pct"),
+                "momentum_1m":           t.get("momentum_1m"),
+                "momentum_15m":          t.get("momentum_15m"),
+                "volume_ratio":          t.get("volume_ratio"),
+                "rsi_14":                t.get("rsi_14"),
+                "cex_poly_lag":          t.get("cex_poly_lag"),
+                "price_acceleration":    t.get("price_acceleration"),
+                "vol_adjusted_momentum": t.get("vol_adjusted_momentum"),
+                "poly_yes_price":        t.get("poly_yes_price"),
+                "seconds_remaining":     t.get("time_remaining"),
+                "signal_score":          t.get("score"),
+                "signal_confidence":     t.get("confidence"),
             })
         return jsonify(result[:n])
     except FileNotFoundError:
@@ -602,31 +671,56 @@ def trades():
 
 @app.route("/api/pnl-summary")
 def pnl_summary():
-    """P&L summary sourced from trade_log.json (same as /api/trades)."""
-    try:
-        with open(TRADE_PATH) as f:
-            raw = json.load(f)
-        if not isinstance(raw, list):
-            raw = [raw]
-    except FileNotFoundError:
-        raw = []
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+    """P&L summary sourced from the SQLite trades table."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    today_rows = [t for t in raw if (t.get("timestamp") or "")[:10] == today]
-    resolved   = [t for t in raw if t.get("outcome") in ("up", "down") and t.get("pnl") is not None]
-    total_pnl  = sum(t["pnl"] for t in resolved)
-    today_pnl  = sum(t["pnl"] for t in today_rows if t.get("pnl") is not None)
-    wins       = sum(1 for t in resolved if t["pnl"] > 0)
-    return jsonify({
-        "total_trades":    len(raw),
-        "total_pnl":       round(total_pnl, 4),
-        "today_trades":    len(today_rows),
-        "today_pnl":       round(today_pnl, 4),
-        "win_rate":        round(wins / len(resolved), 4) if resolved else None,
-        "resolved_trades": len(resolved),
-    })
+    try:
+        conn = get_db()
+        total_trades = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+        today_trades = conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE timestamp >= ?", (today,)
+        ).fetchone()[0]
+        resolved_rows = conn.execute(
+            "SELECT pnl, trade_outcome FROM trades WHERE resolved = 1"
+        ).fetchall()
+        today_pnl_row = conn.execute(
+            "SELECT COALESCE(SUM(pnl),0) FROM trades WHERE resolved=1 AND timestamp >= ?", (today,)
+        ).fetchone()[0]
+        conn.close()
+
+        wins     = sum(1 for r in resolved_rows if r[1] == "win")
+        losses   = sum(1 for r in resolved_rows if r[1] == "loss")
+        total_pnl = sum(r[0] for r in resolved_rows if r[0] is not None)
+        n_resolved = len(resolved_rows)
+        return jsonify({
+            "total_trades":    total_trades,
+            "total_pnl":       round(total_pnl, 4),
+            "today_trades":    today_trades,
+            "today_pnl":       round(today_pnl_row or 0, 4),
+            "win_rate":        round(wins / n_resolved, 4) if n_resolved else None,
+            "resolved_trades": n_resolved,
+            "wins":            wins,
+            "losses":          losses,
+        })
+    except Exception as e:
+        # Fallback to JSON if trades table doesn't exist yet
+        try:
+            with open(TRADE_PATH) as f:
+                raw = json.load(f) if hasattr(f, 'read') else []
+            if not isinstance(raw, list):
+                raw = []
+        except Exception:
+            raw = []
+        today_rows = [t for t in raw if (t.get("timestamp") or "")[:10] == today]
+        resolved   = [t for t in raw if t.get("pnl") is not None]
+        wins       = sum(1 for t in resolved if (t.get("pnl") or 0) > 0)
+        return jsonify({
+            "total_trades":    len(raw),
+            "total_pnl":       round(sum(t["pnl"] for t in resolved), 4),
+            "today_trades":    len(today_rows),
+            "today_pnl":       round(sum(t.get("pnl") or 0 for t in today_rows), 4),
+            "win_rate":        round(wins / len(resolved), 4) if resolved else None,
+            "resolved_trades": len(resolved),
+        })
 
 
 # ─────────────────────────────────────────────────────────────────────────────

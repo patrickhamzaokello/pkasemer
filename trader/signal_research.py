@@ -207,8 +207,184 @@ def init_db(path=DB_PATH):
             conn.execute(f"ALTER TABLE signal_observations ADD COLUMN {col} {typedef}")
         except sqlite3.OperationalError:
             pass  # column already exists
+
+    # ── Trades table (written by fast_trader, resolved here) ──────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS trades (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_id              TEXT UNIQUE,
+            timestamp             TEXT NOT NULL,
+            hour_utc              INTEGER,
+            slug                  TEXT NOT NULL,
+            source                TEXT,
+            asset                 TEXT,
+            signal_source         TEXT,
+            side                  TEXT,
+            score                 REAL,
+            confidence            REAL,
+            entry_price           REAL,
+            position_size         REAL,
+            shares                REAL,
+            time_remaining        INTEGER,
+            -- CEX signals at trade time
+            momentum_5m           REAL,
+            momentum_1m           REAL,
+            momentum_15m          REAL,
+            vs_ref                REAL,
+            volume_ratio          REAL,
+            rsi_14                REAL,
+            cex_poly_lag          REAL,
+            price_acceleration    REAL,
+            vol_adjusted_momentum REAL,
+            -- Poly signals
+            poly_yes_price        REAL,
+            -- Resolution (updated by resolve_trade_outcomes)
+            market_outcome        TEXT,    -- 'up' or 'down'
+            trade_outcome         TEXT,    -- 'win' or 'loss'
+            pnl                   REAL,    -- USDC net profit/loss
+            resolved              INTEGER DEFAULT 0,
+            resolve_ts            TEXT
+        )
+    """)
     conn.commit()
     return conn
+
+
+def upsert_trade(conn, record: dict) -> None:
+    """Insert a trade record into the trades table (ignore on duplicate trade_id)."""
+    conn.execute("""
+        INSERT OR IGNORE INTO trades (
+            trade_id, timestamp, hour_utc, slug, source, asset, signal_source,
+            side, score, confidence, entry_price, position_size, shares, time_remaining,
+            momentum_5m, momentum_1m, momentum_15m, vs_ref, volume_ratio, rsi_14,
+            cex_poly_lag, price_acceleration, vol_adjusted_momentum, poly_yes_price
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (
+        record.get("trade_id"),
+        record.get("timestamp"),
+        record.get("hour_utc"),
+        record.get("slug"),
+        record.get("source"),
+        record.get("asset"),
+        record.get("signal_source"),
+        record.get("side"),
+        record.get("score"),
+        record.get("confidence"),
+        record.get("entry_price"),
+        record.get("position_size"),
+        record.get("shares"),
+        record.get("time_remaining"),
+        record.get("momentum_5m"),
+        record.get("momentum_1m"),
+        record.get("momentum_15m"),
+        record.get("vs_ref"),
+        record.get("volume_ratio"),
+        record.get("rsi_14"),
+        record.get("cex_poly_lag"),
+        record.get("price_acceleration"),
+        record.get("vol_adjusted_momentum"),
+        record.get("poly_yes_price"),
+    ))
+    conn.commit()
+
+
+def resolve_trade_outcomes(conn, trade_log_path: str = "/data/trade_log.json") -> int:
+    """
+    For each unresolved trade, check if the market has closed on Gamma and compute P&L.
+
+    win  → side matched market direction → pnl = shares * 1.0 - position_size
+    loss → opposite direction            → pnl = -position_size
+    """
+    rows = conn.execute("""
+        SELECT id, trade_id, slug, side, entry_price, position_size, shares, timestamp
+        FROM trades WHERE resolved = 0
+        ORDER BY timestamp ASC
+    """).fetchall()
+
+    resolved_count = 0
+    for (db_id, trade_id, slug, side, entry_price, position_size, shares, ts_str) in rows:
+        # Wait until at least 10 minutes after window expiry.
+        # Slug ends with the window open-timestamp; add 5m + 10m buffer.
+        try:
+            window_open_ts = int(slug.rsplit("-", 1)[-1])
+            window_end = datetime.fromtimestamp(window_open_ts + 300, tz=timezone.utc)
+            if (datetime.now(timezone.utc) - window_end).total_seconds() < 600:
+                continue
+        except (ValueError, IndexError):
+            try:
+                if (datetime.now(timezone.utc) - datetime.fromisoformat(ts_str)).total_seconds() < 600:
+                    continue
+            except ValueError:
+                continue
+
+        # Fetch market from Gamma API
+        market = None
+        data = _get(f"{GAMMA_API}/events?slug={slug}")
+        if data and isinstance(data, list) and data:
+            mkts = data[0].get("markets") or []
+            if mkts:
+                market = mkts[0]
+        if not market or not market.get("closed", False):
+            continue
+
+        market_outcome = _determine_outcome(market)   # 'up', 'down', or 'unclear'
+        if market_outcome not in ("up", "down"):
+            continue
+
+        # Determine trade result
+        if side == "yes":
+            trade_outcome = "win" if market_outcome == "up" else "loss"
+        else:
+            trade_outcome = "win" if market_outcome == "down" else "loss"
+
+        # P&L: winning shares pay $1.00 each at resolution
+        effective_shares = shares if (shares or 0) > 0 else (
+            (position_size / entry_price) if entry_price and entry_price > 0 else 0
+        )
+        pnl = round(effective_shares - position_size, 4) if trade_outcome == "win" else round(-position_size, 4)
+        resolve_ts = datetime.now(timezone.utc).isoformat()
+
+        conn.execute("""
+            UPDATE trades
+            SET market_outcome=?, trade_outcome=?, pnl=?, resolved=1, resolve_ts=?
+            WHERE id=?
+        """, (market_outcome, trade_outcome, pnl, resolve_ts, db_id))
+        resolved_count += 1
+
+    if resolved_count:
+        conn.commit()
+        _sync_trade_log_from_db(conn, trade_log_path)
+        print(f"  [resolve_trades] resolved {resolved_count} trade outcomes", flush=True)
+    return resolved_count
+
+
+def _sync_trade_log_from_db(conn, trade_log_path: str) -> None:
+    """Sync resolved outcomes from the trades DB table back into trade_log.json."""
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(trade_log_path)
+    if not p.exists():
+        return
+    try:
+        trades = _json.loads(p.read_text())
+    except Exception:
+        return
+
+    rows = conn.execute(
+        "SELECT trade_id, market_outcome, trade_outcome, pnl FROM trades WHERE resolved=1"
+    ).fetchall()
+    resolved = {r[0]: {"market_outcome": r[1], "outcome": r[2], "pnl": r[3]} for r in rows}
+
+    updated = 0
+    for t in trades:
+        tid = t.get("trade_id")
+        if tid and tid in resolved and not t.get("resolved"):
+            t.update(resolved[tid])
+            t["resolved"] = 1
+            updated += 1
+
+    if updated:
+        p.write_text(_json.dumps(trades, indent=2))
 
 
 # =============================================================================

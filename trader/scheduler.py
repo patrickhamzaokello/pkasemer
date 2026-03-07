@@ -110,11 +110,14 @@ def run_resolver():
     """Resolve pending outcomes every 10 minutes."""
     try:
         sys.path.insert(0, "/app")
-        from signal_research import resolve_outcomes, init_db
+        from signal_research import resolve_outcomes, resolve_trade_outcomes, init_db
         conn = init_db(DB_PATH)
         n = resolve_outcomes(conn)
         if n > 0:
-            log.info(f"Resolved {n} outcomes")
+            log.info(f"Resolved {n} signal outcomes")
+        t = resolve_trade_outcomes(conn)
+        if t > 0:
+            log.info(f"Resolved {t} trade outcomes")
         conn.close()
     except Exception as e:
         log.error(f"Resolver error: {e}", exc_info=True)

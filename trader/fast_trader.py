@@ -28,6 +28,7 @@ Changes from original:
 import os
 import sys
 import json
+import sqlite3
 import argparse
 import time
 from datetime import datetime, timezone, timedelta  # timedelta kept for future use
@@ -310,47 +311,63 @@ def _send_telegram(token: str, chat_id: str, slug: str, side: str, score: float,
 
 
 def _log_trade_local(trade_id, side, score, confidence, entry_price, position_size,
-                      shares, slug, remaining, cex_signals, poly_signals):
-    """Append trade to local JSON log for analysis."""
+                      shares, slug, remaining, cex_signals, poly_signals, lag=0.0):
+    """Append trade to local JSON log and write to SQLite trades table."""
+    now = datetime.now(timezone.utc)
     record = {
-        "timestamp":     datetime.now(timezone.utc).isoformat(),
-        "hour_utc":      datetime.now(timezone.utc).hour,
-        "trade_id":      trade_id,
-        "source":        TRADE_SOURCE,
-        "thesis":        f"{side.upper()} score={score:.3f} conf={confidence:.3f}",
-        "asset":         ASSET,
-        "signal_source": SIGNAL_SOURCE,
-        "slug":          slug,
-        "side":          side,
-        "score":         round(score, 4),
-        "confidence":    round(confidence, 4),
-        "entry_price":   round(entry_price, 4),
-        "position_size": round(position_size, 4),
-        "shares":        round(shares, 2),
-        "time_remaining":int(remaining),
-        # CEX signals
-        "momentum_pct":  round(cex_signals.get("momentum_5m", 0) or 0, 3),
-        "momentum_1m":   round(cex_signals.get("momentum_1m", 0) or 0, 4),
-        "momentum_15m":  round(cex_signals.get("momentum_15m", 0) or 0, 4),
-        "vs_ref":        round(cex_signals.get("btc_vs_reference", 0) or 0, 4),
-        "volume_ratio":  round(cex_signals.get("volume_ratio", 1.0) or 1.0, 2),
-        "rsi_14":        round(cex_signals.get("rsi_14", 50) or 50, 2),
+        "timestamp":              now.isoformat(),
+        "hour_utc":               now.hour,
+        "trade_id":               trade_id,
+        "source":                 TRADE_SOURCE,
+        "thesis":                 f"{side.upper()} score={score:.3f} conf={confidence:.3f}",
+        "asset":                  ASSET,
+        "signal_source":          SIGNAL_SOURCE,
+        "slug":                   slug,
+        "side":                   side,
+        "score":                  round(score, 4),
+        "confidence":             round(confidence, 4),
+        "entry_price":            round(entry_price, 4),
+        "position_size":          round(position_size, 4),
+        "shares":                 round(shares, 2),
+        "time_remaining":         int(remaining),
+        # CEX signals at trade time
+        "momentum_5m":            round(cex_signals.get("momentum_5m", 0) or 0, 4),
+        "momentum_1m":            round(cex_signals.get("momentum_1m", 0) or 0, 4),
+        "momentum_15m":           round(cex_signals.get("momentum_15m", 0) or 0, 4),
+        "vs_ref":                 round(cex_signals.get("btc_vs_reference", 0) or 0, 4),
+        "volume_ratio":           round(cex_signals.get("volume_ratio", 1.0) or 1.0, 3),
+        "rsi_14":                 round(cex_signals.get("rsi_14", 50) or 50, 2),
+        "cex_poly_lag":           round(lag, 4),
+        "price_acceleration":     round(cex_signals.get("price_acceleration", 0) or 0, 4),
+        "vol_adjusted_momentum":  round(cex_signals.get("vol_adjusted_momentum", 0) or 0, 4),
         # Poly signals
-        "poly_yes_price":round(poly_signals.get("poly_yes_price", 0.5) or 0.5, 4),
-        # Result — filled in later
-        "outcome":       None,
-        "pnl":           None,
+        "poly_yes_price":         round(poly_signals.get("poly_yes_price", 0.5) or 0.5, 4),
+        # Resolution — filled in by resolve_trade_outcomes
+        "market_outcome":         None,
+        "outcome":                None,
+        "pnl":                    None,
+        "resolved":               0,
     }
 
+    # ── JSON log (append) ─────────────────────────────────────────────────────
     trades = []
     if _TRADE_LOG_FILE.exists():
         try:
             trades = json.loads(_TRADE_LOG_FILE.read_text())
         except Exception:
             trades = []
-
     trades.append(record)
     _TRADE_LOG_FILE.write_text(json.dumps(trades, indent=2))
+
+    # ── SQLite trades table (upsert; enables in-place outcome updates) ────────
+    try:
+        from signal_research import upsert_trade, init_db
+        db_path = os.environ.get("DB_PATH", "/data/signal_research.db")
+        conn = init_db(db_path)
+        upsert_trade(conn, record)
+        conn.close()
+    except Exception as _db_err:
+        print(f"  [trade-db] write failed: {_db_err}", flush=True)
 
 def warm_import_cache(asset="BTC"):
     from market_utils import get_fast_market_slugs
@@ -1009,6 +1026,7 @@ def run_fast_market_strategy(
                         remaining=remaining,
                         cex_signals=cex_signals,
                         poly_signals=poly_signals,
+                        lag=cex_lag_val,
                     )
                 except Exception as e:
                     log(f"  WARNING: trade log failed: {e}", force=True)
