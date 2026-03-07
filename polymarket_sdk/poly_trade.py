@@ -150,13 +150,21 @@ def _parse_order_response(resp: Any, entry_price: float) -> dict:
         order_id  = resp.get("orderID") or resp.get("order_id") or resp.get("id")
         error_msg = resp.get("errorMsg") or resp.get("error") or ""
 
-        # makingAmount / takingAmount are in base units (USDC 6 decimals, shares 6 decimals)
+        # makingAmount / takingAmount are in base units (USDC 6 decimals, shares 6 decimals).
+        # FOK responses sometimes return top-level makingAmount=0 with fills inside matchedOrders.
         taking_raw = resp.get("takingAmount", "0") or "0"
         making_raw = resp.get("makingAmount", "0") or "0"
         try:
             shares_bought = float(making_raw) / 1e6
         except (ValueError, TypeError):
             shares_bought = 0.0
+        # Fallback: sum makingAmount across matchedOrders if top-level is 0
+        if shares_bought == 0:
+            for fill in (resp.get("matchedOrders") or []):
+                try:
+                    shares_bought += float(fill.get("makingAmount", "0") or "0") / 1e6
+                except (ValueError, TypeError):
+                    pass
         try:
             usdc_spent = float(taking_raw) / 1e6
             avg_price  = (usdc_spent / shares_bought) if shares_bought > 0 else entry_price
@@ -172,6 +180,13 @@ def _parse_order_response(resp: Any, entry_price: float) -> dict:
             shares_bought = float(making_raw) / 1e6
         except (ValueError, TypeError):
             shares_bought = 0.0
+        if shares_bought == 0:
+            for fill in (getattr(resp, "matchedOrders", None) or []):
+                try:
+                    val = fill.get("makingAmount") if isinstance(fill, dict) else getattr(fill, "makingAmount", "0")
+                    shares_bought += float(val or "0") / 1e6
+                except (ValueError, TypeError):
+                    pass
         try:
             usdc_spent = float(taking_raw) / 1e6
             avg_price  = (usdc_spent / shares_bought) if shares_bought > 0 else entry_price

@@ -304,8 +304,8 @@ def _send_telegram(token: str, chat_id: str, slug: str, side: str, score: float,
         url = f"https://api.telegram.org/bot{token.strip()}/sendMessage"
         req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
         urlopen(req, timeout=8)
-    except Exception:
-        pass  # non-fatal
+    except Exception as _tg_err:
+        print(f"[telegram] send failed: {_tg_err}", flush=True)
 
 
 def _log_trade_local(trade_id, side, score, confidence, entry_price, position_size,
@@ -971,6 +971,10 @@ def run_fast_market_strategy(
 
         if result and result.get("success"):
             shares   = result.get("shares_bought") or result.get("shares") or 0
+            # CLOB FOK responses sometimes return makingAmount=0 even on a fill;
+            # estimate from spend / entry_price as a fallback so logs are meaningful.
+            if shares == 0 and entry_price > 0:
+                shares = round(position_size / entry_price, 1)
             trade_id = result.get("trade_id")
             log(f"  TRADED {shares:.1f} {side.upper()} shares @ ${entry_price:.3f}", force=True)
             daily_spend["spent"]  += position_size
