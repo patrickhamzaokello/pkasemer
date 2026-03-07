@@ -107,6 +107,7 @@ CONFIG_SCHEMA = {
     "daily_budget":       {"default": 10.0,      "env": "SIMMER_SPRINT_DAILY_BUDGET", "type": float},
     "composite_threshold":{"default": 0.60,      "env": "SIMMER_SPRINT_COMP_THRESH",  "type": float},
     "max_position_per_window": {"default": 3.50,  "env": "SIMMER_MAX_PER_WINDOW",       "type": float},
+    "max_no_score":            {"default": 0.284, "env": "SIMMER_MAX_NO_SCORE",          "type": float},
     "webhook_url":        {"default": "",         "env": "SIMMER_WEBHOOK_URL",          "type": str},
     "telegram_bot_token": {"default": "",         "env": "TELEGRAM_BOT_TOKEN",          "type": str},
     "telegram_chat_id":   {"default": "",         "env": "TELEGRAM_CHAT_ID",            "type": str},
@@ -833,6 +834,15 @@ def run_fast_market_strategy(
 
     side         = signal["side"]
     position_pct = signal["position_pct"]
+
+    # ── NO side score cap ─────────────────────────────────────────────────────
+    MAX_NO_SCORE = cfg.get("max_no_score", 0.284)
+    if side == "no" and score > MAX_NO_SCORE:
+        log(
+            f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+            f"score={score:.3f} → NO BLOCK: score {score:.3f} > max_no_score {MAX_NO_SCORE:.3f}"
+        )
+        return
 
     # Hard liquidity floor — FAK orders fail on thin books regardless of signal.
     # Skip sentinels: vol_r <= 0.05 means new candle with sub-second volume accumulated
