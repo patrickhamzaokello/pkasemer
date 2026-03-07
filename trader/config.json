@@ -20,7 +20,8 @@
   "max_entry_no": 0.65,
   "min_lag_override": 0.15,
   "webhook_url": "",
-  "telegramlink": "configure bot",
+  "telegram_bot_token": "",
+  "telegram_chat_id": "",
   "signal_weights": {
     "btc_vs_reference": 0.315,
     "vol_adjusted_momentum": 0.194,

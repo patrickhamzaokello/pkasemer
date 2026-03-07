@@ -106,6 +106,8 @@ CONFIG_SCHEMA = {
     "daily_budget":       {"default": 10.0,      "env": "SIMMER_SPRINT_DAILY_BUDGET", "type": float},
     "composite_threshold":{"default": 0.60,      "env": "SIMMER_SPRINT_COMP_THRESH",  "type": float},
     "webhook_url":        {"default": "",         "env": "SIMMER_WEBHOOK_URL",          "type": str},
+    "telegram_bot_token": {"default": "",         "env": "TELEGRAM_BOT_TOKEN",          "type": str},
+    "telegram_chat_id":   {"default": "",         "env": "TELEGRAM_CHAT_ID",            "type": str},
 }
 
 
@@ -276,6 +278,34 @@ def _send_webhook(url: str, slug: str, side: str, score: float,
         urlopen(req, timeout=5)
     except Exception:
         pass  # webhook failures are non-fatal
+
+
+def _send_telegram(token: str, chat_id: str, slug: str, side: str, score: float,
+                   position_size: float, shares: float, entry_price: float,
+                   remaining: float, lag: float) -> None:
+    """Send a live-trade alert via Telegram Bot API."""
+    if not token or not token.strip() or not chat_id or not chat_id.strip():
+        return
+    arrow  = "\U0001f7e2" if side == "yes" else "\U0001f534"  # 🟢 / 🔴
+    bar    = "\u2501" * 20  # ━━━━━━━━━━━━━━━━━━━━
+    market = slug if len(slug) <= 40 else slug[:37] + "..."
+    text   = (
+        f"{arrow} <b>LIVE TRADE \u2014 {side.upper()}</b>\n"
+        f"<code>{bar}</code>\n"
+        f"Market: <code>{market}</code>\n"
+        f"Score:  <b>{score:.3f}</b>\n"
+        f"Entry:  ${entry_price:.3f}  ({shares:.1f} shares)\n"
+        f"Size:   <b>${position_size:.2f}</b>  |  {remaining:.0f}s left\n"
+        f"Lag:    {lag:+.3f}"
+    )
+    payload = json.dumps({"chat_id": chat_id.strip(), "text": text,
+                          "parse_mode": "HTML"}).encode()
+    try:
+        url = f"https://api.telegram.org/bot{token.strip()}/sendMessage"
+        req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        urlopen(req, timeout=8)
+    except Exception:
+        pass  # non-fatal
 
 
 def _log_trade_local(trade_id, side, score, confidence, entry_price, position_size,
@@ -956,6 +986,18 @@ def run_fast_market_strategy(
                 position_size=position_size,
                 shares=shares,
                 entry_price=entry_price,
+            )
+            _send_telegram(
+                token=cfg.get("telegram_bot_token", ""),
+                chat_id=cfg.get("telegram_chat_id", ""),
+                slug=best["slug"],
+                side=side,
+                score=score,
+                position_size=position_size,
+                shares=shares,
+                entry_price=entry_price,
+                remaining=remaining,
+                lag=cex_lag_val,
             )
         else:
             error = result.get("error", "Unknown") if result else "no response"
