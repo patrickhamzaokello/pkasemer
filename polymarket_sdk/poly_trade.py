@@ -163,11 +163,20 @@ def _parse_order_response(resp: Any, entry_price: float) -> dict:
         except (ValueError, TypeError, ZeroDivisionError):
             avg_price = entry_price
     else:
-        success       = getattr(resp, "success", False)
-        order_id      = getattr(resp, "orderID", None) or getattr(resp, "order_id", None)
-        error_msg     = getattr(resp, "errorMsg", "") or ""
-        shares_bought = 0.0
-        avg_price     = entry_price
+        success    = getattr(resp, "success", False) or getattr(resp, "status", "") in ("matched", "MATCHED")
+        order_id   = getattr(resp, "orderID", None) or getattr(resp, "order_id", None)
+        error_msg  = getattr(resp, "errorMsg", "") or getattr(resp, "error", "") or ""
+        taking_raw = str(getattr(resp, "takingAmount", "0") or "0")
+        making_raw = str(getattr(resp, "makingAmount", "0") or "0")
+        try:
+            shares_bought = float(making_raw) / 1e6
+        except (ValueError, TypeError):
+            shares_bought = 0.0
+        try:
+            usdc_spent = float(taking_raw) / 1e6
+            avg_price  = (usdc_spent / shares_bought) if shares_bought > 0 else entry_price
+        except (ValueError, TypeError, ZeroDivisionError):
+            avg_price = entry_price
 
     if error_msg:
         success = False

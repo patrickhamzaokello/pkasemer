@@ -8,21 +8,21 @@
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #070c16;
-    --surface: #0d1828;
-    --border: #182038;
-    --border-bright: #1e3050;
-    --text: #a8c4e0;
-    --text-dim: #3d5a7a;
-    --text-bright: #d8eeff;
-    --green: #38bdf8;
-    --green-dim: #0ea5e9;
-    --red: #6b8fb8;
-    --red-dim: #4a6a88;
-    --amber: #7dd3fc;
-    --blue: #38bdf8;
-    --blue-dim: #0284c7;
-    --cyan: #67e8f9;
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --border: #1e1e1e;
+    --border-bright: #2a2a2a;
+    --text: #d4d4d4;
+    --text-dim: #666666;
+    --text-bright: #f0f0f0;
+    --green: #22c55e;
+    --green-dim: #16a34a;
+    --red: #ef4444;
+    --red-dim: #dc2626;
+    --amber: #f59e0b;
+    --blue: #3b82f6;
+    --blue-dim: #1d4ed8;
+    --cyan: #06b6d4;
     --mono: 'JetBrains Mono', monospace;
     --display: 'Syne', sans-serif;
   }
@@ -984,7 +984,7 @@ async function fetchCorrelations() {
         ${d.data.map(row => {
           const absCorr = Math.abs(row.corr);
           const barWidth = maxCorr > 0 ? Math.round(absCorr / maxCorr * 80) : 0;
-          const barColor = row.corr > 0 ? '#00e676' : '#ff3d57';
+          const barColor = row.corr > 0 ? '#22c55e' : '#ef4444';
           const corrStr = (row.corr >= 0 ? '+' : '') + row.corr.toFixed(4);
           const corrColor = row.corr > 0.05 ? 'var(--green)' : row.corr < -0.05 ? 'var(--red)' : 'var(--text-dim)';
 
@@ -1167,7 +1167,7 @@ async function fetchSparkline() {
     pts.forEach((v,i) => areaPath += ` L ${toX(i)},${toY(v)}`);
     areaPath += ` L ${toX(n-1)},${zeroY} Z`;
 
-    const lineColor = latest > 0.02 ? '#00e676' : latest < -0.02 ? '#ff3d57' : '#00bcd4';
+    const lineColor = latest > 0.02 ? '#22c55e' : latest < -0.02 ? '#ef4444' : '#06b6d4';
     const fillColor = latest > 0.02 ? 'rgba(0,230,118,0.08)' : latest < -0.02 ? 'rgba(255,61,87,0.08)' : 'rgba(0,188,212,0.06)';
 
     svg.innerHTML = `
@@ -1227,7 +1227,7 @@ async function fetchWindowHistory() {
 
           const vr = w.avg_vs_ref;
           const barW = vr != null ? Math.round(Math.abs(vr) / maxAbs * 60) : 0;
-          const barColor = vr > 0.01 ? '#00e676' : vr < -0.01 ? '#ff3d57' : '#4a6080';
+          const barColor = vr > 0.01 ? '#22c55e' : vr < -0.01 ? '#ef4444' : '#666666';
           const vrStr = fmtPct(vr, 3);
           const vrColor = pctColor(vr, 0.01);
 

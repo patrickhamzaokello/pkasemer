@@ -8,21 +8,21 @@
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #070c16;
-    --surface: #0d1828;
-    --border: #182038;
-    --border-bright: #1e3050;
-    --text: #a8c4e0;
-    --text-dim: #3d5a7a;
-    --text-bright: #d8eeff;
-    --green: #38bdf8;
-    --green-dim: #0ea5e9;
-    --red: #6b8fb8;
-    --red-dim: #4a6a88;
-    --amber: #7dd3fc;
-    --blue: #38bdf8;
-    --blue-dim: #0284c7;
-    --cyan: #67e8f9;
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --border: #1e1e1e;
+    --border-bright: #2a2a2a;
+    --text: #d4d4d4;
+    --text-dim: #666666;
+    --text-bright: #f0f0f0;
+    --green: #22c55e;
+    --green-dim: #16a34a;
+    --red: #ef4444;
+    --red-dim: #dc2626;
+    --amber: #f59e0b;
+    --blue: #3b82f6;
+    --blue-dim: #1d4ed8;
+    --cyan: #06b6d4;
     --mono: 'JetBrains Mono', monospace;
     --display: 'Syne', sans-serif;
   }
@@ -1203,7 +1203,7 @@ function drawPnl(trades) {
   const ty   = v => H - PAD - ((v - minY) / rng) * (H - PAD*2);
   const zY   = ty(0);
   const fin  = pts[n-1].y;
-  const lc   = fin >= 0 ? '#00e676' : '#ff3d57';
+  const lc   = fin >= 0 ? '#22c55e' : '#ef4444';
 
   let area = `M${tx(0)},${zY}`;
   pts.forEach((p,i) => area += ` L${tx(i)},${ty(p.y)}`);
@@ -1211,7 +1211,7 @@ function drawPnl(trades) {
   const line = pts.map((p,i) => `${i===0?'M':'L'}${tx(i)},${ty(p.y)}`).join(' ');
   const dots = pts.map((p,i) => {
     const won = (p.t.trade_side==='yes'&&p.t.outcome==='up') || (p.t.trade_side==='no'&&p.t.outcome==='down');
-    return `<circle cx="${tx(i)}" cy="${ty(p.y)}" r="2.5" fill="${won?'#00e676':'#ff3d57'}" opacity="0.85"/>`;
+    return `<circle cx="${tx(i)}" cy="${ty(p.y)}" r="2.5" fill="${won?'#22c55e':'#ef4444'}" opacity="0.85"/>`;
   }).join('');
 
   svg.innerHTML = `

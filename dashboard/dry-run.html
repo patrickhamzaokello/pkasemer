@@ -8,9 +8,9 @@
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #070c16; --surface: #0d1828; --border: #182038; --border-bright: #1e3050;
-    --text: #a8c4e0; --text-dim: #3d5a7a; --text-bright: #d8eeff;
-    --green: #38bdf8; --red: #6b8fb8; --amber: #7dd3fc; --blue: #38bdf8; --cyan: #67e8f9;
+    --bg: #0a0a0a; --surface: #111111; --border: #1e1e1e; --border-bright: #2a2a2a;
+    --text: #d4d4d4; --text-dim: #666666; --text-bright: #f0f0f0;
+    --green: #22c55e; --red: #ef4444; --amber: #f59e0b; --blue: #3b82f6; --cyan: #06b6d4;
     --mono: 'JetBrains Mono', monospace; --display: 'Syne', sans-serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -497,7 +497,7 @@ async function fetchScoreHistory() {
 
     const dots = rows.filter(r => r.should_trade).map((r, _, arr) => {
       const idx = rows.indexOf(r);
-      const color = r.side === 'yes' ? '#00e676' : '#ff3d57';
+      const color = r.side === 'yes' ? '#22c55e' : '#ef4444';
       return `<circle cx="${toX(idx)}" cy="${toY(r.score)}" r="3" fill="${color}" opacity="0.8"/>`;
     }).join('');
 
