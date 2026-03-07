@@ -877,11 +877,11 @@ def run_fast_market_strategy(
     window_key     = f"window_{slug}"
     window_spent   = daily_spend.get(window_key, 0.0)
     max_per_window = cfg.get("max_position_per_window", MAX_POSITION_USD)
-    if window_spent >= max_per_window:
+    if window_spent + position_size > max_per_window:
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
             f"score={score:.3f} → {side.upper()} BLOCK: window cap "
-            f"(${window_spent:.2f} already spent on this slug)"
+            f"(${window_spent:.2f} spent + ${position_size:.2f} proposed > ${max_per_window:.2f} limit)"
         )
         return
 
