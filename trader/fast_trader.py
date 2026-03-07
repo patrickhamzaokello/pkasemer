@@ -953,6 +953,22 @@ def run_fast_market_strategy(
         )
     else:
         result = execute_trade(market_id, side, position_size)
+
+        # Recover from SDK token-cache miss on container restart:
+        # The SDK loses its internal token_id mapping on restart even though our
+        # market_id_cache.json still has the slug, so import_market is skipped
+        # and the trade fails.  Fix: evict + re-import + retry once.
+        if result and "No token_id" in (result.get("error") or ""):
+            log(f"  SDK token cache miss — evicting slug and re-importing...", force=True)
+            _market_id_cache.pop(slug, None)
+            _save_market_cache(_market_id_cache)
+            market_id2, import_err2 = import_fast_market_market(slug)
+            if market_id2:
+                result = execute_trade(market_id2, side, position_size)
+            else:
+                log(f"  ERROR re-import failed: {import_err2}", force=True)
+                return
+
         if result and result.get("success"):
             shares   = result.get("shares_bought") or result.get("shares") or 0
             trade_id = result.get("trade_id")
