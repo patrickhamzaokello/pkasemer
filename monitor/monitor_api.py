@@ -21,6 +21,8 @@ import sqlite3
 import math
 import re
 import threading
+import csv
+import io
 from datetime import datetime, timezone, timedelta
 from urllib.request import urlopen, Request as _URLRequest
 from urllib.error import HTTPError, URLError
@@ -1551,6 +1553,42 @@ def event_stream():
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
                  "Connection": "keep-alive"},
     )
+
+
+@app.route("/api/export/<table_name>")
+def export_csv(table_name):
+    """Export a database table as a downloadable CSV file."""
+    ALLOWED_TABLES = {
+        "observations": ("signal_observations", "signal_observations.csv"),
+        "trades":        ("trades",              "trades.csv"),
+    }
+    if table_name not in ALLOWED_TABLES:
+        return jsonify({"error": f"Unknown table '{table_name}'. Choose: {list(ALLOWED_TABLES)}"}), 400
+
+    db_table, filename = ALLOWED_TABLES[table_name]
+    try:
+        conn = get_db()
+        rows = conn.execute(f"SELECT * FROM {db_table} ORDER BY id ASC").fetchall()
+        conn.close()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        if rows:
+            writer.writerow(rows[0].keys())
+            for row in rows:
+                writer.writerow(list(row))
+
+        csv_bytes = output.getvalue().encode("utf-8")
+        return Response(
+            csv_bytes,
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(csv_bytes)),
+            },
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/", defaults={"path": ""})
