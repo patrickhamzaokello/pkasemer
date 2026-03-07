@@ -105,6 +105,7 @@ CONFIG_SCHEMA = {
     "volume_confidence":  {"default": True,      "env": "SIMMER_SPRINT_VOL_CONF",     "type": bool},
     "daily_budget":       {"default": 10.0,      "env": "SIMMER_SPRINT_DAILY_BUDGET", "type": float},
     "composite_threshold":{"default": 0.60,      "env": "SIMMER_SPRINT_COMP_THRESH",  "type": float},
+    "max_position_per_window": {"default": 3.50,  "env": "SIMMER_MAX_PER_WINDOW",       "type": float},
     "webhook_url":        {"default": "",         "env": "SIMMER_WEBHOOK_URL",          "type": str},
     "telegram_bot_token": {"default": "",         "env": "TELEGRAM_BOT_TOKEN",          "type": str},
     "telegram_chat_id":   {"default": "",         "env": "TELEGRAM_CHAT_ID",            "type": str},
@@ -854,6 +855,19 @@ def run_fast_market_strategy(
         )
         return
 
+    # ── Per-window cap: check BEFORE sizing/bump so position_size is unmodified ─
+    slug           = best["slug"]
+    window_key     = f"window_{slug}"
+    window_spent   = daily_spend.get(window_key, 0.0)
+    max_per_window = cfg.get("max_position_per_window", MAX_POSITION_USD)
+    if window_spent >= max_per_window:
+        log(
+            f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+            f"score={score:.3f} → {side.upper()} BLOCK: window cap "
+            f"(${window_spent:.2f} already spent on this slug)"
+        )
+        return
+
     position_size = min(position_size, remaining_budget)
 
     if position_size < 0.50:
@@ -932,7 +946,6 @@ def run_fast_market_strategy(
     )
 
     # Gate: only consume an import slot on strong signals
-    slug = best["slug"]
     if slug not in _market_id_cache:
         if score < MIN_SCORE_TO_IMPORT and score > (1 - MIN_SCORE_TO_IMPORT):
             log(f"  SKIP import: score {score:.3f} too weak to spend import quota")
@@ -977,8 +990,9 @@ def run_fast_market_strategy(
                 shares = round(position_size / entry_price, 1)
             trade_id = result.get("trade_id")
             log(f"  TRADED {shares:.1f} {side.upper()} shares @ ${entry_price:.3f}", force=True)
-            daily_spend["spent"]  += position_size
-            daily_spend["trades"] += 1
+            daily_spend["spent"]              += position_size
+            daily_spend["trades"]             += 1
+            daily_spend[window_key]            = window_spent + position_size
             _save_daily_spend(daily_spend)
 
             if trade_id:
