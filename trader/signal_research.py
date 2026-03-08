@@ -1003,6 +1003,25 @@ def _now():
     return datetime.now(timezone.utc).strftime("%H:%M:%S")
 
 
+def _fmt_slug(slug):
+    """
+    Format a market slug for uniform log display.
+
+    btc-updown-5m-1772962200  →  BTC-5m@962200   (13 chars)
+    eth-updown-15m-1772962200 →  ETH-15m@962200  (14 chars)
+
+    Falls back to the last 20 chars for any unrecognised format.
+    """
+    parts = slug.split("-updown-", 1)
+    if len(parts) == 2:
+        coin = parts[0].upper()          # BTC / ETH / SOL
+        win_ts = parts[1].split("-", 1)  # ["5m", "1772962200"]
+        if len(win_ts) == 2:
+            window, ts = win_ts
+            return f"{coin}-{window}@{ts[-6:]}"
+    return slug[-20:]
+
+
 def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
     # FIX: import from market_utils, not fast_trader — eliminates circular import
     from market_utils import discover_fast_market_markets, find_best_fast_market
@@ -1144,7 +1163,7 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
             pass
 
     print(
-        f"[{_now()}] {best.get('slug','')[-19:]:19} {seconds_remaining:4.0f}s | "
+        f"[{_now()}] {_fmt_slug(best.get('slug','')):<15} {seconds_remaining:4.0f}s | "
         f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} vol={vol_r:.2f}x | "
         f"{score_str}"
     )

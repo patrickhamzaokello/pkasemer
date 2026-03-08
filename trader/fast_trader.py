@@ -283,6 +283,25 @@ def _send_webhook(url: str, slug: str, side: str, score: float,
         pass  # webhook failures are non-fatal
 
 
+def _fmt_slug(slug):
+    """
+    Format a market slug for uniform log display.
+
+    btc-updown-5m-1772962200  →  BTC-5m@962200
+    eth-updown-15m-1772962200 →  ETH-15m@962200
+
+    Falls back to the last 20 chars for any unrecognised format.
+    """
+    parts = slug.split("-updown-", 1)
+    if len(parts) == 2:
+        coin = parts[0].upper()
+        win_ts = parts[1].split("-", 1)
+        if len(win_ts) == 2:
+            window, ts = win_ts
+            return f"{coin}-{window}@{ts[-6:]}"
+    return slug[-20:]
+
+
 def _send_telegram(token: str, chat_id: str, slug: str, side: str, score: float,
                    position_size: float, shares: float, entry_price: float,
                    remaining: float, lag: float) -> None:
@@ -418,14 +437,14 @@ def warm_import_cache(asset="BTC"):
     print(f"  [cache warm] checking {len(slugs)} slugs for {asset}...", flush=True)
     for slug in slugs:
         if slug in _market_id_cache:
-            print(f"  [cache warm] {slug[-24:]} already cached ✓", flush=True)
+            print(f"  [cache warm] {_fmt_slug(slug):<15} already cached ✓", flush=True)
             continue
         # Single attempt only — no retries during warm
         market_id, err = import_fast_market_market(slug, max_retries=1)
         if market_id:
-            print(f"  [cache warm] {slug[-24:]} imported ✓", flush=True)
+            print(f"  [cache warm] {_fmt_slug(slug):<15} imported ✓", flush=True)
         else:
-            print(f"  [cache warm] {slug[-24:]} skipped: {err}", flush=True)
+            print(f"  [cache warm] {_fmt_slug(slug):<15} skipped: {err}", flush=True)
 
 
 def run_redeemer():
@@ -780,7 +799,7 @@ def run_fast_market_strategy(
 
     end_time  = best.get("end_time")
     remaining = (end_time - datetime.now(timezone.utc)).total_seconds() if end_time else 0
-    slug_short = best.get("slug", "")[-24:]
+    slug_short = _fmt_slug(best.get("slug", ""))
 
     if remaining > MAX_TIME_REMAINING:
         log(
