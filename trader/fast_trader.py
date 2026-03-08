@@ -811,16 +811,6 @@ def run_fast_market_strategy(
     remaining = (end_time - datetime.now(timezone.utc)).total_seconds() if end_time else 0
     slug_short = _fmt_slug(best.get("slug", ""))
 
-    if remaining > MAX_TIME_REMAINING:
-        # Peek at ref cache to show accurate seeding status in the log
-        _ref_peek = _load_ref_cache().get(best.get("slug", ""))
-        _ref_note = f"vs_ref={'seeded' if _ref_peek else 'not seeded'}"
-        log(
-            f"{mode_tag} {now_str} | {slug_short} {remaining:.0f}s | "
-            f"SKIP: too early ({remaining:.0f}s > {MAX_TIME_REMAINING}s max) | {_ref_note}"
-        )
-        return
-
     # Parse YES price; fall back to 0.5 only on genuine parse failure
     try:
         prices = json.loads(best.get("outcome_prices", "[]"))
@@ -834,6 +824,9 @@ def run_fast_market_strategy(
     fee_rate     = fee_rate_bps / 10000
 
     # ── Step 3: Collect signals ───────────────────────────────────────────────
+    # Done BEFORE the time guard so vs_ref is always shown in the SKIP log.
+    # CEX klines are served from the 15s in-process cache populated by the
+    # collector 5s earlier — no extra API calls.
     symbol = ASSET_SYMBOLS.get(ASSET, "BTCUSDT")
     cex_signals = extract_cex_signals(symbol)
     if not cex_signals:
@@ -886,6 +879,15 @@ def run_fast_market_strategy(
     poly_p     = poly_signals.get("poly_yes_price", 0.5) or 0.5
     cex_lag_val = _calc_cex_poly_lag(cex_signals, poly_signals) or 0.0
     cex_lag_str = f"{cex_lag_val:+.3f}"
+
+    # ── Time guard (after signals so vs_ref shows the real value) ─────────────
+    if remaining > MAX_TIME_REMAINING:
+        log(
+            f"{mode_tag} {now_str} | {slug_short} {remaining:.0f}s | "
+            f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} vol={vol_r:.2f}x | "
+            f"SKIP: too early ({remaining:.0f}s > {MAX_TIME_REMAINING}s max)"
+        )
+        return
 
     # Block trade if dominant signal (btc_vs_reference, weight=0.315) is missing.
     # A score built without it is unreliable -- better to skip than trade blind.
