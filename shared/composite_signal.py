@@ -225,11 +225,23 @@ def apply_filters(cex, poly, config=None):
     RSI/divergence gates to be skipped when momentum is exactly flat.
     Using `is not None` is unambiguous.
     """
-    m5         = cex.get("momentum_5m")
-    vol5       = cex.get("volatility_5m")
-    rsi        = cex.get("rsi_14")
-    vol_ratio  = cex.get("volume_ratio", 1.0)
+    m5          = cex.get("momentum_5m")
+    vol5        = cex.get("volatility_5m")
+    rsi         = cex.get("rsi_14")
+    vol_ratio   = cex.get("volume_ratio", 1.0)
+    spread_bps  = cex.get("spread_bps")
     poly_spread = poly.get("poly_spread")
+
+    # CEX spread filter — ≥0.001490 bps bucket is 40% WR (actively losing)
+    max_spread = (config or {}).get("max_spread_bps", 0.001490)
+    if spread_bps is not None and spread_bps >= max_spread:
+        return False, f"CEX spread too wide ({spread_bps:.6f} >= {max_spread:.6f})"
+
+    # Poly volume filter — <1000 is coin-flip territory (134 trades at 53% WR)
+    poly_vol    = poly.get("poly_volume_24h")
+    min_poly_vol = (config or {}).get("min_poly_volume_24h", 1000.0)
+    if poly_vol is not None and poly_vol < min_poly_vol:
+        return False, f"Poly volume too low ({poly_vol:.0f} < {min_poly_vol:.0f})"
 
     # Minimum momentum filter -- read from config, fall back to module default
     min_mom = (config or {}).get("min_momentum_pct", MIN_MOMENTUM_ABS)
