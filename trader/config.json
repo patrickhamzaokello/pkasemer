@@ -21,7 +21,7 @@
   "min_entry_no": 0.28,
   "max_entry_no": 0.65,
   "min_lag_override": 0.15,
-  "max_spread_bps": 0.00149,
+  "max_spread_bps": 0.001492,
   "min_poly_volume_24h": 1000,
   "webhook_url": "",
   "signal_weights": {
