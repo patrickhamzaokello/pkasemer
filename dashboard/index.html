@@ -634,6 +634,105 @@
     font-weight: 400;
   }
   .export-btn:hover .export-sub { color: inherit; opacity: 0.7; }
+
+  /* Reset button */
+  .reset-btn {
+    background: none;
+    border: 1px solid #7f1d1d;
+    color: #f87171;
+    padding: 3px 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    cursor: pointer;
+    border-radius: 2px;
+    transition: all 0.15s;
+  }
+  .reset-btn:hover { border-color: #ef4444; color: #ef4444; }
+  .reset-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Reset modal overlay */
+  .reset-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+  .reset-modal-overlay.open { display: flex; }
+  .reset-modal {
+    background: var(--surface);
+    border: 1px solid #7f1d1d;
+    border-radius: 4px;
+    padding: 24px 28px;
+    width: 320px;
+    font-family: var(--mono);
+  }
+  .reset-modal h3 {
+    margin: 0 0 6px;
+    font-size: 13px;
+    color: #f87171;
+    letter-spacing: 1px;
+  }
+  .reset-modal p {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin: 0 0 16px;
+    line-height: 1.5;
+  }
+  .reset-modal label {
+    display: block;
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+    letter-spacing: 1px;
+  }
+  .reset-modal input {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg);
+    border: 1px solid var(--border-bright);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 2px;
+    margin-bottom: 16px;
+    outline: none;
+  }
+  .reset-modal input:focus { border-color: #f87171; }
+  .reset-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .reset-modal-cancel {
+    background: none;
+    border: 1px solid var(--border-bright);
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 5px 12px;
+    cursor: pointer;
+    border-radius: 2px;
+  }
+  .reset-modal-cancel:hover { border-color: var(--text-dim); color: var(--text); }
+  .reset-modal-confirm {
+    background: #7f1d1d;
+    border: 1px solid #ef4444;
+    color: #fca5a5;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 5px 12px;
+    cursor: pointer;
+    border-radius: 2px;
+    transition: background 0.15s;
+  }
+  .reset-modal-confirm:hover { background: #991b1b; }
+  .reset-modal-confirm:disabled { opacity: 0.4; cursor: not-allowed; }
+  .reset-modal-msg {
+    font-size: 11px;
+    margin-top: 10px;
+    min-height: 16px;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -647,6 +746,22 @@
     </div>
     <span class="last-update" id="last-update">—</span>
     <button class="refresh-btn" onclick="refresh()">↺ refresh</button>
+    <button class="reset-btn" onclick="openResetModal()" title="Wipe signal_observations and start fresh">⚠ reset obs</button>
+  </div>
+</div>
+
+<!-- Reset observations modal -->
+<div class="reset-modal-overlay" id="reset-overlay" onclick="closeResetModal(event)">
+  <div class="reset-modal">
+    <h3>⚠ RESET OBSERVATIONS</h3>
+    <p>This will permanently delete <strong>all signal observations</strong> from the database and clear the window reference cache.<br>Live trade history is preserved.<br><br>Enter your dashboard password to confirm.</p>
+    <label>PASSWORD</label>
+    <input type="password" id="reset-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')confirmReset()">
+    <div class="reset-modal-actions">
+      <button class="reset-modal-cancel" onclick="closeResetModal()">cancel</button>
+      <button class="reset-modal-confirm" id="reset-confirm-btn" onclick="confirmReset()">DELETE ALL</button>
+    </div>
+    <div class="reset-modal-msg" id="reset-msg"></div>
   </div>
 </div>
 
@@ -1341,6 +1456,87 @@ async function refresh() {
 // Auto-refresh every 15s
 refresh();
 setInterval(refresh, 15000);
+
+// ── Reset Observations ────────────────────────────────────
+function openResetModal() {
+  document.getElementById('reset-password').value = '';
+  document.getElementById('reset-msg').textContent = '';
+  document.getElementById('reset-msg').style.color = '';
+  document.getElementById('reset-confirm-btn').disabled = false;
+  document.getElementById('reset-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('reset-password').focus(), 50);
+}
+
+function closeResetModal(e) {
+  // Close only when clicking the overlay backdrop itself, not the modal box
+  if (e && e.target !== document.getElementById('reset-overlay')) return;
+  document.getElementById('reset-overlay').classList.remove('open');
+}
+
+async function confirmReset() {
+  const password = document.getElementById('reset-password').value;
+  const msgEl    = document.getElementById('reset-msg');
+  const btnEl    = document.getElementById('reset-confirm-btn');
+  if (!password) {
+    msgEl.textContent = 'Enter your password.';
+    msgEl.style.color = '#f87171';
+    return;
+  }
+
+  btnEl.disabled = true;
+  msgEl.textContent = 'Authenticating…';
+  msgEl.style.color = 'var(--text-dim)';
+
+  // Step 1: re-authenticate with the supplied password
+  try {
+    const authResp = await fetch(`${API}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+      credentials: 'include',
+    });
+    if (!authResp.ok) {
+      const err = await authResp.json().catch(() => ({}));
+      msgEl.textContent = err.error || 'Wrong password.';
+      msgEl.style.color = '#f87171';
+      btnEl.disabled = false;
+      return;
+    }
+  } catch(e) {
+    msgEl.textContent = 'Auth request failed: ' + e.message;
+    msgEl.style.color = '#f87171';
+    btnEl.disabled = false;
+    return;
+  }
+
+  // Step 2: execute the reset
+  msgEl.textContent = 'Deleting observations…';
+  try {
+    const resp = await fetch(`${API}/api/reset-observations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: 'RESET' }),
+      credentials: 'include',
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      msgEl.textContent = data.error || 'Reset failed.';
+      msgEl.style.color = '#f87171';
+      btnEl.disabled = false;
+      return;
+    }
+    msgEl.textContent = `✓ Deleted ${data.deleted_rows} rows. Starting fresh.`;
+    msgEl.style.color = '#4ade80';
+    setTimeout(() => {
+      document.getElementById('reset-overlay').classList.remove('open');
+      refresh();
+    }, 2000);
+  } catch(e) {
+    msgEl.textContent = 'Reset request failed: ' + e.message;
+    msgEl.style.color = '#f87171';
+    btnEl.disabled = false;
+  }
+}
 
 // ── CSV Export ────────────────────────────────────────────
 async function exportCSV(table) {
