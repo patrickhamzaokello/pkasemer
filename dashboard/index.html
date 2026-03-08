@@ -755,6 +755,8 @@
   <div class="reset-modal">
     <h3>⚠ RESET OBSERVATIONS</h3>
     <p>This will permanently delete <strong>all signal observations</strong> from the database and clear the window reference cache.<br>Live trade history is preserved.<br><br>Enter your dashboard password to confirm.</p>
+    <label>ACCOUNT</label>
+    <div id="reset-email-display" style="font-size:12px;color:var(--text);background:var(--bg);border:1px solid var(--border-bright);padding:6px 8px;border-radius:2px;margin-bottom:12px;letter-spacing:0.5px">—</div>
     <label>PASSWORD</label>
     <input type="password" id="reset-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')confirmReset()">
     <div class="reset-modal-actions">
@@ -1458,11 +1460,26 @@ refresh();
 setInterval(refresh, 15000);
 
 // ── Reset Observations ────────────────────────────────────
-function openResetModal() {
+let _resetEmail = '';
+
+async function openResetModal() {
   document.getElementById('reset-password').value = '';
   document.getElementById('reset-msg').textContent = '';
   document.getElementById('reset-msg').style.color = '';
   document.getElementById('reset-confirm-btn').disabled = false;
+  document.getElementById('reset-email-display').textContent = '…';
+  _resetEmail = '';
+
+  // Fetch current user's email from the active session
+  try {
+    const me = await fetch(`${API}/api/auth/me`, { credentials: 'include' });
+    const data = await me.json();
+    _resetEmail = data.email || '';
+    document.getElementById('reset-email-display').textContent = _resetEmail || '(unknown)';
+  } catch(_) {
+    document.getElementById('reset-email-display').textContent = '(could not fetch)';
+  }
+
   document.getElementById('reset-overlay').classList.add('open');
   setTimeout(() => document.getElementById('reset-password').focus(), 50);
 }
@@ -1482,17 +1499,22 @@ async function confirmReset() {
     msgEl.style.color = '#f87171';
     return;
   }
+  if (!_resetEmail) {
+    msgEl.textContent = 'Could not determine current user. Reload and try again.';
+    msgEl.style.color = '#f87171';
+    return;
+  }
 
   btnEl.disabled = true;
   msgEl.textContent = 'Authenticating…';
   msgEl.style.color = 'var(--text-dim)';
 
-  // Step 1: re-authenticate with the supplied password
+  // Step 1: re-authenticate with email + password
   try {
     const authResp = await fetch(`${API}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ email: _resetEmail, password }),
       credentials: 'include',
     });
     if (!authResp.ok) {
