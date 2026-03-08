@@ -106,7 +106,9 @@ def _load_ref_cache():
 
 def _save_ref_cache(cache):
     try:
-        os.makedirs(os.path.dirname(_REF_CACHE_FILE), exist_ok=True)
+        _dir = os.path.dirname(_REF_CACHE_FILE)
+        if _dir:
+            os.makedirs(_dir, exist_ok=True)
         with open(_REF_CACHE_FILE, "w") as f:
             json.dump(cache, f, indent=2)
     except Exception:
@@ -288,7 +290,9 @@ def upsert_trade(conn, record: dict) -> None:
     conn.commit()
 
 
-def resolve_trade_outcomes(conn, trade_log_path: str = "/data/trade_log.json") -> int:
+def resolve_trade_outcomes(conn, trade_log_path: str = None) -> int:
+    if trade_log_path is None:
+        trade_log_path = os.path.join(_DATA_DIR, "trade_log.json")
     """
     For each unresolved trade, check if the market has closed on Gamma and compute P&L.
 
@@ -433,29 +437,13 @@ def fetch_binance_recent_trades(symbol="BTCUSDT", limit=500):
     return _get(url)
 
 
-import json
-from urllib.request import Request, urlopen
-
-# Constants
-GAMMA_API = "https://gamma-api.polymarket.com"
-POLY_CLOB = "https://clob.polymarket.com"
-
-def _get(url, timeout=8):
-    try:
-        req = Request(url, headers={"User-Agent": "pknwitq-research/1.0"})
-        with urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read())
-    except Exception as e:
-        print(f"Error fetching {url}: {e}")
-        return None
-
 def fetch_poly_clob_orderbook(condition_id):
     """
     1. Resolve the condition_id to a specific token_id (Yes token).
     2. Fetch the actual CLOB order book.
     """
     # Step 1: Get market metadata from Gamma
-    market_url = f"{GAMMA_API}/markets?condition_id={condition_id}"
+    market_url = f"{GAMMA_API}/markets?conditionId={condition_id}"
     market_data = _get(market_url)
     
     if not market_data or len(market_data) == 0:
@@ -851,8 +839,13 @@ def analyze_signals(conn, min_n=20):
     """
     For each signal column, compute:
     - Point-biserial correlation with outcome (up=1, down=0)
-    - Win rate when signal is positive vs negative
-    - Mean value for up vs down outcomes
+    - Win rate when signal is above vs below threshold
+      (threshold = 0 for signed signals; median for always-positive signals)
+    - Significance marker: * p<0.05, ** p<0.01 (t-test approximation)
+
+    Also prints:
+    - Composite signal (would_trade) accuracy
+    - Live trade win rate and P&L summary
     """
     cursor = conn.execute("""
         SELECT * FROM signal_observations
@@ -867,6 +860,8 @@ def analyze_signals(conn, min_n=20):
 
     outcomes = []
     data = {col: [] for col in SIGNAL_COLUMNS}
+    # Also capture composite-signal columns for later section
+    wt_data = []
 
     for row in rows:
         rec = dict(zip(col_names, row))
@@ -874,12 +869,15 @@ def analyze_signals(conn, min_n=20):
         outcomes.append(outcome_val)
         for col in SIGNAL_COLUMNS:
             data[col].append(rec.get(col))
+        if rec.get("would_trade") is not None and rec.get("signal_side") is not None:
+            wt_data.append((rec["would_trade"], rec["signal_side"], outcome_val))
 
-    print(f"\n{'─'*72}")
+    W = 76
+    print(f"\n{'─'*W}")
     print(f"  SIGNAL CORRELATION REPORT  ({len(outcomes)} resolved observations)")
-    print(f"{'─'*72}")
-    print(f"  {'Signal':<28} {'N':>5}  {'Corr':>7}  {'WR(+)':>7}  {'WR(-)':>7}  {'Edge':>7}")
-    print(f"{'─'*72}")
+    print(f"{'─'*W}")
+    print(f"  {'Signal':<28} {'N':>5}  {'Corr':>8}  {'WR(hi)':>7}  {'WR(lo)':>7}  {'Edge':>7}")
+    print(f"{'─'*W}")
 
     results = []
     for col in SIGNAL_COLUMNS:
@@ -897,25 +895,91 @@ def analyze_signals(conn, min_n=20):
         std_o  = math.sqrt(sum((x - mean_o)**2 for x in o_list) / n) or 1e-9
         corr   = sum((v_list[i] - mean_v) * (o_list[i] - mean_o) for i in range(n)) / (n * std_v * std_o)
 
-        pos_wins = [o for v, o in paired if v > 0]
-        neg_wins = [o for v, o in paired if v <= 0]
-        wr_pos = sum(pos_wins) / len(pos_wins) if pos_wins else float('nan')
-        wr_neg = sum(neg_wins) / len(neg_wins) if neg_wins else float('nan')
-        edge   = wr_pos - wr_neg
+        # Significance via t-statistic (two-tailed approximation)
+        t_stat = corr * math.sqrt(n - 2) / math.sqrt(max(1 - corr**2, 1e-9))
+        sig    = "**" if abs(t_stat) > 3.0 else ("*" if abs(t_stat) > 1.96 else "  ")
 
-        results.append((abs(corr), col, len(paired), corr, wr_pos, wr_neg, edge))
+        # Use median split for always-positive signals (volume, time, volatility)
+        # to avoid WR(lo) being empty when no values fall at or below 0.
+        if min(v_list) >= 0:
+            threshold = sorted(v_list)[n // 2]  # median
+        else:
+            threshold = 0.0
+
+        hi_wins = [o for v, o in paired if v > threshold]
+        lo_wins = [o for v, o in paired if v <= threshold]
+        wr_hi = sum(hi_wins) / len(hi_wins) if hi_wins else float('nan')
+        wr_lo = sum(lo_wins) / len(lo_wins) if lo_wins else float('nan')
+        edge  = (wr_hi - wr_lo) if not (math.isnan(wr_hi) or math.isnan(wr_lo)) else float('nan')
+
+        results.append((abs(corr), col, n, corr, sig, wr_hi, wr_lo, edge))
 
     results.sort(reverse=True)
-    for _, col, n, corr, wr_pos, wr_neg, edge in results:
-        wr_pos_str = f"{wr_pos:.1%}" if not math.isnan(wr_pos) else "  n/a"
-        wr_neg_str = f"{wr_neg:.1%}" if not math.isnan(wr_neg) else "  n/a"
-        print(f"  {col:<28} {n:>5}  {corr:>+7.3f}  {wr_pos_str:>7}  {wr_neg_str:>7}  {edge:>+7.3f}")
+    for _, col, n, corr, sig, wr_hi, wr_lo, edge in results:
+        wr_hi_str  = f"{wr_hi:.1%}" if not math.isnan(wr_hi) else "  n/a"
+        wr_lo_str  = f"{wr_lo:.1%}" if not math.isnan(wr_lo) else "  n/a"
+        edge_str   = f"{edge:+.3f}" if not math.isnan(edge) else "  n/a"
+        corr_str   = f"{corr:+.3f}{sig}"
+        print(f"  {col:<28} {n:>5}  {corr_str:>8}  {wr_hi_str:>7}  {wr_lo_str:>7}  {edge_str:>7}")
 
-    print(f"{'─'*72}")
+    print(f"{'─'*W}")
+    print(f"  * p<0.05  ** p<0.01  |  WR(hi)=above threshold  WR(lo)=below threshold")
+    print(f"  Threshold: 0 for signed signals; median for always-positive signals")
     print(f"\n  Interpretation:")
-    print(f"    Corr > +0.10  : signal has directional predictive power")
-    print(f"    Edge > +0.05  : positive signal wins 5%+ more often than negative")
-    print(f"    Best signals for the composite score = high |corr| AND high edge\n")
+    print(f"    Corr > +0.10** : strong directional predictive power")
+    print(f"    Edge > +0.05   : high signal wins 5%+ more often than low signal")
+    print(f"    Best signals for composite = high |corr| AND high |edge| AND **")
+
+    # ── Composite signal (would_trade) accuracy ───────────────────────────────
+    if wt_data:
+        fired = [(side, out) for wt, side, out in wt_data if wt == 1]
+        if fired:
+            correct = sum(1 for side, out in fired
+                          if (side == "yes" and out == 1) or (side == "no" and out == 0))
+            wr = correct / len(fired)
+            print(f"\n{'─'*W}")
+            print(f"  COMPOSITE SIGNAL ACCURACY  ({len(fired)} triggered / {len(wt_data)} total obs)")
+            print(f"{'─'*W}")
+            print(f"  {'Would-trade win rate:':<30} {wr:.1%}  ({correct}W / {len(fired)-correct}L)")
+            # Breakdown by side
+            yes_fired = [(s, o) for s, o in fired if s == "yes"]
+            no_fired  = [(s, o) for s, o in fired if s == "no"]
+            if yes_fired:
+                y_wr = sum(1 for _, o in yes_fired if o == 1) / len(yes_fired)
+                print(f"  {'  YES trades:':<30} {y_wr:.1%}  (N={len(yes_fired)})")
+            if no_fired:
+                n_wr = sum(1 for _, o in no_fired if o == 0) / len(no_fired)
+                print(f"  {'  NO  trades:':<30} {n_wr:.1%}  (N={len(no_fired)})")
+        else:
+            print(f"\n  Composite signal: no would_trade=1 observations yet.")
+
+    # ── Live trade outcomes summary ───────────────────────────────────────────
+    try:
+        trade_rows = conn.execute("""
+            SELECT trade_outcome, pnl, side FROM trades WHERE resolved = 1
+        """).fetchall()
+        if trade_rows:
+            wins      = [r for r in trade_rows if r[0] == "win"]
+            losses    = [r for r in trade_rows if r[0] == "loss"]
+            total_pnl = sum(r[1] or 0.0 for r in trade_rows)
+            yes_rows  = [r for r in trade_rows if r[2] == "yes"]
+            no_rows   = [r for r in trade_rows if r[2] == "no"]
+            print(f"\n{'─'*W}")
+            print(f"  LIVE TRADE OUTCOMES  ({len(trade_rows)} resolved trades)")
+            print(f"{'─'*W}")
+            print(f"  {'Overall win rate:':<30} {len(wins)/len(trade_rows):.1%}"
+                  f"  ({len(wins)}W / {len(losses)}L)")
+            print(f"  {'Total P&L:':<30} ${total_pnl:+.2f}")
+            if yes_rows:
+                y_wins = sum(1 for r in yes_rows if r[0] == "win")
+                print(f"  {'  YES WR:':<30} {y_wins/len(yes_rows):.1%}  (N={len(yes_rows)})")
+            if no_rows:
+                n_wins = sum(1 for r in no_rows if r[0] == "win")
+                print(f"  {'  NO  WR:':<30} {n_wins/len(no_rows):.1%}  (N={len(no_rows)})")
+    except Exception:
+        pass  # trades table may not exist yet
+
+    print()
 
 
 def export_csv(conn, path):
@@ -970,6 +1034,17 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
 
     cex  = extract_cex_signals(symbol)
     poly = extract_poly_signals(best)
+
+    # Fetch CLOB order book for poly_order_imbalance (research-only; skipped on failure)
+    if cond_id and poly.get("poly_order_imbalance") is None:
+        try:
+            book = fetch_poly_clob_orderbook(cond_id)
+            if book and book.get("bids") and book.get("asks"):
+                bids = [[b["price"], b["size"]] for b in book["bids"][:5]]
+                asks = [[a["price"], a["size"]] for a in book["asks"][:5]]
+                poly["poly_order_imbalance"] = calc_order_imbalance(bids, asks)
+        except Exception:
+            pass
 
     # FIX: only seed reference price in the first 60s after window opens.
     # Seeding on every cycle would reset btc_vs_reference to 0 on restart.

@@ -31,7 +31,8 @@
       "Bash(cd /c/Users/pkase/Desktop/CANIMAKEADOLLAR/polymarket-trader-1.0.12 && py -c \"\nwith open\\('shared/composite_signal.py', 'rb'\\) as f:\n    raw = f.read\\(\\)\n\n# Check the Change 3 cex_lag line\nidx = raw.find\\(b'cex_lag    = cex.get'\\)\nprint\\(repr\\(raw[idx-4:idx+80]\\)\\)\n\")",
       "Bash(cd /c/Users/pkase/Desktop/CANIMAKEADOLLAR/polymarket-trader-1.0.12 && py -c \"\nwith open\\('trader/fast_trader.py', 'rb'\\) as f:\n    raw = f.read\\(\\)\n\n# Check the _load_ref_cache import line\nidx = raw.find\\(b'from signal_research import _load_ref_cache'\\)\nprint\\(repr\\(raw[idx-4:idx+80]\\)\\)\n\n# Check the existing top-level import\nidx2 = raw.find\\(b'from signal_research import extract_cex_signals'\\)\nprint\\(repr\\(raw[idx2:idx2+100]\\)\\)\n\")",
       "Bash(wc -l C:/Users/pkase/Desktop/CANIMAKEADOLLAR/polymarket-trader-1.0.12/dashboard/*.html)",
-      "Bash(find /c/Users/pkase/Desktop/CANIMAKEADOLLAR/polymarket-trader-1.0.12 -type f \\\\\\( -name \"package.json\" -o -name \"*.version\" -o -name \".build\" \\\\\\) 2>/dev/null | head -20)"
+      "Bash(find /c/Users/pkase/Desktop/CANIMAKEADOLLAR/polymarket-trader-1.0.12 -type f \\\\\\( -name \"package.json\" -o -name \"*.version\" -o -name \".build\" \\\\\\) 2>/dev/null | head -20)",
+      "Bash(python3:*)"
     ]
   }
 }

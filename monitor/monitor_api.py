@@ -277,10 +277,12 @@ def correlations():
         SIGNAL_COLS = [
             "btc_vs_reference",
             "momentum_1m", "momentum_5m", "momentum_15m",
-            "rsi_14", "volume_ratio", "order_imbalance",
-            "trade_flow_ratio", "volatility_5m", "price_acceleration",
-            "poly_yes_price", "poly_divergence", "cex_poly_lag",
-            "momentum_consistency", "vol_adjusted_momentum",
+            "rsi_14", "volume_ratio", "spread_bps", "order_imbalance",
+            "trade_flow_ratio", "volatility_1m", "volatility_5m", "price_acceleration",
+            "poly_yes_price", "poly_divergence", "poly_spread",
+            "poly_volume_24h", "poly_order_imbalance",
+            "cex_poly_lag", "momentum_consistency", "vol_adjusted_momentum",
+            "seconds_remaining",
         ]
 
         results = []
@@ -300,20 +302,33 @@ def correlations():
             corr = sum((v_list[i] - mean_v) * (o_list[i] - mean_o)
                        for i in range(n)) / (n * std_v * std_o)
 
-            pos_wins = [o for v, o in paired if v > 0]
-            neg_wins = [o for v, o in paired if v <= 0]
-            wr_pos = sum(pos_wins) / len(pos_wins) if pos_wins else None
-            wr_neg = sum(neg_wins) / len(neg_wins) if neg_wins else None
-            edge = (wr_pos - wr_neg) if (wr_pos is not None and wr_neg is not None) else None
+            # Significance: t-statistic approximation (* p<0.05, ** p<0.01)
+            t_stat = corr * math.sqrt(n - 2) / math.sqrt(max(1 - corr**2, 1e-9))
+            sig = "**" if abs(t_stat) > 3.0 else ("*" if abs(t_stat) > 1.96 else "")
+
+            # Use median split for always-positive signals (volume, time, volatility)
+            # so WR(lo) is never empty when no values fall at or below zero.
+            if min(v_list) >= 0:
+                threshold = sorted(v_list)[n // 2]
+            else:
+                threshold = 0.0
+
+            hi_wins = [o for v, o in paired if v > threshold]
+            lo_wins = [o for v, o in paired if v <= threshold]
+            wr_hi = sum(hi_wins) / len(hi_wins) if hi_wins else None
+            wr_lo = sum(lo_wins) / len(lo_wins) if lo_wins else None
+            edge = (wr_hi - wr_lo) if (wr_hi is not None and wr_lo is not None) else None
 
             results.append({
-                "signal": col,
-                "n": n,
-                "corr": round(corr, 4),
-                "wr_pos": round(wr_pos, 4) if wr_pos is not None else None,
-                "wr_neg": round(wr_neg, 4) if wr_neg is not None else None,
-                "edge": round(edge, 4) if edge is not None else None,
-                "abs_corr": abs(corr),
+                "signal":    col,
+                "n":         n,
+                "corr":      round(corr, 4),
+                "sig":       sig,          # significance marker
+                "threshold": round(threshold, 4),
+                "wr_pos":    round(wr_hi, 4) if wr_hi is not None else None,
+                "wr_neg":    round(wr_lo, 4) if wr_lo is not None else None,
+                "edge":      round(edge, 4) if edge is not None else None,
+                "abs_corr":  abs(corr),
             })
 
         results.sort(key=lambda x: x["abs_corr"], reverse=True)
@@ -1496,6 +1511,48 @@ def kill_switch():
         return jsonify({"active": d.get("active", False), "set_at": d.get("set_at")})
     except FileNotFoundError:
         return jsonify({"active": False, "set_at": None})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/reset-observations", methods=["POST"])
+def reset_observations():
+    """
+    DELETE all rows from signal_observations (and optionally window_refs cache).
+    Requires a JSON body: {"confirm": "RESET"} to prevent accidental calls.
+    Use this when collected data is corrupt and you want to start fresh.
+    Trades table is NOT touched — live trade history is preserved.
+    """
+    if not session.get("logged_in"):
+        return jsonify({"error": "Unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    if data.get("confirm") != "RESET":
+        return jsonify({"error": 'Must send {"confirm": "RESET"} in body'}), 400
+    try:
+        conn = get_db()
+        before = conn.execute("SELECT COUNT(*) FROM signal_observations").fetchone()[0]
+        conn.execute("DELETE FROM signal_observations")
+        # Reset the SQLite auto-increment counter so IDs restart from 1
+        conn.execute("DELETE FROM sqlite_sequence WHERE name='signal_observations'")
+        conn.commit()
+        conn.close()
+
+        # Also clear the window reference price cache so stale refs don't pollute the next run
+        window_refs_path = os.path.join(os.environ.get("DATA_DIR", "/data"), "window_refs.json")
+        cleared_refs = False
+        try:
+            if os.path.exists(window_refs_path):
+                os.remove(window_refs_path)
+                cleared_refs = True
+        except Exception:
+            pass
+
+        return jsonify({
+            "ok": True,
+            "deleted_rows": before,
+            "window_refs_cleared": cleared_refs,
+            "message": f"Deleted {before} observations. Collector will start fresh on next cycle.",
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

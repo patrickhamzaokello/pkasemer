@@ -1029,9 +1029,9 @@ async function fetchCorrelations() {
         <tr>
           <th>Signal</th>
           <th class="right">N</th>
-          <th>Correlation</th>
-          <th class="right">WR (+)</th>
-          <th class="right">WR (−)</th>
+          <th>Corr (sig)</th>
+          <th class="right" title="Win rate above threshold (0 or median for always-positive signals)">WR (hi)</th>
+          <th class="right" title="Win rate at or below threshold">WR (lo)</th>
           <th class="right">Edge</th>
           <th class="right">Strength</th>
         </tr>
@@ -1041,7 +1041,8 @@ async function fetchCorrelations() {
           const absCorr = Math.abs(row.corr);
           const barWidth = maxCorr > 0 ? Math.round(absCorr / maxCorr * 80) : 0;
           const barColor = row.corr > 0 ? '#22c55e' : '#ef4444';
-          const corrStr = (row.corr >= 0 ? '+' : '') + row.corr.toFixed(4);
+          const sig = row.sig || '';
+          const corrStr = (row.corr >= 0 ? '+' : '') + row.corr.toFixed(4) + sig;
           const corrColor = row.corr > 0.05 ? 'var(--green)' : row.corr < -0.05 ? 'var(--red)' : 'var(--text-dim)';
 
           const wrPos = row.wr_pos != null ? (row.wr_pos * 100).toFixed(1) + '%' : 'n/a';
@@ -1049,8 +1050,10 @@ async function fetchCorrelations() {
           const edgeStr = row.edge != null ? (row.edge >= 0 ? '+' : '') + (row.edge * 100).toFixed(1) + '%' : 'n/a';
           const edgeColor = row.edge > 0.05 ? 'var(--green)' : row.edge < -0.05 ? 'var(--red)' : 'var(--text-dim)';
 
-          const strength = absCorr > 0.15 ? 'strong' : absCorr > 0.05 ? 'weak' : 'none';
-          const strengthLabel = absCorr > 0.15 ? 'STRONG' : absCorr > 0.05 ? 'WEAK' : 'NONE';
+          // Significant + strong = STRONG, significant alone = SIG, etc.
+          const isSig = sig !== '';
+          const strength = (absCorr > 0.15 && isSig) ? 'strong' : absCorr > 0.05 ? 'weak' : 'none';
+          const strengthLabel = (absCorr > 0.15 && isSig) ? 'STRONG' + sig : absCorr > 0.05 ? 'WEAK' : 'NONE';
 
           return `<tr>
             <td style="color:var(--text)">${row.signal}</td>
@@ -1066,7 +1069,10 @@ async function fetchCorrelations() {
           </tr>`;
         }).join('')}
       </tbody>
-    </table>`;
+    </table>
+    <div style="font-size:11px;color:var(--text-dim);margin-top:6px">
+      * p&lt;0.05 &nbsp;** p&lt;0.01 &nbsp;|&nbsp; WR(hi)=above threshold &nbsp;WR(lo)=below threshold &nbsp;|&nbsp; threshold=0 for signed, median for always-positive signals
+    </div>`;
   } catch(e) {
     wrap.innerHTML = `<div class="empty">Error loading correlations: ${e.message}</div>`;
   }
