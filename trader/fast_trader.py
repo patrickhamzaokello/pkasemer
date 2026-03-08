@@ -311,6 +311,48 @@ def _send_telegram(token: str, chat_id: str, slug: str, side: str, score: float,
         print(f"[telegram] send failed: {_tg_err}", flush=True)
 
 
+def _send_telegram_outcome(token: str, chat_id: str, trade: dict) -> None:
+    """Send a trade resolution alert via Telegram Bot API."""
+    if not token or not token.strip() or not chat_id or not chat_id.strip():
+        return
+    outcome  = trade.get("outcome", "?")
+    pnl      = trade.get("pnl", 0.0) or 0.0
+    side     = trade.get("side", "?")
+    slug     = trade.get("slug", "?")
+    size     = trade.get("position_size", 0.0) or 0.0
+    entry    = trade.get("entry_price", 0.0) or 0.0
+    market   = slug if len(slug) <= 40 else slug[:37] + "..."
+
+    if outcome == "win":
+        emoji = "\u2705"  # ✅
+        label = "WIN"
+    elif outcome == "loss":
+        emoji = "\u274c"  # ❌
+        label = "LOSS"
+    else:
+        emoji = "\u2753"  # ❓
+        label = outcome.upper()
+
+    pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
+    bar     = "\u2501" * 20
+    text    = (
+        f"{emoji} <b>RESOLVED \u2014 {label}</b>\n"
+        f"<code>{bar}</code>\n"
+        f"Market: <code>{market}</code>\n"
+        f"Side:   <b>{side.upper()}</b>  |  Entry: ${entry:.3f}\n"
+        f"Size:   ${size:.2f}\n"
+        f"PnL:    <b>{pnl_str}</b>"
+    )
+    payload = json.dumps({"chat_id": chat_id.strip(), "text": text,
+                          "parse_mode": "HTML"}).encode()
+    try:
+        url = f"https://api.telegram.org/bot{token.strip()}/sendMessage"
+        req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        urlopen(req, timeout=8)
+    except Exception as _tg_err:
+        print(f"[telegram] outcome send failed: {_tg_err}", flush=True)
+
+
 def _log_trade_local(trade_id, side, score, confidence, entry_price, position_size,
                       shares, slug, remaining, cex_signals, poly_signals, lag=0.0):
     """Append trade to local JSON log and write to SQLite trades table."""
@@ -427,6 +469,11 @@ def backfill_trade_outcomes():
                 trade["pnl"]     = round(pt["pnl"], 4)
                 trade["outcome"] = "win" if trade["pnl"] > 0 else "loss"
                 updated += 1
+                _send_telegram_outcome(
+                    token=cfg.get("telegram_bot_token", ""),
+                    chat_id=cfg.get("telegram_chat_id", ""),
+                    trade=trade,
+                )
 
     if updated:
         _TRADE_LOG_FILE.write_text(json.dumps(local_trades, indent=2))
