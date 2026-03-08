@@ -812,9 +812,12 @@ def run_fast_market_strategy(
     slug_short = _fmt_slug(best.get("slug", ""))
 
     if remaining > MAX_TIME_REMAINING:
+        # Peek at ref cache to show accurate seeding status in the log
+        _ref_peek = _load_ref_cache().get(best.get("slug", ""))
+        _ref_note = f"vs_ref={'seeded' if _ref_peek else 'not seeded'}"
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:.0f}s | "
-            f"SKIP: too early ({remaining:.0f}s > {MAX_TIME_REMAINING}s max) -- vs_ref not seeded yet"
+            f"SKIP: too early ({remaining:.0f}s > {MAX_TIME_REMAINING}s max) | {_ref_note}"
         )
         return
 
