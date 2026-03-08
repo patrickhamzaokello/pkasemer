@@ -874,78 +874,85 @@ def _normalise_activity(raw: dict) -> dict | None:
 @app.route("/api/poly-metrics")
 def poly_metrics():
     """
-    Real performance metrics computed from Polymarket trade history.
-    Win rate, total P&L, by-side breakdown, unrealized P&L from open positions.
-    Cached for 120 s to avoid hammering the Data API.
+    Performance metrics sourced from the local SQLite trades table.
+    Unrealized P&L and open position count are supplemented from the
+    Polymarket Data API when a wallet address is configured.
     """
-    address = _poly_wallet()
-    if not address:
-        return jsonify({"error": "Wallet address not configured — set POLY_PRIVATE_KEY or POLY_FUNDER"}), 200
-
     try:
-        # Activity (all pages, cached)
-        raw_records = _fetch_all_activity(address)
-        trades = [t for raw in raw_records for t in [_normalise_activity(raw)] if t]
-
-        # Positions (cached)
-        pos_url = f"{_POLY_DATA_API}/positions?user={address}&sizeThreshold=0.01&limit=500"
-        pos_result = _poly_cached(f"positions:{address}", pos_url)
-        positions = pos_result if isinstance(pos_result, list) else \
-                    (pos_result.get("positions", []) if isinstance(pos_result, dict) else [])
-
-        active_cids = {
-            p.get("conditionId") or p.get("market", "")
-            for p in positions
-            if not p.get("closed") and float(p.get("size", 0) or 0) > 0.01
-        }
-
-        # Unrealized P&L from open positions
-        unrealized = sum(
-            float(p.get("currentValue") or 0) - float(p.get("initialValue") or 0)
-            for p in positions
-            if not p.get("closed") and float(p.get("size", 0) or 0) > 0.01
-        )
-
-        closed_pnl = [t for t in trades if t["condition_id"] not in active_cids and t["pnl"] is not None]
-        open_trades = [t for t in trades if t["condition_id"] in active_cids]
-
+        conn = get_db()
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        today_closed = [t for t in closed_pnl if t["timestamp_iso"][:10] == today]
 
-        total_pnl  = sum(t["pnl"] for t in closed_pnl)
-        today_pnl  = sum(t["pnl"] for t in today_closed)
-        wins       = [t for t in closed_pnl if t["pnl"] > 0]
-        losses     = [t for t in closed_pnl if t["pnl"] < 0]
+        total_trades      = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+        today_trades      = conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE timestamp >= ?", (today,)
+        ).fetchone()[0]
+        open_positions_db = conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE resolved = 0"
+        ).fetchone()[0]
+        resolved_rows     = conn.execute(
+            "SELECT pnl, trade_outcome, side FROM trades WHERE resolved = 1"
+        ).fetchall()
+        today_pnl_val     = conn.execute(
+            "SELECT COALESCE(SUM(pnl), 0) FROM trades WHERE resolved=1 AND timestamp >= ?", (today,)
+        ).fetchone()[0] or 0
+        best_pnl  = conn.execute(
+            "SELECT MAX(pnl) FROM trades WHERE resolved=1 AND pnl IS NOT NULL"
+        ).fetchone()[0]
+        worst_pnl = conn.execute(
+            "SELECT MIN(pnl) FROM trades WHERE resolved=1 AND pnl IS NOT NULL"
+        ).fetchone()[0]
+        conn.close()
 
-        yes_trades = [t for t in closed_pnl if t["side"] == "yes"]
-        no_trades  = [t for t in closed_pnl if t["side"] == "no"]
-        yes_wins   = [t for t in yes_trades if t["pnl"] > 0]
-        no_wins    = [t for t in no_trades  if t["pnl"] > 0]
+        n_resolved = len(resolved_rows)
+        wins       = [r for r in resolved_rows if r[1] == "win"]
+        losses     = [r for r in resolved_rows if r[1] == "loss"]
+        total_pnl  = sum(r[0] for r in resolved_rows if r[0] is not None)
+        yes_trades = [r for r in resolved_rows if (r[2] or "").lower() == "yes"]
+        no_trades  = [r for r in resolved_rows if (r[2] or "").lower() == "no"]
+        yes_wins   = [r for r in yes_trades if r[1] == "win"]
+        no_wins    = [r for r in no_trades  if r[1] == "win"]
 
-        best  = max(closed_pnl, key=lambda t: t["pnl"])  if closed_pnl else None
-        worst = min(closed_pnl, key=lambda t: t["pnl"])  if closed_pnl else None
+        # Supplement with Polymarket API for unrealized P&L and live open positions
+        unrealized     = 0.0
+        open_positions = open_positions_db
+        address = _poly_wallet()
+        if address:
+            try:
+                pos_url    = f"{_POLY_DATA_API}/positions?user={address}&sizeThreshold=0.01&limit=500"
+                pos_result = _poly_cached(f"positions:{address}", pos_url)
+                positions  = pos_result if isinstance(pos_result, list) else \
+                             (pos_result.get("positions", []) if isinstance(pos_result, dict) else [])
+                active = [p for p in positions
+                          if not p.get("closed") and float(p.get("size", 0) or 0) > 0.01]
+                if active:
+                    open_positions = len(active)
+                    unrealized = sum(
+                        float(p.get("currentValue") or 0) - float(p.get("initialValue") or 0)
+                        for p in active
+                    )
+            except Exception:
+                pass
 
         return jsonify({
-            "address":            address,
-            "total_trades":       len(trades),
-            "resolved_trades":    len(closed_pnl),
-            "open_positions":     len(active_cids),
-            "total_pnl":          round(total_pnl, 4),
-            "today_pnl":          round(today_pnl, 4),
-            "today_trades":       len(today_closed),
-            "unrealized_pnl":     round(unrealized, 4),
-            "win_count":          len(wins),
-            "loss_count":         len(losses),
-            "win_rate":           round(len(wins) / len(closed_pnl), 4) if closed_pnl else None,
-            "avg_pnl":            round(total_pnl / len(closed_pnl), 4) if closed_pnl else None,
-            "best_trade_pnl":     round(best["pnl"],  4) if best  else None,
-            "worst_trade_pnl":    round(worst["pnl"], 4) if worst else None,
-            "yes_total":          len(yes_trades),
-            "yes_wins":           len(yes_wins),
-            "yes_win_rate":       round(len(yes_wins) / len(yes_trades), 4) if yes_trades else None,
-            "no_total":           len(no_trades),
-            "no_wins":            len(no_wins),
-            "no_win_rate":        round(len(no_wins) / len(no_trades), 4) if no_trades else None,
+            "total_trades":    total_trades,
+            "resolved_trades": n_resolved,
+            "open_positions":  open_positions,
+            "total_pnl":       round(total_pnl, 4),
+            "today_pnl":       round(today_pnl_val, 4),
+            "today_trades":    today_trades,
+            "unrealized_pnl":  round(unrealized, 4),
+            "win_count":       len(wins),
+            "loss_count":      len(losses),
+            "win_rate":        round(len(wins) / n_resolved, 4) if n_resolved else None,
+            "avg_pnl":         round(total_pnl / n_resolved, 4) if n_resolved else None,
+            "best_trade_pnl":  round(best_pnl,  4) if best_pnl  is not None else None,
+            "worst_trade_pnl": round(worst_pnl, 4) if worst_pnl is not None else None,
+            "yes_total":       len(yes_trades),
+            "yes_wins":        len(yes_wins),
+            "yes_win_rate":    round(len(yes_wins) / len(yes_trades), 4) if yes_trades else None,
+            "no_total":        len(no_trades),
+            "no_wins":         len(no_wins),
+            "no_win_rate":     round(len(no_wins) / len(no_trades), 4) if no_trades else None,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
