@@ -304,14 +304,14 @@ def _fmt_slug(slug):
 
 def _send_telegram(token: str, chat_id: str, slug: str, side: str, score: float,
                    position_size: float, shares: float, entry_price: float,
-                   remaining: float, lag: float) -> None:
-    """Send a live-trade alert via Telegram Bot API."""
+                   remaining: float, lag: float):
+    """Send a live-trade alert via Telegram Bot API. Returns message_id or None."""
     if not token or not token.strip():
         print("[telegram] SKIP entry alert: TELEGRAM_BOT_TOKEN not set", flush=True)
-        return
+        return None
     if not chat_id or not chat_id.strip():
         print("[telegram] SKIP entry alert: TELEGRAM_CHAT_ID not set", flush=True)
-        return
+        return None
     arrow  = "\U0001f7e2" if side == "yes" else "\U0001f534"  # 🟢 / 🔴
     bar    = "\u2501" * 20  # ━━━━━━━━━━━━━━━━━━━━
     market = slug if len(slug) <= 40 else slug[:37] + "..."
@@ -329,13 +329,18 @@ def _send_telegram(token: str, chat_id: str, slug: str, side: str, score: float,
     try:
         url = f"https://api.telegram.org/bot{token.strip()}/sendMessage"
         req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-        urlopen(req, timeout=8)
-        print(f"[telegram] entry alert sent → {side.upper()} ${position_size:.2f}", flush=True)
+        with urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode())
+        msg_id = data.get("result", {}).get("message_id")
+        print(f"[telegram] entry alert sent → {side.upper()} ${position_size:.2f} (msg_id={msg_id})", flush=True)
+        return msg_id
     except Exception as _tg_err:
         print(f"[telegram] entry alert FAILED: {_tg_err}", flush=True)
+        return None
 
 
-def _send_telegram_outcome(token: str, chat_id: str, trade: dict) -> None:
+def _send_telegram_outcome(token: str, chat_id: str, trade: dict,
+                           reply_to_message_id=None) -> None:
     """Send a trade resolution alert via Telegram Bot API."""
     if not token or not token.strip():
         print("[telegram] SKIP outcome alert: TELEGRAM_BOT_TOKEN not set", flush=True)
@@ -371,8 +376,10 @@ def _send_telegram_outcome(token: str, chat_id: str, trade: dict) -> None:
         f"Size:   ${size:.2f}\n"
         f"PnL:    <b>{pnl_str}</b>"
     )
-    payload = json.dumps({"chat_id": chat_id.strip(), "text": text,
-                          "parse_mode": "HTML"}).encode()
+    body = {"chat_id": chat_id.strip(), "text": text, "parse_mode": "HTML"}
+    if reply_to_message_id:
+        body["reply_to_message_id"] = reply_to_message_id
+    payload = json.dumps(body).encode()
     try:
         url = f"https://api.telegram.org/bot{token.strip()}/sendMessage"
         req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
@@ -490,6 +497,20 @@ def backfill_trade_outcomes():
     local_trades = json.loads(_TRADE_LOG_FILE.read_text())
     updated = 0
 
+    # Load tg_message_log once for thread lookup
+    _tg_msg_lookup = {}
+    try:
+        from signal_research import get_tg_entry_msg, init_db
+        db_path  = os.environ.get("DB_PATH", "/data/signal_research.db")
+        _bf_conn = init_db(db_path)
+        for trade in local_trades:
+            tid = trade.get("trade_id")
+            if tid:
+                _tg_msg_lookup[tid] = get_tg_entry_msg(_bf_conn, tid)
+        _bf_conn.close()
+    except Exception:
+        pass
+
     for trade in local_trades:
         tid = trade.get("trade_id")
         if tid and tid in poly_trades and trade.get("outcome") is None:
@@ -502,6 +523,7 @@ def backfill_trade_outcomes():
                     token=cfg.get("telegram_bot_token", ""),
                     chat_id=cfg.get("telegram_chat_id", ""),
                     trade=trade,
+                    reply_to_message_id=_tg_msg_lookup.get(tid),
                 )
 
     if updated:
@@ -1130,7 +1152,7 @@ def run_fast_market_strategy(
                 shares=shares,
                 entry_price=entry_price,
             )
-            _send_telegram(
+            tg_msg_id = _send_telegram(
                 token=cfg.get("telegram_bot_token", ""),
                 chat_id=cfg.get("telegram_chat_id", ""),
                 slug=best["slug"],
@@ -1142,6 +1164,15 @@ def run_fast_market_strategy(
                 remaining=remaining,
                 lag=cex_lag_val,
             )
+            if tg_msg_id and trade_id:
+                try:
+                    from signal_research import store_tg_entry_msg, init_db
+                    db_path = os.environ.get("DB_PATH", "/data/signal_research.db")
+                    _tg_conn = init_db(db_path)
+                    store_tg_entry_msg(_tg_conn, trade_id, tg_msg_id)
+                    _tg_conn.close()
+                except Exception as _tg_db_err:
+                    print(f"[telegram] failed to store msg_id: {_tg_db_err}", flush=True)
         else:
             error = result.get("error", "Unknown") if result else "no response"
             log(f"  ERROR trade failed: {error}", force=True)

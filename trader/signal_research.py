@@ -248,8 +248,35 @@ def init_db(path=DB_PATH):
             resolve_ts            TEXT
         )
     """)
+
+    # ── Telegram message-id log (trade threading) ─────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tg_message_log (
+            trade_id     TEXT PRIMARY KEY,
+            entry_msg_id INTEGER NOT NULL,
+            created_at   TEXT NOT NULL
+        )
+    """)
+
     conn.commit()
     return conn
+
+
+def store_tg_entry_msg(conn, trade_id: str, msg_id: int) -> None:
+    """Record the Telegram message_id for a trade entry alert."""
+    conn.execute(
+        "INSERT OR IGNORE INTO tg_message_log (trade_id, entry_msg_id, created_at) VALUES (?, ?, ?)",
+        (trade_id, msg_id, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
+def get_tg_entry_msg(conn, trade_id: str):
+    """Return the stored Telegram entry message_id for a trade, or None."""
+    row = conn.execute(
+        "SELECT entry_msg_id FROM tg_message_log WHERE trade_id = ?", (trade_id,)
+    ).fetchone()
+    return row[0] if row else None
 
 
 def upsert_trade(conn, record: dict) -> None:
@@ -355,7 +382,7 @@ def resolve_trade_outcomes(conn, trade_log_path: str = None) -> int:
         """, (market_outcome, trade_outcome, pnl, resolve_ts, db_id))
         resolved_count += 1
 
-        # Send Telegram notification for this resolution
+        # Send Telegram notification for this resolution (threaded if entry msg known)
         _notify_trade_resolution(
             slug=slug,
             side=side,
@@ -363,6 +390,7 @@ def resolve_trade_outcomes(conn, trade_log_path: str = None) -> int:
             pnl=pnl,
             position_size=position_size or 0.0,
             entry_price=entry_price or 0.0,
+            reply_to_message_id=get_tg_entry_msg(conn, trade_id),
         )
 
     if resolved_count:
@@ -372,7 +400,8 @@ def resolve_trade_outcomes(conn, trade_log_path: str = None) -> int:
     return resolved_count
 
 
-def _notify_trade_resolution(slug, side, outcome, pnl, position_size, entry_price):
+def _notify_trade_resolution(slug, side, outcome, pnl, position_size, entry_price,
+                              reply_to_message_id=None):
     """Send a Telegram resolution alert. Reads credentials from env vars directly."""
     token   = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
@@ -401,7 +430,10 @@ def _notify_trade_resolution(slug, side, outcome, pnl, position_size, entry_pric
         f"Size:   ${position_size:.2f}\n"
         f"PnL:    <b>{pnl_str}</b>"
     )
-    payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "HTML"}).encode()
+    body = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if reply_to_message_id:
+        body["reply_to_message_id"] = reply_to_message_id
+    payload = json.dumps(body).encode()
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
