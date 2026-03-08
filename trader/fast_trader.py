@@ -306,7 +306,11 @@ def _send_telegram(token: str, chat_id: str, slug: str, side: str, score: float,
                    position_size: float, shares: float, entry_price: float,
                    remaining: float, lag: float) -> None:
     """Send a live-trade alert via Telegram Bot API."""
-    if not token or not token.strip() or not chat_id or not chat_id.strip():
+    if not token or not token.strip():
+        print("[telegram] SKIP entry alert: TELEGRAM_BOT_TOKEN not set", flush=True)
+        return
+    if not chat_id or not chat_id.strip():
+        print("[telegram] SKIP entry alert: TELEGRAM_CHAT_ID not set", flush=True)
         return
     arrow  = "\U0001f7e2" if side == "yes" else "\U0001f534"  # 🟢 / 🔴
     bar    = "\u2501" * 20  # ━━━━━━━━━━━━━━━━━━━━
@@ -326,13 +330,18 @@ def _send_telegram(token: str, chat_id: str, slug: str, side: str, score: float,
         url = f"https://api.telegram.org/bot{token.strip()}/sendMessage"
         req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
         urlopen(req, timeout=8)
+        print(f"[telegram] entry alert sent → {side.upper()} ${position_size:.2f}", flush=True)
     except Exception as _tg_err:
-        print(f"[telegram] send failed: {_tg_err}", flush=True)
+        print(f"[telegram] entry alert FAILED: {_tg_err}", flush=True)
 
 
 def _send_telegram_outcome(token: str, chat_id: str, trade: dict) -> None:
     """Send a trade resolution alert via Telegram Bot API."""
-    if not token or not token.strip() or not chat_id or not chat_id.strip():
+    if not token or not token.strip():
+        print("[telegram] SKIP outcome alert: TELEGRAM_BOT_TOKEN not set", flush=True)
+        return
+    if not chat_id or not chat_id.strip():
+        print("[telegram] SKIP outcome alert: TELEGRAM_CHAT_ID not set", flush=True)
         return
     outcome  = trade.get("outcome", "?")
     pnl      = trade.get("pnl", 0.0) or 0.0
@@ -368,8 +377,9 @@ def _send_telegram_outcome(token: str, chat_id: str, trade: dict) -> None:
         url = f"https://api.telegram.org/bot{token.strip()}/sendMessage"
         req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
         urlopen(req, timeout=8)
+        print(f"[telegram] outcome alert sent → {label} {pnl_str}", flush=True)
     except Exception as _tg_err:
-        print(f"[telegram] outcome send failed: {_tg_err}", flush=True)
+        print(f"[telegram] outcome alert FAILED: {_tg_err}", flush=True)
 
 
 def _log_trade_local(trade_id, side, score, confidence, entry_price, position_size,

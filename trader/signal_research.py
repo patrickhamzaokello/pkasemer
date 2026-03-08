@@ -355,11 +355,60 @@ def resolve_trade_outcomes(conn, trade_log_path: str = None) -> int:
         """, (market_outcome, trade_outcome, pnl, resolve_ts, db_id))
         resolved_count += 1
 
+        # Send Telegram notification for this resolution
+        _notify_trade_resolution(
+            slug=slug,
+            side=side,
+            outcome=trade_outcome,
+            pnl=pnl,
+            position_size=position_size or 0.0,
+            entry_price=entry_price or 0.0,
+        )
+
     if resolved_count:
         conn.commit()
         _sync_trade_log_from_db(conn, trade_log_path)
         print(f"  [resolve_trades] resolved {resolved_count} trade outcomes", flush=True)
     return resolved_count
+
+
+def _notify_trade_resolution(slug, side, outcome, pnl, position_size, entry_price):
+    """Send a Telegram resolution alert. Reads credentials from env vars directly."""
+    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token:
+        print("[telegram] SKIP resolution alert: TELEGRAM_BOT_TOKEN not set", flush=True)
+        return
+    if not chat_id:
+        print("[telegram] SKIP resolution alert: TELEGRAM_CHAT_ID not set", flush=True)
+        return
+
+    if outcome == "win":
+        emoji, label = "\u2705", "WIN"       # ✅
+    elif outcome == "loss":
+        emoji, label = "\u274c", "LOSS"      # ❌
+    else:
+        emoji, label = "\u2753", outcome.upper()  # ❓
+
+    pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
+    bar     = "\u2501" * 20
+    market  = slug if len(slug) <= 40 else slug[:37] + "..."
+    text    = (
+        f"{emoji} <b>RESOLVED \u2014 {label}</b>\n"
+        f"<code>{bar}</code>\n"
+        f"Market: <code>{market}</code>\n"
+        f"Side:   <b>{side.upper()}</b>  |  Entry: ${entry_price:.3f}\n"
+        f"Size:   ${position_size:.2f}\n"
+        f"PnL:    <b>{pnl_str}</b>"
+    )
+    payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "HTML"}).encode()
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        urlopen(req, timeout=8)
+        print(f"[telegram] resolution alert sent → {label} {pnl_str}", flush=True)
+    except Exception as e:
+        print(f"[telegram] resolution alert FAILED: {e}", flush=True)
 
 
 def _sync_trade_log_from_db(conn, trade_log_path: str) -> None:
