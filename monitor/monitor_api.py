@@ -1341,6 +1341,32 @@ def drawdown():
     })
 
 
+@app.route("/api/daily-pnl")
+def daily_pnl():
+    """Daily P&L grouped by resolved-trade date from the SQLite trades table."""
+    try:
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT DATE(timestamp) AS day,
+                   ROUND(SUM(pnl), 4) AS pnl,
+                   COUNT(*) AS trades,
+                   SUM(CASE WHEN trade_outcome = 'win'  THEN 1 ELSE 0 END) AS wins,
+                   SUM(CASE WHEN trade_outcome = 'loss' THEN 1 ELSE 0 END) AS losses
+            FROM trades
+            WHERE resolved = 1 AND pnl IS NOT NULL
+            GROUP BY DATE(timestamp)
+            ORDER BY day ASC
+        """).fetchall()
+        conn.close()
+        days = [
+            {"day": r[0], "pnl": r[1], "trades": r[2], "wins": r[3], "losses": r[4]}
+            for r in rows
+        ]
+        return jsonify({"days": days})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/market-breakdown")
 def market_breakdown():
     try:

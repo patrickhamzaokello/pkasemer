@@ -747,6 +747,21 @@
 
     </div>
 
+    <!-- ── Daily P&L ─────────────────────────────────────── -->
+    <div class="panel" style="margin-top:14px">
+      <div class="panel-header">
+        <div class="panel-title">Daily P&amp;L</div>
+        <div class="panel-meta" id="dpnl-days">—</div>
+      </div>
+      <svg id="dpnl-svg" viewBox="0 0 900 100" preserveAspectRatio="none"
+           style="display:block;width:100%;height:100px;background:rgba(0,0,0,0.2)"></svg>
+      <div style="display:flex;gap:20px;padding:8px 14px;font-size:10px;color:var(--text-dim)">
+        <span>Total: <strong id="dpnl-total">—</strong></span>
+        <span>Best day: <strong id="dpnl-best" style="color:var(--green)">—</strong></span>
+        <span>Worst day: <strong id="dpnl-worst" style="color:var(--red)">—</strong></span>
+      </div>
+    </div>
+
     <!-- ── Polymarket Trades ──────────────────────────────── -->
     <div class="panel" style="margin-top:14px">
       <div class="panel-header">
@@ -1300,6 +1315,56 @@ async function toggleKillSwitch() {
   } catch(e) {}
 }
 
+// ── Daily P&L bar chart ────────────────────────────────────
+async function fetchDailyPnl() {
+  try {
+    const d = await fetch(`${API}/api/daily-pnl`).then(r => r.json());
+    const svg = $('dpnl-svg');
+    if (d.error || !d.days || !d.days.length) {
+      svg.innerHTML = `<text x="450" y="54" text-anchor="middle" fill="rgba(255,255,255,0.07)" font-size="12" font-family="monospace">no resolved trades yet</text>`;
+      return;
+    }
+    const days   = d.days.slice(-7); // show at most 7 days
+    const n      = days.length;
+    const W = 900, H = 100, PAD = 8, GAP = 1;
+    const barW   = Math.max(2, (W - PAD * 2) / n - GAP);
+    const pnls   = days.map(x => x.pnl);
+    const maxAbs = Math.max(0.01, ...pnls.map(Math.abs));
+    const zY     = H / 2;
+    const scale  = (H / 2 - PAD) / maxAbs;
+
+    const bars = days.map((day, i) => {
+      const x = PAD + i * ((W - PAD * 2) / n);
+      const h = Math.max(1, Math.abs(day.pnl) * scale);
+      const y = day.pnl >= 0 ? zY - h : zY;
+      const col = day.pnl >= 0 ? '#22c55e' : '#ef4444';
+      const sign = day.pnl >= 0 ? '+' : '-';
+      const tip  = `${day.day}: ${sign}$${Math.abs(day.pnl).toFixed(2)} · ${day.wins}W / ${day.losses}L (${day.trades} trades)`;
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${col}" opacity="0.85"><title>${tip}</title></rect>`;
+    }).join('');
+
+    const totalPnl = pnls.reduce((a, b) => a + b, 0);
+    const bestDay  = days.reduce((a, b) => b.pnl > a.pnl ? b : a);
+    const worstDay = days.reduce((a, b) => b.pnl < a.pnl ? b : a);
+
+    // Label first and last date
+    const labelFirst = days[0].day.slice(5);   // MM-DD
+    const labelLast  = days[n - 1].day.slice(5);
+    svg.innerHTML = `
+      <line x1="0" y1="${zY}" x2="${W}" y2="${zY}" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+      ${bars}
+      <text x="${PAD}" y="${H - 3}" fill="rgba(255,255,255,0.18)" font-size="8" font-family="monospace">${labelFirst}</text>
+      <text x="${W - PAD}" y="${H - 3}" text-anchor="end" fill="rgba(255,255,255,0.18)" font-size="8" font-family="monospace">${labelLast}</text>`;
+
+    const tot = $('dpnl-total');
+    tot.textContent = dollar(totalPnl);
+    tot.style.color = pcol(totalPnl);
+    $('dpnl-best').textContent  = `+$${bestDay.pnl.toFixed(2)} (${bestDay.day})`;
+    $('dpnl-worst').textContent = `-$${Math.abs(worstDay.pnl).toFixed(2)} (${worstDay.day})`;
+    $('dpnl-days').textContent  = n + ' trading days';
+  } catch(e) { console.error('fetchDailyPnl', e); }
+}
+
 // ── Drawdown chart ─────────────────────────────────────────
 async function fetchDrawdown() {
   try {
@@ -1390,7 +1455,7 @@ async function refreshAll() {
     fetchStatus(), fetchCurrent(), fetchFeed(), fetchLog(),
     fetchTrades(), fetchPolyMetrics(), fetchPolyTrades(),
     fetchImportStatus(), fetchDecisionStats(),
-    fetchKillSwitch(), fetchDrawdown(), fetchRollingWinRate()
+    fetchKillSwitch(), fetchDrawdown(), fetchRollingWinRate(), fetchDailyPnl()
   ]);
   $('last-ref').textContent = 'updated ' + new Date().toUTCString().slice(17,25) + ' UTC';
 }
