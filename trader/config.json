@@ -23,19 +23,20 @@
   "min_lag_override": 0.15,
   "webhook_url": "",
   "signal_weights": {
-    "btc_vs_reference": 0.315,
-    "vol_adjusted_momentum": 0.194,
-    "momentum_5m": 0.136,
-    "cex_poly_lag": 0.136,
-    "momentum_1m": 0.111,
-    "price_acceleration": 0.074,
-    "momentum_15m": 0.034,
-    "rsi_14": 0.0,
+    "btc_vs_reference": 0.22,
+    "vol_adjusted_momentum": 0.24,
+    "momentum_5m": 0.16,
+    "cex_poly_lag": 0.16,
+    "momentum_1m": 0.10,
+    "price_acceleration": 0.08,
+    "rsi_14": 0.04,
     "trade_flow_ratio": 0.0,
     "volume_ratio": 0.0,
     "order_imbalance": 0.0,
     "momentum_consistency": 0.0,
     "poly_divergence": 0.0,
-    "poly_yes_price": 0.0
+    "poly_yes_price": 0.0,
+    "momentum_15m": 0.0
+
   }
 }
