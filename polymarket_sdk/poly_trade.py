@@ -31,6 +31,10 @@ from .poly_auth import get_clob_client
 from .poly_market import get_token_id
 
 
+MIN_ORDER_USDC = 1.0   # Polymarket minimum order size in USDC
+PRICE_TOLERANCE = 0.03  # Accept ask prices up to 3% above best ask for liquidity calc
+
+
 def execute_trade(
     market_id: str,
     side: str,
@@ -40,7 +44,8 @@ def execute_trade(
     Execute a market-buy order on Polymarket CLOB.
 
     Uses MarketOrderArgs where `amount` is the USDC amount to spend.
-    The CLOB auto-calculates the best available price and fills shares accordingly.
+    Pre-checks ask-side liquidity and caps the order size to what's available,
+    preventing FOK "couldn't be fully filled" rejections.
 
     Args:
         market_id:   condition_id (returned by resolve_market)
@@ -70,6 +75,41 @@ def execute_trade(
             "error": (
                 f"No token_id found for market_id={market_id} side={side}. "
                 "Call resolve_market(slug) first to populate the cache."
+            ),
+        }
+
+    # ── Liquidity pre-check ──────────────────────────────────────────────────
+    # Cap amount_usdc to available ask-side depth so FOK doesn't get killed.
+    best_ask, avail_usdc = _get_ask_liquidity_usdc(client, token_id)
+    if avail_usdc <= 0:
+        return {
+            "success": False,
+            "trade_id": None,
+            "shares_bought": 0.0,
+            "shares": 0.0,
+            "average_price": 0.0,
+            "error": f"No ask-side liquidity (best_ask={best_ask:.4f}). Order skipped.",
+        }
+
+    if amount_usdc > avail_usdc:
+        capped = round(avail_usdc * 0.95, 2)  # 5% haircut so we don't hit the edge
+        print(
+            f"[trade] liquidity cap: ${amount_usdc:.2f} → ${capped:.2f} "
+            f"(avail=${avail_usdc:.2f} @ ask={best_ask:.4f})",
+            flush=True,
+        )
+        amount_usdc = capped
+
+    if amount_usdc < MIN_ORDER_USDC:
+        return {
+            "success": False,
+            "trade_id": None,
+            "shares_bought": 0.0,
+            "shares": 0.0,
+            "average_price": 0.0,
+            "error": (
+                f"After liquidity cap, order size ${amount_usdc:.2f} < "
+                f"minimum ${MIN_ORDER_USDC:.2f}. Skipped."
             ),
         }
 
@@ -107,6 +147,45 @@ def execute_trade(
     # Get mid price for average_price in response (informational only)
     entry_price = _get_mid_price(client, token_id) or 0.0
     return _parse_order_response(resp, entry_price)
+
+
+def _get_ask_liquidity_usdc(
+    client: Any, token_id: str
+) -> tuple[float, float]:
+    """
+    Return (best_ask_price, total_usdc_available) across ask levels within
+    PRICE_TOLERANCE of the best ask.  Used to cap FOK order size before posting.
+    """
+    try:
+        book = client.get_order_book(token_id)
+        if not book:
+            return 0.0, 0.0
+        asks = getattr(book, "asks", None)
+        if asks is None:
+            asks = book.get("asks", []) if isinstance(book, dict) else []
+        if not asks:
+            return 0.0, 0.0
+
+        def _p(a: Any) -> float:
+            v = getattr(a, "price", None)
+            return float(v if v is not None else a.get("price", 0))
+
+        def _s(a: Any) -> float:
+            v = getattr(a, "size", None)
+            return float(v if v is not None else a.get("size", 0))
+
+        sorted_asks = sorted(asks, key=_p)
+        best_ask = _p(sorted_asks[0])
+        if best_ask <= 0:
+            return 0.0, 0.0
+
+        ceiling = best_ask * (1 + PRICE_TOLERANCE)
+        total_usdc = sum(
+            _p(a) * _s(a) for a in sorted_asks if _p(a) <= ceiling
+        )
+        return best_ask, round(total_usdc, 4)
+    except Exception:
+        return 0.0, 0.0
 
 
 def _get_mid_price(client: Any, token_id: str) -> float | None:
