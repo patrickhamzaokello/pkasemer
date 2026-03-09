@@ -1,8 +1,8 @@
 {
   "entry_threshold": 0.035,
   "min_momentum_pct": 0.03,
-  "max_position": 3.50,
-  "max_position_per_window": 4.50,
+  "max_position": 3.5,
+  "max_position_per_window": 4.0,
   "max_no_score": 0.260,
   "min_time_remaining": 120,
   "max_time_remaining": 240,
