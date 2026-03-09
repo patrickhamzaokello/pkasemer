@@ -25,7 +25,7 @@
   "max_no_size": 2.50,
   "webhook_url": "",
   "signal_weights": {
-   "vol_adjusted_momentum": 0.28,
+    "vol_adjusted_momentum": 0.28,
     "momentum_5m": 0.22,
     "cex_poly_lag": 0.20,
     "momentum_15m": 0.12,
@@ -39,5 +39,29 @@
     "momentum_consistency": 0.0,
     "poly_divergence": 0.0,
     "poly_yes_price": 0.0
+  },
+
+  "slow_mom_threshold": 0.12,
+  "slow_vol_threshold": 0.80,
+  "active_mom_threshold": 0.25,
+  "active_vol_threshold": 1.30,
+
+  "slow_composite_threshold": 0.73,
+  "active_composite_threshold": 0.68,
+
+  "slow_max_entry_yes": 0.54,
+  "slow_min_entry_no": 0.46,
+  "slow_position_pct_cap": 0.70,
+
+  "min_payout_ratio": 0.90,
+  "slow_min_payout_ratio": 1.10,
+
+  "blocked_hours": [6, 8, 16],
+  "boosted_hours": {
+    "2":  -0.03,
+    "4":  -0.02,
+    "10": -0.02,
+    "17": -0.02,
+    "0":  -0.01
   }
 }

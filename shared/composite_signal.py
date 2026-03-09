@@ -54,6 +54,83 @@ import argparse
 from datetime import datetime, timezone
 
 # =============================================================================
+# Time-of-Day Signal Accuracy (calibrated from 4,647 resolved observations)
+#
+# Signal accuracy = fraction of times the momentum direction correctly predicted
+# the market outcome, filtered to |momentum_5m| >= 0.08%.
+#
+# Override via config.json "hour_accuracy" dict (keyed by int 0-23).
+# "blocked_hours"   — list of UTC hours where trading is disabled entirely
+# "boosted_hours"   — dict {hour: threshold_delta} to lower entry threshold
+# =============================================================================
+
+# Observed signal accuracy by UTC hour (n>=20 filter applied)
+_DEFAULT_HOUR_ACCURACY = {
+    0:  0.719,
+    2:  0.857,   # best hour — 85.7% accuracy
+    4:  0.773,
+    5:  0.667,
+    6:  0.446,   # anti-predictive — avoid
+    7:  0.662,
+    8:  0.459,   # anti-predictive — avoid
+    9:  0.525,
+    10: 0.738,
+    11: 0.629,
+    12: 0.672,
+    13: 0.656,
+    14: 0.649,
+    15: 0.688,
+    16: 0.258,   # STRONGLY anti-predictive — block
+    17: 0.733,
+    18: 0.679,
+    19: 0.688,
+    21: 0.636,
+    22: 0.667,
+}
+
+# Default hour-based rules derived from the accuracy table
+# Blocked: accuracy below 0.50 (signal is net-negative)
+_DEFAULT_BLOCKED_HOURS = [6, 8, 16]
+
+# Boosted: accuracy >= 0.73 → allow slightly lower composite threshold
+# delta is subtracted from the threshold (negative = easier to trigger)
+_DEFAULT_BOOSTED_HOURS = {
+    2:  -0.03,   # 85.7% — lower threshold by 0.03
+    4:  -0.02,   # 77.3%
+    10: -0.02,   # 73.8%
+    17: -0.02,   # 73.3%
+    0:  -0.01,   # 71.9%
+}
+
+
+def get_hour_accuracy(hour_utc, config=None):
+    """Return the observed signal accuracy for the given UTC hour (0-23)."""
+    cfg = config or {}
+    table = {**_DEFAULT_HOUR_ACCURACY, **cfg.get("hour_accuracy", {})}
+    return table.get(hour_utc, 0.60)   # 0.60 = conservative default for unseen hours
+
+
+def check_hour_gate(hour_utc, config=None):
+    """
+    Returns (allowed: bool, threshold_delta: float, reason: str).
+
+    allowed=False  → skip this cycle entirely (bad hours)
+    threshold_delta → added to composite_threshold (negative = easier to trade)
+    """
+    cfg = config or {}
+    blocked = cfg.get("blocked_hours", _DEFAULT_BLOCKED_HOURS)
+    # JSON loads dict keys as strings; normalise to int
+    raw_boosted = cfg.get("boosted_hours", _DEFAULT_BOOSTED_HOURS)
+    boosted = {int(k): v for k, v in raw_boosted.items()}
+
+    if hour_utc in blocked:
+        acc = get_hour_accuracy(hour_utc, cfg)
+        return False, 0.0, f"hour {hour_utc}h blocked (signal accuracy={acc:.1%})"
+
+    delta = boosted.get(hour_utc, 0.0)
+    return True, delta, "ok"
+
+# =============================================================================
 # Default signal weights
 # Override via config.json: { "signal_weights": { "btc_vs_reference": 0.50, ... } }
 # =============================================================================
@@ -72,6 +149,37 @@ DEFAULT_WEIGHTS = {
     "momentum_consistency":  0.000,   # corr=-0.021, negative
 }
 
+# Slow-market weights: shift to latency-arb signals which remain reliable
+# when momentum is weak. De-emphasise vol_adjusted_momentum (noisy at low vol).
+SLOW_MARKET_WEIGHTS = {
+    "cex_poly_lag":          0.340,   # pure latency arb — most reliable in quiet markets
+    "btc_vs_reference":      0.290,   # structural reference-price edge
+    "momentum_5m":           0.130,   # reduced — less reliable in consolidation
+    "vol_adjusted_momentum": 0.100,   # de-weighted — noisy when vol is low
+    "momentum_1m":           0.080,   # micro-move confirmation
+    "price_acceleration":    0.060,   # acceleration still informative
+    "momentum_15m":          0.000,   # 15m trend useless in a flat market
+    "volume_ratio":          0.000,
+    "trade_flow_ratio":      0.000,
+    "order_imbalance":       0.000,
+    "momentum_consistency":  0.000,
+}
+
+# Active-market weights: lean on strong multi-timeframe momentum alignment
+ACTIVE_MARKET_WEIGHTS = {
+    "btc_vs_reference":      0.280,
+    "vol_adjusted_momentum": 0.250,   # momentum per unit vol very reliable in trends
+    "momentum_5m":           0.180,
+    "momentum_15m":          0.120,   # 15m confirmation matters in trending markets
+    "cex_poly_lag":          0.080,   # lag signal less distinctive when poly already moved
+    "momentum_1m":           0.050,
+    "price_acceleration":    0.040,
+    "volume_ratio":          0.000,
+    "trade_flow_ratio":      0.000,
+    "order_imbalance":       0.000,
+    "momentum_consistency":  0.000,
+}
+
 # =============================================================================
 # Thresholds
 # =============================================================================
@@ -84,6 +192,46 @@ MIN_POLY_SPREAD    = 0.04          # FIX: was 0.10 — never fired since real sp
                                    # are 0.01-0.03. Now correctly catches illiquid windows.
 RSI_OVERBOUGHT     = 85            # only block extreme exhaustion spikes
 RSI_OVERSOLD       = 15            # only block extreme capitulation
+
+
+# =============================================================================
+# Market Regime Detection
+# =============================================================================
+
+def detect_market_regime(cex_signals, config=None):
+    """
+    Classify the current market as 'slow', 'normal', or 'active'.
+
+    Slow   — consolidating / low-momentum. Best edge: pure latency arb.
+    Normal — typical conditions. Default strategy applies.
+    Active — strong trending. Momentum signals most reliable.
+
+    Thresholds are config-overridable:
+        slow_mom_threshold   default 0.12  — |momentum_5m| below this = slow
+        slow_vol_threshold   default 0.80  — volume_ratio below this = slow
+        active_mom_threshold default 0.25  — |momentum_5m| above this = active
+        active_vol_threshold default 1.30  — volume_ratio above this = active
+    """
+    cfg = config or {}
+    m5  = abs(cex_signals.get("momentum_5m") or 0)
+    vr  = cex_signals.get("volume_ratio") or 1.0
+    # volume_ratio == 1.0 is the "no data yet" sentinel; treat as neutral
+    vr_valid = vr != 1.0
+
+    slow_mom   = cfg.get("slow_mom_threshold",   0.12)
+    slow_vol   = cfg.get("slow_vol_threshold",   0.80)
+    active_mom = cfg.get("active_mom_threshold", 0.25)
+    active_vol = cfg.get("active_vol_threshold", 1.30)
+
+    # Slow: weak momentum AND (below-average volume or no volume data)
+    if m5 < slow_mom and (not vr_valid or vr < slow_vol):
+        return "slow"
+
+    # Active: strong momentum AND above-average volume
+    if m5 > active_mom and vr_valid and vr > active_vol:
+        return "active"
+
+    return "normal"
 
 
 # =============================================================================
@@ -381,23 +529,53 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
         position_pct:  float (0-1, suggested fraction of max position)
         filter_reason: str (why trade was blocked, if applicable)
         breakdown:     dict (per-signal contributions)
+        regime:        'slow' | 'normal' | 'active'
     """
-    weights = DEFAULT_WEIGHTS.copy()
-    if config and "signal_weights" in config:
-        weights.update(config["signal_weights"])
+    cfg = config or {}
+
+    # ── Market regime detection ───────────────────────────────────────────────
+    regime = detect_market_regime(cex_signals, cfg)
+
+    # ── Weight selection: config override > regime-specific > default ─────────
+    if "signal_weights" in cfg:
+        # Explicit config override always wins
+        weights = DEFAULT_WEIGHTS.copy()
+        weights.update(cfg["signal_weights"])
+    elif regime == "slow":
+        weights = SLOW_MARKET_WEIGHTS.copy()
+        if "slow_signal_weights" in cfg:
+            weights.update(cfg["slow_signal_weights"])
+    elif regime == "active":
+        weights = ACTIVE_MARKET_WEIGHTS.copy()
+        if "active_signal_weights" in cfg:
+            weights.update(cfg["active_signal_weights"])
+    else:
+        weights = DEFAULT_WEIGHTS.copy()
+
+    # ── Time-of-day gate ─────────────────────────────────────────────────────
+    hour_utc = datetime.now(timezone.utc).hour
+    hour_ok, threshold_delta, hour_reason = check_hour_gate(hour_utc, cfg)
 
     result = {
-        "should_trade": False,
-        "side":         None,
-        "score":        0.5,
-        "confidence":   0.0,
-        "position_pct": 0.0,
-        "filter_reason": None,
-        "breakdown":    {},
+        "should_trade":    False,
+        "side":            None,
+        "score":           0.5,
+        "confidence":      0.0,
+        "position_pct":    0.0,
+        "filter_reason":   None,
+        "breakdown":       {},
+        "regime":          regime,
+        "hour_utc":        hour_utc,
+        "hour_accuracy":   get_hour_accuracy(hour_utc, cfg),
+        "threshold_delta": threshold_delta,
     }
 
+    if not hour_ok:
+        result["filter_reason"] = hour_reason
+        return result
+
     # Hard filters first
-    passed, reason = apply_filters(cex_signals, poly_signals, config=config)
+    passed, reason = apply_filters(cex_signals, poly_signals, config=cfg)
     if not passed:
         result["filter_reason"] = reason
         return result
@@ -411,10 +589,23 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
     confidence = abs(score - 0.5) * 2   # maps [0.5, 1.0] → [0, 1]
     result["confidence"] = confidence
 
-    # Threshold check
-    threshold = COMPOSITE_ENTRY_THRESHOLD
-    if config:
-        threshold = config.get("composite_threshold", threshold)
+    # ── Regime-aware threshold ────────────────────────────────────────────────
+    base_threshold = COMPOSITE_ENTRY_THRESHOLD
+    if "composite_threshold" in cfg:
+        base_threshold = cfg["composite_threshold"]
+
+    if regime == "slow":
+        # Require a higher conviction bar in slow markets — weak signals are
+        # unreliable noise when momentum is near-zero.
+        threshold = cfg.get("slow_composite_threshold", max(base_threshold, 0.73))
+    elif regime == "active":
+        # Slightly lower bar in active markets — signals align more clearly.
+        threshold = cfg.get("active_composite_threshold", max(base_threshold - 0.02, 0.60))
+    else:
+        threshold = base_threshold
+
+    # Apply hour-of-day boost (threshold_delta is negative for good hours)
+    threshold = max(0.55, threshold + threshold_delta)
 
     if score > threshold:
         result["should_trade"] = True
@@ -424,17 +615,24 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
         result["side"]         = "no"
     else:
         result["filter_reason"] = (
-            f"score {score:.3f} within neutral band (threshold ±{threshold - 0.5:.3f})"
+            f"[{regime}] score {score:.3f} within neutral band "
+            f"(threshold ±{threshold - 0.5:.3f})"
         )
+        return result
 
-    # Position sizing: linear with confidence.
-    # Floor at 0.55 when trading — ensures position_size always clears 5-share
-    # minimum at $5 max_position. confidence=0.10 → position_pct=0.55 → $2.75
-    # (covers 5 shares @ $0.55 entry price).
+    # ── Regime-aware position sizing ──────────────────────────────────────────
+    # Slow market: reduce exposure — signals less reliable, protect capital.
+    # Active market: allow full size — signals most trustworthy.
+    # Floor at 0.55 when trading to clear 5-share minimum at $5 max_position.
     MIN_POSITION_PCT = 0.55
-    result["position_pct"] = (
-        max(confidence, MIN_POSITION_PCT) if result["should_trade"] else confidence
-    )
+    if regime == "slow":
+        slow_size_cap = cfg.get("slow_position_pct_cap", 0.70)
+        result["position_pct"] = min(
+            max(confidence, MIN_POSITION_PCT),
+            slow_size_cap,
+        )
+    else:
+        result["position_pct"] = max(confidence, MIN_POSITION_PCT)
 
     return result
 

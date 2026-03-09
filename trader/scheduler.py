@@ -245,10 +245,12 @@ def main():
     # ── Startup: warm the market ID cache before cycle 1 ─────────────────────
     run_cache_warm()
 
-    cycle       = 0
+    cycle        = 0
     last_resolve = datetime.now(timezone.utc)
+    last_optimize = datetime.now(timezone.utc) - timedelta(minutes=31)  # run at startup
     last_action  = "starting"
     log.info(f"  Next resolve/backfill/redeem in 10 minutes")
+    log.info(f"  Optimizer will run at startup then every 30 minutes")
 
     while _running:
         now = datetime.now(timezone.utc)
@@ -274,6 +276,17 @@ def main():
             backfill_trade_outcomes()
             run_redeemer()
             last_resolve = now
+
+        # Auto-optimize config every 30 minutes
+        if (now - last_optimize).total_seconds() > 1800:
+            try:
+                from optimizer import run_optimizer
+                log.info("[optimizer] running auto-optimization...")
+                run_optimizer(apply=True, verbose=False)
+                log.info("[optimizer] done — config.json updated if warranted")
+            except Exception as _opt_err:
+                log.warning(f"[optimizer] failed (non-fatal): {_opt_err}")
+            last_optimize = now
 
         write_status(cycle, last_action, True)
 

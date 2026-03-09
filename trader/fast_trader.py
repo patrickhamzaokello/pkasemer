@@ -36,7 +36,7 @@ from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
 from pathlib import Path
 
-from composite_signal import get_composite_signal, _calc_cex_poly_lag
+from composite_signal import get_composite_signal, _calc_cex_poly_lag, detect_market_regime, check_hour_gate
 from signal_research import extract_cex_signals, extract_poly_signals, get_window_reference_price, _load_ref_cache
 from market_utils import discover_fast_market_markets, find_best_fast_market
 
@@ -771,6 +771,29 @@ def run_fast_market_strategy(
     smart_sizing=False,
     quiet=False,
 ):
+    # ── Reload config each cycle so optimizer changes take effect immediately ─
+    global cfg, raw_cfg
+    global ENTRY_THRESHOLD, MIN_MOMENTUM_PCT, MAX_POSITION_USD, SIGNAL_SOURCE
+    global LOOKBACK_MINUTES, MIN_TIME_REMAINING, MAX_TIME_REMAINING, ASSET
+    global WINDOW, VOLUME_CONFIDENCE, DAILY_BUDGET
+    cfg = _load_config(CONFIG_SCHEMA, __file__)
+    try:
+        with open(_get_config_path(__file__)) as _f:
+            raw_cfg = json.load(_f)
+    except Exception:
+        raw_cfg = cfg
+    ENTRY_THRESHOLD    = cfg["entry_threshold"]
+    MIN_MOMENTUM_PCT   = cfg["min_momentum_pct"]
+    MAX_POSITION_USD   = cfg["max_position"]
+    SIGNAL_SOURCE      = cfg["signal_source"]
+    LOOKBACK_MINUTES   = cfg["lookback_minutes"]
+    MIN_TIME_REMAINING = cfg["min_time_remaining"]
+    MAX_TIME_REMAINING = cfg.get("max_time_remaining", 420)
+    ASSET              = cfg["asset"].upper()
+    WINDOW             = cfg["window"]
+    VOLUME_CONFIDENCE  = cfg["volume_confidence"]
+    DAILY_BUDGET       = cfg["daily_budget"]
+
     now_str  = datetime.now(timezone.utc).strftime("%H:%M:%S")
     mode_tag = "[DRY]" if dry_run else "[LIVE]"
 
@@ -925,12 +948,16 @@ def run_fast_market_strategy(
     signal     = get_composite_signal(cex_signals, poly_signals, config=raw_cfg)
     score      = signal["score"]
     confidence = signal["confidence"]
+    regime       = signal.get("regime", "normal")
+    hour_acc     = signal.get("hour_accuracy", 0.0)
+    hour_acc_str = f"{hour_acc:.0%}"
 
     if not signal["should_trade"]:
         reason = signal.get("filter_reason", "neutral band")
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
-            f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} lag={cex_lag_str} vol={vol_r:.2f}x | "
+            f"[{regime}/{hour_acc_str}] m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} "
+            f"lag={cex_lag_str} vol={vol_r:.2f}x | "
             f"score={score:.3f} BLOCK: {reason}"
         )
         return
@@ -946,6 +973,29 @@ def run_fast_market_strategy(
             f"score={score:.3f} → NO BLOCK: score {score:.3f} > max_no_score {MAX_NO_SCORE:.3f}"
         )
         return
+
+    # ── Slow-market entry price tightening ───────────────────────────────────
+    # In a quiet market, the polymarket price near 0.50 gives better payout
+    # ratios (you earn more per dollar if the rare move materialises). Block
+    # entries where the market has already drifted far from 0.50 in a slow
+    # regime — the edge is gone and the payout is poor.
+    if regime == "slow":
+        slow_max_entry_yes = raw_cfg.get("slow_max_entry_yes", 0.54)
+        slow_min_entry_no  = raw_cfg.get("slow_min_entry_no",  0.46)
+        if side == "yes" and market_yes_price > slow_max_entry_yes:
+            log(
+                f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+                f"[slow] score={score:.3f} → YES BLOCK: market already at "
+                f"{market_yes_price:.3f} > {slow_max_entry_yes:.3f} slow-market cap"
+            )
+            return
+        if side == "no" and market_yes_price < slow_min_entry_no:
+            log(
+                f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+                f"[slow] score={score:.3f} → NO BLOCK: market already at "
+                f"{market_yes_price:.3f} < {slow_min_entry_no:.3f} slow-market floor"
+            )
+            return
 
     # Hard liquidity floor — FAK orders fail on thin books regardless of signal.
     # Skip sentinels: vol_r <= 0.05 means new candle with sub-second volume accumulated
@@ -965,13 +1015,39 @@ def run_fast_market_strategy(
         win_profit   = (1 - entry_price) * (1 - fee_rate)
         breakeven_wr = entry_price / (win_profit + entry_price)
         implied_wr   = score if side == "yes" else (1 - score)
-        if implied_wr < breakeven_wr + 0.03:
+        # Tighter edge requirement in slow markets: score must beat breakeven by 0.05
+        min_edge = 0.05 if regime == "slow" else 0.03
+        if implied_wr < breakeven_wr + min_edge:
             log(
                 f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
-                f"score={score:.3f} → {side.upper()} BLOCK: fee EV negative "
-                f"(implied={implied_wr:.1%} < breakeven={breakeven_wr:.1%})"
+                f"[{regime}] score={score:.3f} → {side.upper()} BLOCK: fee EV too thin "
+                f"(implied={implied_wr:.1%} < breakeven={breakeven_wr:.1%} + {min_edge:.0%})"
             )
             return
+
+    # ── Payout ratio gate — wins must structurally exceed losses ─────────────
+    # payout_ratio = amount won per dollar if correct / dollar lost if wrong
+    #   = (1 - entry_price) / entry_price
+    # Buying at 0.55 → ratio 0.82x  (win earns LESS than the loss — negative)
+    # Buying at 0.50 → ratio 1.00x  (breakeven ignoring win rate)
+    # Buying at 0.43 → ratio 1.33x  (each win covers 1.33 losses)
+    # Minimum required payout ratio is configurable; default = 1.0 (at least
+    # break-even in payout before win-rate edge kicks in).
+    payout_ratio = (1 - entry_price) / entry_price if entry_price > 0 else 0
+    # Slow markets get a stricter requirement: need payout to cover more losses
+    # since lower signal reliability means fewer wins per loss.
+    if regime == "slow":
+        min_payout = raw_cfg.get("slow_min_payout_ratio", 1.10)
+    else:
+        min_payout = raw_cfg.get("min_payout_ratio", 0.90)
+    if payout_ratio < min_payout:
+        log(
+            f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+            f"[{regime}] score={score:.3f} → {side.upper()} BLOCK: "
+            f"payout ratio {payout_ratio:.2f}x < {min_payout:.2f}x min "
+            f"(entry={entry_price:.3f})"
+        )
+        return
 
     # ── Position sizing ───────────────────────────────────────────────────────
     position_size    = calculate_position_size(MAX_POSITION_USD * position_pct, smart_sizing)
@@ -1071,7 +1147,8 @@ def run_fast_market_strategy(
     # ── Step 5: Import & execute ──────────────────────────────────────────────
     log(
         f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
-        f"m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} lag={cex_lag_str} vol={vol_r:.2f}x | "
+        f"[{regime}/{hour_acc_str}] m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} "
+        f"lag={cex_lag_str} vol={vol_r:.2f}x payout={payout_ratio:.2f}x | "
         f"score={score:.3f} conf={confidence:.2f} → {side.upper()} ${position_size:.2f}"
     )
 
