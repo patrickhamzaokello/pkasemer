@@ -2,7 +2,7 @@
 """
 Pknwitq Signal Optimizer
 
-Reads resolved trade outcomes from trade_log.json + SQLite, analyses winning vs
+Reads resolved trade outcomes from SQLite, analyses winning vs
 losing patterns across every tunable dimension, then incrementally updates
 config.json to push win rate toward the target (default 70%).
 
@@ -64,7 +64,7 @@ MAX_WEIGHT_NUDGE = 0.025  # max weight change per signal per run
 # Timing bounds (seconds)
 MIN_MIN_TIME     = 120    # earliest we'll allow min_time_remaining to go
 MAX_MIN_TIME     = 300    # latest we'll push min_time_remaining
-MIN_MAX_TIME     = 240    # earliest we'll allow max_time_remaining to go
+MIN_MAX_TIME     = 160    # earliest we'll allow max_time_remaining to go
 MAX_MAX_TIME     = 460    # latest we'll push max_time_remaining (more early-window chances)
 TIME_STEP        = 15     # seconds moved per optimizer run
 
@@ -171,14 +171,6 @@ def _write_history(win_rate, n_resolved, changes_applied):
         pass
 
 
-def _load_trades_json():
-    if not _TRADE_LOG.exists():
-        return []
-    try:
-        return json.loads(_TRADE_LOG.read_text())
-    except Exception:
-        return []
-
 
 def _load_trades_db():
     try:
@@ -187,7 +179,7 @@ def _load_trades_db():
         rows = conn.execute("""
             SELECT * FROM trades
             WHERE resolved = 1
-              AND trade_outcome IN ('win', 'loss')
+              AND outcome IN ('win', 'loss')
         """).fetchall()
         conn.close()
         return [dict(r) for r in rows]
@@ -196,30 +188,7 @@ def _load_trades_db():
 
 
 def load_resolved_trades():
-    """
-    Merge trade_log.json and SQLite trades table.
-    SQLite 'trade_outcome' maps to JSON 'outcome' field.
-    Deduplicate by trade_id, preferring DB records (more up-to-date).
-    """
-    db_trades = _load_trades_db()
-    for t in db_trades:
-        if "outcome" not in t and "trade_outcome" in t:
-            t["outcome"] = t["trade_outcome"]
-
-    json_trades = _load_trades_json()
-
-    # Index by trade_id; DB wins on conflict
-    merged = {}
-    for t in json_trades:
-        tid = t.get("trade_id")
-        if tid and t.get("outcome") in ("win", "loss"):
-            merged[tid] = t
-    for t in db_trades:
-        tid = t.get("trade_id")
-        if tid:
-            merged[tid] = t   # DB overrides
-
-    return list(merged.values())
+    return _load_trades_db()
 
 
 # ---------------------------------------------------------------------------
