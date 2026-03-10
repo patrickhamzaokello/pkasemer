@@ -172,11 +172,9 @@ try:
         raw_cfg = json.load(_f)
 except Exception:
     raw_cfg = cfg  # fall back to schema-filtered cfg
-ENTRY_THRESHOLD    = cfg["entry_threshold"]
 MIN_MOMENTUM_PCT   = cfg["min_momentum_pct"]
 MAX_POSITION_USD   = cfg["max_position"]
 SIGNAL_SOURCE      = cfg["signal_source"]
-LOOKBACK_MINUTES   = cfg["lookback_minutes"]
 MIN_TIME_REMAINING = cfg["min_time_remaining"]
 MAX_TIME_REMAINING = cfg.get("max_time_remaining", 420)
 ASSET              = cfg["asset"].upper()
