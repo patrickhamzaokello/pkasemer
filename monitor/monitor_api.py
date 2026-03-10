@@ -1621,19 +1621,41 @@ def reset_observations():
 
 @app.route("/api/config", methods=["POST"])
 def save_config():
+    """
+    Merge-update the live config.
+
+    Send only the keys you want to change — existing keys are preserved.
+    Writes to /data/config.json (persistent volume) so changes survive rebuilds
+    and are picked up by the trader on the next cycle automatically.
+
+    Example:
+        curl -X POST http://localhost:5000/api/config \
+             -H 'Content-Type: application/json' \
+             -d '{"max_position": 5.0, "min_momentum_pct": 0.10}'
+    """
     try:
-        data = request.get_json(silent=True)
-        if not data or not isinstance(data, dict):
-            return jsonify({"error": "Invalid JSON body"}), 400
-        required = {"entry_threshold", "composite_threshold", "daily_budget", "signal_weights"}
-        missing = required - data.keys()
-        if missing:
-            return jsonify({"error": f"Missing required keys: {missing}"}), 400
-        with open(CONFIG_PATH, "w") as f:
-            json.dump(data, f, indent=2)
-        global CONFIG
-        CONFIG = data
-        return jsonify({"ok": True})
+        updates = request.get_json(silent=True)
+        if not updates or not isinstance(updates, dict):
+            return jsonify({"error": "Body must be a JSON object of key→value pairs"}), 400
+
+        # Load the current live config
+        current = {}
+        for path in (_DATA_CONFIG, _IMAGE_CONFIG):
+            try:
+                with open(path) as f:
+                    current = json.load(f)
+                break
+            except FileNotFoundError:
+                continue
+
+        # Merge: existing keys preserved, sent keys overwritten
+        current.update(updates)
+
+        # Always write to the persistent volume
+        with open(_DATA_CONFIG, "w") as f:
+            json.dump(current, f, indent=2)
+
+        return jsonify({"ok": True, "updated": list(updates.keys())})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
