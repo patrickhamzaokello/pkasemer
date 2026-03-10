@@ -114,8 +114,24 @@ CONFIG_SCHEMA = {
 }
 
 
+def _resolve_config_path(skill_file, config_filename="config.json"):
+    """
+    Return the active config path.
+
+    Priority:
+      1. /data/config.json  — persistent volume; written by the optimizer.
+                              Survives container restarts AND rebuilds.
+      2. /app/config.json   — image default; used on first boot until the
+                              scheduler seeds /data/config.json.
+    """
+    data_cfg = Path(_DATA_DIR) / config_filename
+    if data_cfg.exists():
+        return data_cfg
+    return Path(skill_file).parent / config_filename
+
+
 def _load_config(schema, skill_file, config_filename="config.json"):
-    config_path = Path(skill_file).parent / config_filename
+    config_path = _resolve_config_path(skill_file, config_filename)
     file_cfg = {}
     if config_path.exists():
         try:
@@ -144,7 +160,7 @@ def _load_config(schema, skill_file, config_filename="config.json"):
 
 
 def _get_config_path(skill_file, config_filename="config.json"):
-    return Path(skill_file).parent / config_filename
+    return _resolve_config_path(skill_file, config_filename)
 
 
 def _update_config(updates, skill_file, config_filename="config.json"):

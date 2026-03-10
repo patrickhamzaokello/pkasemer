@@ -33,8 +33,10 @@ import time
 import signal
 import logging
 import sqlite3
+import shutil
 import subprocess
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 from fast_trader import backfill_trade_outcomes, run_redeemer
 
@@ -240,6 +242,32 @@ signal.signal(signal.SIGINT, _handle_signal)
 # Main loop
 # ─────────────────────────────────────────────
 
+def seed_config():
+    """
+    Ensure /data/config.json exists before the first cycle.
+
+    /data/config.json is the live, optimizer-tuned config stored on the
+    persistent volume — it survives container restarts AND image rebuilds.
+
+    Bootstrap rules:
+      • First boot (no /data/config.json): copy /app/config.json → /data/config.json
+      • Subsequent boots:                  /data/config.json already present — skip
+      • Image default is always preserved at /app/config.json as a reset point.
+
+    To reset to factory defaults:
+        docker exec pknwitq-collector cp /app/config.json /data/config.json
+    """
+    src = Path("/app/config.json")
+    dst = Path("/data/config.json")
+    if dst.exists():
+        log.info(f"[config] Using persisted /data/config.json (optimizer changes intact)")
+    elif src.exists():
+        shutil.copy2(src, dst)
+        log.info(f"[config] First boot — seeded /data/config.json from /app/config.json")
+    else:
+        log.warning("[config] Neither /data/config.json nor /app/config.json found — using defaults")
+
+
 def main():
     log.info("=" * 60)
     log.info("Pknwitq Scheduler starting")
@@ -249,6 +277,9 @@ def main():
     log.info(f"  DB:       {DB_PATH}")
     log.info(f"  Running:  24/7 (Polymarket is always open)")
     log.info("=" * 60)
+
+    # ── Startup: seed persistent config before any cycle touches it ───────────
+    seed_config()
 
     # ── Startup: warm the market ID cache before cycle 1 ─────────────────────
     run_cache_warm()

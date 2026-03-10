@@ -41,7 +41,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 
 _DATA_DIR   = Path("/data") if Path("/data").exists() else Path("data")
-_CONFIG     = Path(__file__).parent / "config.json"
+_IMAGE_CONFIG = Path(__file__).parent / "config.json"   # baked into image (read-only default)
+_DATA_CONFIG  = _DATA_DIR / "config.json"               # persistent volume (optimizer writes here)
 _TRADE_LOG  = _DATA_DIR / "trade_log.json"
 _DB_PATH    = os.environ.get("DB_PATH", str(_DATA_DIR / "signal_research.db"))
 _OPT_LOG    = _DATA_DIR / "optimizer.log"
@@ -55,11 +56,17 @@ MIN_SAMPLE       = 5      # minimum resolved trades before touching a parameter
 STEP_THRESH      = 0.01   # max composite_threshold movement per run
 MAX_THRESH       = 0.82
 MIN_THRESH       = 0.62
-MAX_MOM          = 0.18
-MIN_MOM          = 0.06
+MAX_MOM          = 0.25   # was 0.18 — wider exploration range
+MIN_MOM          = 0.04   # was 0.06 — allow lower floor if data supports it
 STEP_MOM         = 0.01
 MAX_BLOCK_HOURS  = 8      # never block more than 8 hours of the day
 MAX_WEIGHT_NUDGE = 0.025  # max weight change per signal per run
+# Timing bounds (seconds)
+MIN_MIN_TIME     = 120    # earliest we'll allow min_time_remaining to go
+MAX_MIN_TIME     = 300    # latest we'll push min_time_remaining
+MIN_MAX_TIME     = 240    # earliest we'll allow max_time_remaining to go
+MAX_MAX_TIME     = 460    # latest we'll push max_time_remaining (more early-window chances)
+TIME_STEP        = 15     # seconds moved per optimizer run
 
 
 # ---------------------------------------------------------------------------
@@ -67,16 +74,19 @@ MAX_WEIGHT_NUDGE = 0.025  # max weight change per signal per run
 # ---------------------------------------------------------------------------
 
 def _load_config():
-    if _CONFIG.exists():
-        try:
-            return json.loads(_CONFIG.read_text())
-        except Exception:
-            return {}
+    # Prefer the persistent-volume copy (optimizer-tuned); fall back to image default.
+    for path in (_DATA_CONFIG, _IMAGE_CONFIG):
+        if path.exists():
+            try:
+                return json.loads(path.read_text())
+            except Exception:
+                continue
     return {}
 
 
 def _save_config(cfg):
-    _CONFIG.write_text(json.dumps(cfg, indent=2))
+    # Always write to the persistent volume so changes survive rebuilds.
+    _DATA_CONFIG.write_text(json.dumps(cfg, indent=2))
 
 
 def _append_log(lines: list[str]):
@@ -250,8 +260,14 @@ def hour_win_rates(resolved):
 
 
 def momentum_threshold_sweep(resolved):
-    """Return (best_threshold, win_rate_at_threshold)."""
-    thresholds = [round(x * 0.01, 2) for x in range(6, 21)]  # 0.06 → 0.20
+    """
+    Sweep |momentum_5m| lower-bound thresholds from 0.04 to 0.25 and return
+    (best_threshold, win_rate_at_threshold).
+
+    'Best' = highest win rate on the subset of trades where |m5| >= threshold,
+    subject to MIN_SAMPLE trades in that subset.
+    """
+    thresholds = [round(x * 0.01, 2) for x in range(4, 26)]  # 0.04 → 0.25
     best = None
     best_wr = 0.0
     for thresh in thresholds:
@@ -262,6 +278,52 @@ def momentum_threshold_sweep(resolved):
             best_wr = wr
             best = thresh
     return best, best_wr
+
+
+def momentum_band_win_rates(resolved):
+    """
+    Win rates split by |momentum_5m| magnitude band.
+
+    Tells the optimizer which strength of momentum signal is actually profitable
+    vs which is noise.  Used to decide whether to raise or lower min_momentum_pct.
+
+    Returns dict: band_label → (win_rate, n_trades)
+    """
+    bands = {
+        "0.04-0.08": [t for t in resolved if 0.04 <= abs(t.get("momentum_5m", 0) or 0) < 0.08],
+        "0.08-0.12": [t for t in resolved if 0.08 <= abs(t.get("momentum_5m", 0) or 0) < 0.12],
+        "0.12-0.18": [t for t in resolved if 0.12 <= abs(t.get("momentum_5m", 0) or 0) < 0.18],
+        "0.18-0.25": [t for t in resolved if 0.18 <= abs(t.get("momentum_5m", 0) or 0) < 0.25],
+        "0.25+":     [t for t in resolved if abs(t.get("momentum_5m", 0) or 0) >= 0.25],
+    }
+    return {k: _win_rate(v) for k, v in bands.items()}
+
+
+def time_window_sweep(resolved):
+    """
+    Find the joint (min_time_remaining, max_time_remaining) window that maximises
+    win rate on resolved trades.
+
+    Sweeps all combinations of:
+        min_time: 120 → 260 step 20s
+        max_time: 260 → 460 step 20s
+    subject to: window width >= 80s and n >= MIN_SAMPLE.
+
+    Returns (best_min, best_max, best_win_rate, n_trades) or None if no valid window found.
+    """
+    best = None
+    best_wr = 0.0
+    for min_t in range(MIN_MIN_TIME, MAX_MIN_TIME, 20):
+        for max_t in range(MIN_MAX_TIME, MAX_MAX_TIME + 1, 20):
+            if max_t - min_t < 80:
+                continue
+            subset = [t for t in resolved
+                      if min_t <= (t.get("time_remaining") or 0) <= max_t]
+            wr, n = _win_rate(subset)
+            if n >= MIN_SAMPLE and wr is not None and wr > best_wr:
+                best_wr = wr
+                best = (min_t, max_t, wr, n)
+    return best
 
 
 def entry_price_win_rates(resolved):
@@ -449,21 +511,62 @@ def optimize(cfg: dict, resolved: list, apply: bool, verbose: bool = True) -> li
         cfg["blocked_hours"] = sorted(blocked)
         cfg["boosted_hours"]  = {str(k): v for k, v in sorted(boosted.items())}
 
-    # ── Rule 4: Minimum momentum threshold ──────────────────────────────────
-    best_mom, best_mom_wr = momentum_threshold_sweep(resolved)
-    if best_mom is not None and n_total >= MIN_SAMPLE:
-        cur_mom = cfg.get("min_momentum_pct", 0.08)
-        if best_mom != cur_mom:
-            # Step-limit
+    # ── Rule 4: Minimum momentum threshold ───────────────────────────────────
+    #
+    # Two-stage analysis:
+    #   a) Band analysis — find which |m5| strength bands actually win or lose.
+    #      This tells us if we're blocking good trades (low-mom bands win) or
+    #      letting in noise (low-mom bands lose).
+    #   b) Sweep — find the global |m5| floor that maximises win rate.
+    #
+    # Direction logic:
+    #   • If the 0.04-0.08 band has a GOOD win rate (>= target): current floor
+    #     may be too high — lower it to capture those trades.
+    #   • If the 0.04-0.08 band has a BAD win rate (< 0.50): noise below current
+    #     floor is leaking through — raise the floor.
+    #   • Sweep result acts as a second confirmation and sets the target.
+    bands = momentum_band_win_rates(resolved)
+    band_low_wr,  band_low_n  = bands.get("0.04-0.08", (None, 0))
+    band_mid_wr,  band_mid_n  = bands.get("0.08-0.12", (None, 0))
+    best_mom, best_mom_wr     = momentum_threshold_sweep(resolved)
+    cur_mom = cfg.get("min_momentum_pct", 0.08)
+
+    if n_total >= MIN_SAMPLE:
+        if best_mom is not None and best_mom != cur_mom:
             if best_mom > cur_mom:
                 new_mom = round(min(cur_mom + STEP_MOM, best_mom, MAX_MOM), 2)
             else:
                 new_mom = round(max(cur_mom - STEP_MOM, best_mom, MIN_MOM), 2)
             if new_mom != cur_mom:
                 log(f"  [momentum] min_momentum_pct {cur_mom:.2f} → {new_mom:.2f}  "
-                    f"(best win_rate={best_mom_wr:.1%} at |m5|>={best_mom:.2f}%)")
+                    f"(sweep: best win_rate={best_mom_wr:.1%} at |m5|>={best_mom:.2f}%)")
                 if apply:
                     cfg["min_momentum_pct"] = new_mom
+                cur_mom = new_mom  # reflect the change for band logic below
+
+        # Band insight logging (always, so report shows what each band earns)
+        for band, (bwr, bn) in bands.items():
+            if bn >= MIN_SAMPLE and bwr is not None:
+                log(f"  [momentum:band] |m5|={band}  win_rate={bwr:.1%}  n={bn}")
+
+        # If the lowest band (trades we're currently blocking) has a GOOD win rate,
+        # flag it so we converge faster on the next run.
+        if band_low_n >= MIN_SAMPLE and band_low_wr is not None:
+            if band_low_wr >= TARGET_WIN_RATE and cur_mom > MIN_MOM + STEP_MOM:
+                new_mom = round(max(cur_mom - STEP_MOM, MIN_MOM), 2)
+                if new_mom != cur_mom:
+                    log(f"  [momentum] lower min_momentum_pct {cur_mom:.2f} → {new_mom:.2f}  "
+                        f"(low band wins at {band_low_wr:.1%}, relaxing floor)")
+                    if apply:
+                        cfg["min_momentum_pct"] = new_mom
+            elif band_low_wr < 0.45 and cur_mom < band_low_wr + 0.02:
+                # Low-momentum trades losing badly — tighten the floor
+                new_mom = round(min(cur_mom + STEP_MOM, MAX_MOM), 2)
+                if new_mom != cur_mom:
+                    log(f"  [momentum] raise min_momentum_pct {cur_mom:.2f} → {new_mom:.2f}  "
+                        f"(low band loses at {band_low_wr:.1%}, tightening floor)")
+                    if apply:
+                        cfg["min_momentum_pct"] = new_mom
 
     # ── Rule 5: Entry price gate ─────────────────────────────────────────────
     ep = entry_price_win_rates(resolved)
@@ -617,31 +720,92 @@ def optimize(cfg: dict, resolved: list, apply: bool, verbose: bool = True) -> li
                 if apply:
                     cfg["max_no_score"] = new_max_no
 
-    # ── Rule 10: min_time_remaining ──────────────────────────────────────────
-    # Trades entered with little time left may win less (market already priced in).
+    # ── Rules 10 & 19: timing window (min_time_remaining / max_time_remaining) ──
+    #
+    # Joint sweep approach: rather than optimising min and max independently with
+    # a crude binary split, we sweep all (min, max) pairs across a wide grid and
+    # find the window that produces the highest win rate on resolved trades.
+    #
+    # This directly answers "does entering earlier or later win more?" and
+    # "is there a sweet spot window width that correlates with wins?".
+    #
+    # Steps toward the optimal window are still bounded (TIME_STEP per run) so
+    # the system converges gradually and can be corrected by future data.
     if n_total >= MIN_SAMPLE:
-        time_buckets = {
-            "low":  [t for t in resolved if (t.get("time_remaining") or 300) < 220],
-            "high": [t for t in resolved if (t.get("time_remaining") or 300) >= 220],
-        }
-        low_wr_t,  low_n_t  = _win_rate(time_buckets["low"])
-        high_wr_t, high_n_t = _win_rate(time_buckets["high"])
         cur_min_time = cfg.get("min_time_remaining", 200)
-        if low_n_t >= MIN_SAMPLE and low_wr_t is not None and low_wr_t < 0.50:
-            new_min_time = min(cur_min_time + 10, 280)
-            if new_min_time != cur_min_time:
-                log(f"  [timing] min_time_remaining {cur_min_time} → {new_min_time}s  "
-                    f"(low-time win_rate={low_wr_t:.1%} n={low_n_t})")
-                if apply:
-                    cfg["min_time_remaining"] = new_min_time
-        elif high_n_t >= MIN_SAMPLE and high_wr_t is not None and high_wr_t >= TARGET_WIN_RATE \
-                and cur_min_time > 160:
-            new_min_time = max(cur_min_time - 10, 160)
-            if new_min_time != cur_min_time:
-                log(f"  [timing] relax min_time_remaining {cur_min_time} → {new_min_time}s  "
-                    f"(high-time win_rate={high_wr_t:.1%})")
-                if apply:
-                    cfg["min_time_remaining"] = new_min_time
+        cur_max_time = cfg.get("max_time_remaining", 350)
+        best_window = time_window_sweep(resolved)
+
+        if best_window is not None:
+            opt_min, opt_max, opt_wr, opt_n = best_window
+            log(f"  [timing:sweep] best window [{opt_min}s–{opt_max}s]  "
+                f"win_rate={opt_wr:.1%}  n={opt_n}")
+
+            # ── min_time_remaining ────────────────────────────────────────────
+            if opt_min != cur_min_time:
+                if opt_min > cur_min_time:
+                    new_min_time = min(cur_min_time + TIME_STEP, opt_min, MAX_MIN_TIME)
+                else:
+                    new_min_time = max(cur_min_time - TIME_STEP, opt_min, MIN_MIN_TIME)
+                if new_min_time != cur_min_time:
+                    log(f"  [timing] min_time_remaining {cur_min_time} → {new_min_time}s  "
+                        f"(sweep target={opt_min}s at win_rate={opt_wr:.1%})")
+                    if apply:
+                        cfg["min_time_remaining"] = new_min_time
+
+            # ── max_time_remaining ────────────────────────────────────────────
+            if opt_max != cur_max_time:
+                if opt_max > cur_max_time:
+                    new_max_time = min(cur_max_time + TIME_STEP, opt_max, MAX_MAX_TIME)
+                else:
+                    new_max_time = max(cur_max_time - TIME_STEP, opt_max, MIN_MAX_TIME)
+                if new_max_time != cur_max_time:
+                    log(f"  [timing] max_time_remaining {cur_max_time} → {new_max_time}s  "
+                        f"(sweep target={opt_max}s at win_rate={opt_wr:.1%})")
+                    if apply:
+                        cfg["max_time_remaining"] = new_max_time
+
+        else:
+            # Not enough data for sweep — fall back to simple directional nudges
+            # based on whether trades at the boundary of the current window win.
+            near_min = [t for t in resolved
+                        if cur_min_time <= (t.get("time_remaining") or 0) < cur_min_time + 30]
+            near_max = [t for t in resolved
+                        if cur_max_time - 30 < (t.get("time_remaining") or 0) <= cur_max_time]
+            wr_near_min, n_near_min = _win_rate(near_min)
+            wr_near_max, n_near_max = _win_rate(near_max)
+
+            if n_near_min >= MIN_SAMPLE and wr_near_min is not None and wr_near_min < 0.45:
+                new_min_time = min(cur_min_time + TIME_STEP, MAX_MIN_TIME)
+                if new_min_time != cur_min_time:
+                    log(f"  [timing] nudge min_time_remaining {cur_min_time} → {new_min_time}s  "
+                        f"(near-min-floor trades win_rate={wr_near_min:.1%})")
+                    if apply:
+                        cfg["min_time_remaining"] = new_min_time
+            elif n_near_min >= MIN_SAMPLE and wr_near_min is not None \
+                    and wr_near_min >= TARGET_WIN_RATE and cur_min_time > MIN_MIN_TIME:
+                new_min_time = max(cur_min_time - TIME_STEP, MIN_MIN_TIME)
+                if new_min_time != cur_min_time:
+                    log(f"  [timing] relax min_time_remaining {cur_min_time} → {new_min_time}s  "
+                        f"(near-floor trades winning at {wr_near_min:.1%})")
+                    if apply:
+                        cfg["min_time_remaining"] = new_min_time
+
+            if n_near_max >= MIN_SAMPLE and wr_near_max is not None and wr_near_max < 0.45:
+                new_max_time = max(cur_max_time - TIME_STEP, MIN_MAX_TIME)
+                if new_max_time != cur_max_time:
+                    log(f"  [timing] nudge max_time_remaining {cur_max_time} → {new_max_time}s  "
+                        f"(near-max-ceiling trades win_rate={wr_near_max:.1%})")
+                    if apply:
+                        cfg["max_time_remaining"] = new_max_time
+            elif n_near_max >= MIN_SAMPLE and wr_near_max is not None \
+                    and wr_near_max >= TARGET_WIN_RATE and cur_max_time < MAX_MAX_TIME:
+                new_max_time = min(cur_max_time + TIME_STEP, MAX_MAX_TIME)
+                if new_max_time != cur_max_time:
+                    log(f"  [timing] relax max_time_remaining {cur_max_time} → {new_max_time}s  "
+                        f"(near-ceiling trades winning at {wr_near_max:.1%})")
+                    if apply:
+                        cfg["max_time_remaining"] = new_max_time
 
     # ── Rule 11: RSI thresholds ───────────────────────────────────────────────
     # If loss trades have high RSI on YES or low RSI on NO, tighten filters.
@@ -852,28 +1016,6 @@ def optimize(cfg: dict, resolved: list, apply: bool, verbose: bool = True) -> li
                     f"(slow YES win_rate={wr_hsly:.1%})")
                 if apply:
                     cfg["slow_max_entry_yes"] = new_val
-
-    # ── Rule 19: max_time_remaining ───────────────────────────────────────────
-    # Trades entered very early (lots of time left) may be premature.
-    if n_total >= MIN_SAMPLE:
-        cur_max_time = cfg.get("max_time_remaining", 350)
-        early = [t for t in resolved if (t.get("time_remaining") or 0) > cur_max_time - 30]
-        wr_early, n_early = _win_rate(early)
-        if n_early >= MIN_SAMPLE and wr_early is not None and wr_early < 0.45:
-            new_max_time = max(cur_max_time - 15, 260)
-            if new_max_time != cur_max_time:
-                log(f"  [timing] max_time_remaining {cur_max_time} → {new_max_time}s  "
-                    f"(early-entry win_rate={wr_early:.1%} n={n_early})")
-                if apply:
-                    cfg["max_time_remaining"] = new_max_time
-        elif n_early >= MIN_SAMPLE and wr_early is not None and wr_early >= TARGET_WIN_RATE \
-                and cur_max_time < 420:
-            new_max_time = min(cur_max_time + 15, 420)
-            if new_max_time != cur_max_time:
-                log(f"  [timing] relax max_time_remaining {cur_max_time} → {new_max_time}s  "
-                    f"(early-entry win_rate={wr_early:.1%})")
-                if apply:
-                    cfg["max_time_remaining"] = new_max_time
 
     # ── Rule 20a: min_lag_override ────────────────────────────────────────────
     # min_lag_override: the minimum CEX/poly lag needed to override the poly
@@ -1132,13 +1274,45 @@ def print_report(resolved):
         bar = ("+" if d > 0 else "-") * min(20, int(abs(d) * 200))
         print(f"    {field:<28} {d:+.4f}  {bar}")
 
-    print(f"\n  Win rate by momentum bucket:")
-    for thresh, label in [(0.0, "all"), (0.08, ">=0.08%"), (0.12, ">=0.12%"),
-                          (0.15, ">=0.15%"), (0.20, ">=0.20%")]:
-        sub = [t for t in resolved if abs(t.get("momentum_5m", 0) or 0) >= thresh]
-        wr_m, n_m = _win_rate(sub)
-        if n_m > 0:
-            print(f"    {label:<12}  win_rate={wr_m*100:.1f}%  n={n_m}")
+    print(f"\n  Momentum bands (|m5| range → win rate):")
+    bands = momentum_band_win_rates(resolved)
+    cur_mom_floor = _load_config().get("min_momentum_pct", 0.08)
+    for band, (bwr, bn) in bands.items():
+        if bn == 0:
+            continue
+        bar = "█" * int((bwr or 0) * 20) if bwr else ""
+        blocked_tag = "  [BELOW FLOOR — currently blocked]" if band == "0.04-0.08" and cur_mom_floor > 0.04 else ""
+        print(f"    |m5|={band:<10}  {bar:<20} {(bwr or 0)*100:5.1f}%  n={bn}{blocked_tag}")
+    best_mom, best_mom_wr = momentum_threshold_sweep(resolved)
+    if best_mom is not None:
+        print(f"    → sweep: best floor = {best_mom:.2f}%  (win_rate={best_mom_wr:.1%})")
+
+    print(f"\n  Time-remaining window analysis:")
+    time_bands = [
+        (120, 180, "120-180s"),
+        (180, 240, "180-240s"),
+        (240, 300, "240-300s"),
+        (300, 360, "300-360s"),
+        (360, 460, "360-460s"),
+    ]
+    for lo, hi, label in time_bands:
+        sub = [t for t in resolved if lo <= (t.get("time_remaining") or 0) < hi]
+        wr_t, n_t = _win_rate(sub)
+        if n_t > 0:
+            bar = "█" * int((wr_t or 0) * 20)
+            print(f"    {label}  {bar:<20} {(wr_t or 0)*100:5.1f}%  n={n_t}")
+    best_win = time_window_sweep(resolved)
+    if best_win:
+        opt_min, opt_max, opt_wr, opt_n = best_win
+        print(f"    → sweep: best window = [{opt_min}s–{opt_max}s]  (win_rate={opt_wr:.1%}  n={opt_n})")
+
+    print(f"\n  Session win rates:")
+    s_rates = session_win_rates(resolved)
+    for sess in ("overlap", "london", "new_york", "asia", "off"):
+        swr, sn = s_rates.get(sess, (None, 0))
+        if sn > 0 and swr is not None:
+            bar = "█" * int(swr * 20)
+            print(f"    {sess:<10}  {bar:<20} {swr*100:5.1f}%  n={sn}")
 
     slow_wr, slow_n = slow_market_win_rate(resolved)
     if slow_n > 0:

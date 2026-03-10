@@ -47,7 +47,9 @@ services:
       # ── Live code: only needs `docker compose restart monitor` after changes ──
       - ./monitor/monitor_api.py:/app/monitor_api.py
       - ./shared/composite_signal.py:/app/composite_signal.py
-      - ./trader/config.json:/app/config.json
+      # config.json is read from /data/config.json (persistent volume, written by
+      # the optimizer in the collector container). No bind mount needed — both
+      # containers share the pknwitq-data volume which holds the live config.
       # ── Dashboard HTML: no restart needed at all ────────────────────────────
       - ./dashboard:/app/dashboard:ro
     ports:
@@ -85,6 +87,12 @@ volumes:
 #  /data/daily_spend.json       ← budget + quota tracking (shared volume)
 #  /app/logs/collector.log      ← unified stdout+stderr via tee (bind mount, both containers)
 #  /data/trade_log.json         ← executed trades (shared volume, written by fast_trader)
+#  /data/config.json            ← LIVE config (persistent volume, written by optimizer)
+#                                  /app/config.json is the image default (reset point only)
+#
+# ── Reset optimizer config to factory defaults ─────────────────────────────
+#
+#   docker exec pknwitq-collector cp /app/config.json /data/config.json
 #
 # ── Usage ──────────────────────────────────────────────────────────────────
 #

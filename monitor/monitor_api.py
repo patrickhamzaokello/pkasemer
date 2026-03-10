@@ -50,7 +50,9 @@ STATUS_PATH  = "/data/status.json"
 LOG_PATH     = "/app/logs/collector.log"   # unified stdout+stderr via tee (scheduler + trader)
 CACHE_PATH   = "/data/market_id_cache.json"
 SPEND_PATH   = "/data/daily_spend.json"    # on shared volume, written by fast_trader.py
-CONFIG_PATH  = "/app/config.json"          # trader/config.json, volume-mounted read-only
+_DATA_CONFIG  = "/data/config.json"         # persistent volume — optimizer writes here
+_IMAGE_CONFIG = "/app/config.json"          # image default — fallback if /data/ not seeded yet
+CONFIG_PATH   = _DATA_CONFIG               # always prefer the live, optimizer-tuned copy
 TRADE_PATH   = "/data/trade_log.json"
 DEPLOY_PATH  = "/data/deploy_info.json"    # deploy counter + timestamp
 
@@ -1266,14 +1268,22 @@ def decision_stats():
 
 @app.route("/api/config")
 def config_endpoint():
-    """Expose trader/config.json to the dashboard (re-read on each call so edits take effect after restart)."""
-    try:
-        with open(CONFIG_PATH) as f:
-            return jsonify(json.load(f))
-    except FileNotFoundError:
-        return jsonify({"error": "config.json not found"}), 404
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    """
+    Return the active config — always the optimizer-tuned /data/config.json when
+    available, falling back to the image default /app/config.json.
+    Re-read on every call so dashboard reflects optimizer changes without restart.
+    """
+    for path in (_DATA_CONFIG, _IMAGE_CONFIG):
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            data["_config_source"] = path   # visible in dashboard for debugging
+            return jsonify(data)
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    return jsonify({"error": "config.json not found"}), 404
 
 
 # ─────────────────────────────────────────────────────────────────────────────
