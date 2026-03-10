@@ -1192,8 +1192,28 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
     """, row)
     obs_id = cursor.lastrowid
 
+    # Load config.json so the collector uses the same thresholds, weights, and
+    # entry-price limits as fast_trader.py.  Priority: /data/config.json first
+    # (persistent volume), then config.json next to this file.
+    _cfg_dir = os.path.dirname(os.path.abspath(__file__))
+    _cfg_candidates = [
+        os.path.join("/data", "config.json"),
+        os.path.join(_cfg_dir, "config.json"),
+    ]
+    _raw_cfg = {}
+    for _cp in _cfg_candidates:
+        if os.path.exists(_cp):
+            try:
+                with open(_cp) as _f:
+                    _raw_cfg = json.load(_f)
+                break
+            except Exception:
+                pass
+
     # Compute composite signal and store prediction alongside observation
-    sig = None
+    sig          = None
+    would_trade  = False
+    filter_reason = None
     try:
         from composite_signal import get_composite_signal
         cex_for_sig = {k: all_signals.get(k) for k in [
@@ -1207,7 +1227,83 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
             "poly_divergence": all_signals.get("poly_divergence"),
             "poly_spread":     all_signals.get("poly_spread"),
         }
-        sig = get_composite_signal(cex_for_sig, poly_for_sig)
+        # Pass config so collector uses the same thresholds/weights as live trader
+        sig = get_composite_signal(cex_for_sig, poly_for_sig, config=_raw_cfg)
+
+        # ── Secondary quality gates (mirror fast_trader.py post-composite checks) ──
+        # These are the checks that run AFTER get_composite_signal in fast_trader
+        # and can block a trade even when should_trade=True.  We apply them here
+        # so that would_trade=1 in the DB means "this would have actually fired live".
+        would_trade    = sig["should_trade"]
+        filter_reason  = sig.get("filter_reason")
+
+        if would_trade:
+            _side        = sig["side"]
+            _regime      = sig.get("regime", "normal")
+            _market_yes  = poly_for_sig.get("poly_yes_price") or 0.5
+            _entry_price = _market_yes if _side == "yes" else (1.0 - _market_yes)
+
+            # 1. Time window gate (only enter at 120-200s remaining)
+            _min_t = _raw_cfg.get("min_time_remaining", 120)
+            _max_t = _raw_cfg.get("max_time_remaining", 200)
+            if seconds_remaining > _max_t:
+                would_trade   = False
+                filter_reason = f"too early ({seconds_remaining:.0f}s > {_max_t}s max)"
+            elif seconds_remaining < _min_t:
+                would_trade   = False
+                filter_reason = f"too late ({seconds_remaining:.0f}s < {_min_t}s min)"
+
+            # 2. btc_vs_reference must be seeded
+            elif derived.get("btc_vs_reference") is None:
+                would_trade   = False
+                filter_reason = "btc_vs_reference not seeded"
+
+            # 3. min_yes_conf gate
+            elif _side == "yes":
+                _min_conf = _raw_cfg.get("min_yes_conf", 0.0)
+                if _min_conf > 0 and sig["confidence"] < _min_conf:
+                    would_trade   = False
+                    filter_reason = (f"YES conf {sig['confidence']:.3f} "
+                                     f"< min_yes_conf {_min_conf:.3f}")
+
+        if would_trade and sig["side"] == "no":
+            # 4. max_no_score cap
+            _max_no = _raw_cfg.get("max_no_score", 0.30)
+            if sig["score"] > _max_no:
+                would_trade   = False
+                filter_reason = (f"score {sig['score']:.3f} > "
+                                 f"max_no_score {_max_no:.3f}")
+
+        if would_trade and _regime == "slow":
+            # 5. Slow-market entry price tightening
+            _slow_max_yes = _raw_cfg.get("slow_max_entry_yes", 0.465)
+            _slow_min_no  = _raw_cfg.get("slow_min_entry_no",  0.535)
+            if _side == "yes" and _market_yes > _slow_max_yes:
+                would_trade   = False
+                filter_reason = (f"[slow] YES at {_market_yes:.3f} "
+                                 f"> {_slow_max_yes:.3f} cap")
+            elif _side == "no" and _market_yes < _slow_min_no:
+                would_trade   = False
+                filter_reason = (f"[slow] NO at {_market_yes:.3f} "
+                                 f"< {_slow_min_no:.3f} floor")
+
+        if would_trade and _entry_price > 0:
+            # 6. Payout ratio gate
+            _payout = (1.0 - _entry_price) / _entry_price
+            _min_pay = (_raw_cfg.get("slow_min_payout_ratio", 1.15)
+                        if _regime == "slow"
+                        else _raw_cfg.get("min_payout_ratio", 1.10))
+            if _payout < _min_pay:
+                would_trade   = False
+                filter_reason = (f"payout {_payout:.2f}x < {_min_pay:.2f}x min "
+                                 f"(entry={_entry_price:.3f})")
+
+            # 7. Min entry price
+            elif _entry_price < _raw_cfg.get("min_entry_price", 0.35):
+                would_trade   = False
+                filter_reason = (f"entry {_entry_price:.3f} < "
+                                 f"min {_raw_cfg.get('min_entry_price', 0.35):.3f}")
+
         conn.execute("""
             UPDATE signal_observations
             SET signal_score = ?, signal_side = ?, signal_confidence = ?,
@@ -1217,8 +1313,8 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
             round(sig["score"], 6),
             sig.get("side"),
             round(sig["confidence"], 6),
-            1 if sig["should_trade"] else 0,
-            sig.get("filter_reason"),
+            1 if would_trade else 0,
+            filter_reason,
             obs_id,
         ))
     except Exception:
@@ -1236,10 +1332,12 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
     if sig is not None:
         try:
             score_str = f"score={sig['score']:.3f} → {(sig.get('side') or 'neutral').upper()}"
-            if sig["should_trade"]:
+            # Use the post-secondary-checks would_trade flag (not sig["should_trade"])
+            # so the log matches what fast_trader would actually do.
+            if would_trade:
                 score_str += f" (conf={sig['confidence']:.2f}) WOULD_TRADE"
-            elif sig.get("filter_reason"):
-                score_str += f" | {sig['filter_reason']}"
+            elif filter_reason:
+                score_str += f" | {filter_reason}"
         except Exception:
             pass
 

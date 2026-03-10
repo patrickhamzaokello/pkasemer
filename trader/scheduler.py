@@ -329,8 +329,10 @@ def main():
 
         write_status(cycle, last_action, True)
 
-        # Sleep with interrupt awareness
-        jitter = random.uniform(0, 10)  # 0-10s random jitter
+        # Sleep with small interrupt-aware jitter (max 2s so we stay inside the
+        # 120-200s entry window reliably).  The original 0-10s jitter could push
+        # a 20s-interval cycle 10s late and miss the narrow entry band.
+        jitter = random.uniform(0, 2)
         sleep_total = INTERVAL + jitter
         for _ in range(int(sleep_total)):
             if not _running:

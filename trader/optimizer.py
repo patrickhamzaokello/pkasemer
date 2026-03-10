@@ -2,32 +2,29 @@
 """
 Pknwitq Signal Optimizer
 
-Reads resolved trade outcomes from SQLite, analyses winning vs
-losing patterns across every tunable dimension, then incrementally updates
-config.json to push win rate toward the target (default 70%).
+Reads resolved trade outcomes from SQLite, runs multi-dimensional analysis
+across score, entry price, hour, and regime dimensions, then makes small,
+evidence-based adjustments to config.json.
 
-Safety model
-------------
-- All changes are bounded (MAX/MIN guards on every parameter).
-- Changes per run are small steps — the system converges gradually.
-- Dry-run by default. Pass --apply to actually write config.json.
-- Every applied change is appended to optimizer.log with explanation.
+Design principles:
+  - Payout structure is protected first: wins must structurally cover losses.
+  - Minimum trade count required before any dimension change fires.
+  - Max step size per run (converges gradually, never overfits on 5 trades).
+  - All changes bounded — no parameter can leave a safe operating range.
+  - Every applied change is logged with the evidence that drove it.
 
-Modes
------
+Modes:
     python optimizer.py              # analyse only, print report
-    python optimizer.py --apply      # analyse + update config.json
-    python optimizer.py --watch 30   # re-run every 30 minutes, --apply implied
+    python optimizer.py --apply      # analyse + write config.json
+    python optimizer.py --watch 30   # re-run every 30 min (implies --apply)
     python optimizer.py --report     # detailed breakdown, no changes
 
-Usage from scheduler
---------------------
+From scheduler:
     from optimizer import run_optimizer
     run_optimizer(apply=True)
 """
 
 import os
-import sys
 import json
 import time
 import sqlite3
@@ -40,1317 +37,626 @@ from collections import defaultdict
 # Paths
 # ---------------------------------------------------------------------------
 
-_DATA_DIR   = Path("/data") if Path("/data").exists() else Path("data")
-_IMAGE_CONFIG = Path(__file__).parent / "config.json"   # baked into image (read-only default)
-_DATA_CONFIG  = _DATA_DIR / "config.json"               # persistent volume (optimizer writes here)
-_TRADE_LOG  = _DATA_DIR / "trade_log.json"
-_DB_PATH    = os.environ.get("DB_PATH", str(_DATA_DIR / "signal_research.db"))
-_OPT_LOG    = _DATA_DIR / "optimizer.log"
+_DATA_DIR     = Path("/data") if Path("/data").exists() else Path(__file__).parent.parent / "data"
+_IMAGE_CONFIG = Path(__file__).parent / "config.json"
+_DATA_CONFIG  = _DATA_DIR / "config.json"
+_OPT_LOG      = Path(__file__).parent / "optimizer.log"
 
 # ---------------------------------------------------------------------------
-# Safety bounds — optimizer will never go outside these
+# Safety bounds — optimizer can never push a parameter outside these limits.
+# The payout-related bounds are deliberately tight to protect profitability.
+# "wins must cover losses" requires min_payout_ratio >= 1.05 always.
 # ---------------------------------------------------------------------------
 
-TARGET_WIN_RATE  = float(os.environ.get("OPT_TARGET_WIN_RATE", "0.70"))
-MIN_SAMPLE       = 5      # minimum resolved trades before touching a parameter
-STEP_THRESH      = 0.01   # max composite_threshold movement per run
-MAX_THRESH       = 0.82
-MIN_THRESH       = 0.62
-MAX_MOM          = 0.25   # was 0.18 — wider exploration range
-MIN_MOM          = 0.04   # was 0.06 — allow lower floor if data supports it
-STEP_MOM         = 0.01
-MAX_BLOCK_HOURS  = 8      # never block more than 8 hours of the day
-MAX_WEIGHT_NUDGE = 0.025  # max weight change per signal per run
-# Timing bounds (seconds)
-MIN_MIN_TIME     = 120    # earliest we'll allow min_time_remaining to go
-MAX_MIN_TIME     = 300    # latest we'll push min_time_remaining
-MIN_MAX_TIME     = 160    # earliest we'll allow max_time_remaining to go
-MAX_MAX_TIME     = 460    # latest we'll push max_time_remaining (more early-window chances)
-TIME_STEP        = 15     # seconds moved per optimizer run
+BOUNDS = {
+    # Signal quality thresholds
+    "composite_threshold":          (0.65, 0.90),
+    "slow_composite_threshold":     (0.68, 0.92),
+    "active_composite_threshold":   (0.60, 0.82),
 
+    # Entry price — payout ratio = (1-p)/p.
+    # At 0.476: payout=1.10x. At 0.42: payout=1.38x.
+    # Lower bound 0.40 ensures we're never buying with < 1.50x payout floor.
+    # Upper bound 0.490 ensures every YES entry has ≥ 1.04x payout.
+    "max_entry_yes":                (0.40, 0.490),
+    "min_entry_yes":                (0.25, 0.50),
+    "min_entry_no":                 (0.20, 0.50),
+    "max_entry_no":                 (0.50, 0.75),
+    "slow_max_entry_yes":           (0.38, 0.485),
+    "slow_min_entry_no":            (0.515, 0.62),
+
+    # Payout ratio — NEVER below 1.05 (wins must cover losses structurally).
+    "min_payout_ratio":             (1.05, 1.60),
+    "slow_min_payout_ratio":        (1.08, 1.80),
+
+    # Momentum and volatility filters
+    "min_momentum_pct":             (0.03, 0.40),
+    "max_volatility_5m":            (0.50, 5.00),
+
+    # Position sizing caps
+    "max_position":                 (1.00, 25.00),
+    "slow_position_pct_cap":        (0.30, 1.00),
+    "normal_position_pct_cap":      (0.50, 1.00),
+    "active_position_pct_cap":      (0.50, 1.00),
+
+    # RSI extremes
+    "rsi_overbought":               (75,   98),
+    "rsi_oversold":                 (2,    25),
+
+    # Score cap for NO side
+    "max_no_score":                 (0.22, 0.40),
+}
+
+# Minimum resolved trades before making any change
+MIN_TRADES_OVERALL  = 15   # global changes (composite_threshold)
+MIN_TRADES_BUCKET   = 5    # per-bucket changes (score/price/hour analysis)
+MIN_TRADES_HOUR     = 4    # per-hour block/boost decisions
+
+# Max step size per optimizer run — keeps convergence gradual
+MAX_STEP = {
+    "composite_threshold":          0.02,
+    "slow_composite_threshold":     0.02,
+    "active_composite_threshold":   0.02,
+    "max_entry_yes":                0.01,
+    "min_payout_ratio":             0.05,
+    "slow_min_payout_ratio":        0.05,
+    "min_momentum_pct":             0.02,
+    "max_no_score":                 0.02,
+}
+
+TARGET_WIN_RATE      = 0.70
+MIN_WIN_RATE         = 0.60   # below this = tighten thresholds
+MAX_WIN_RATE         = 0.82   # above this = can relax slightly
+MIN_PNL_RATIO        = 1.00   # avg_win / avg_loss must stay above this
+TARGET_PNL_RATIO     = 1.10   # aim for wins covering losses by 10%
 
 # ---------------------------------------------------------------------------
-# Load / save helpers
+# DB helpers
 # ---------------------------------------------------------------------------
 
-def _load_config():
-    # Prefer the persistent-volume copy (optimizer-tuned); fall back to image default.
-    for path in (_DATA_CONFIG, _IMAGE_CONFIG):
-        if path.exists():
-            try:
-                return json.loads(path.read_text())
-            except Exception:
-                continue
-    return {}
+def _find_db():
+    candidates = [
+        str(_DATA_DIR / "signal_research.db"),
+        "/data/signal_research.db",
+        str(Path(__file__).parent.parent / "data" / "signal_research.db"),
+    ]
+    for p in candidates:
+        if Path(p).exists():
+            return p
+    return None
 
 
-def _save_config(cfg):
-    # Always write to the persistent volume so changes survive rebuilds.
-    _DATA_CONFIG.write_text(json.dumps(cfg, indent=2))
-
-
-def _append_log(lines: list[str]):
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    with open(_OPT_LOG, "a") as f:
-        for line in lines:
-            f.write(f"{ts}  {line}\n")
-
-
-def _send_telegram_alert(cfg, changes_applied, overall_wr):
-    """Send a Telegram message summarising optimizer changes. Non-fatal."""
+def _load_trades(db_path):
+    """
+    Load all resolved trades. Returns list of dicts with all relevant columns.
+    Columns: side, entry_price, position_size, pnl, outcome, score,
+             hour_utc, momentum_5m, vs_ref, poly_yes_price
+    """
     try:
-        token = cfg.get("telegram_bot_token", "")
-        chat_id = cfg.get("telegram_chat_id", "")
-        if not token or not chat_id:
-            return
-
-        wr_pct = f"{overall_wr * 100:.1f}%" if overall_wr is not None else "n/a"
-        target_pct = f"{TARGET_WIN_RATE * 100:.0f}%"
-        n_changes = len(changes_applied)
-
-        lines_html = ""
-        for line in changes_applied[:8]:
-            lines_html += f"\n• {line.strip()}"
-
-        text = (
-            f"⚙️ <b>OPTIMIZER UPDATE</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"Win rate: {wr_pct}  →  target {target_pct}\n"
-            f"Changes: {n_changes}"
-            + (f"\n{lines_html}" if lines_html else "")
-        )
-
-        import urllib.request as _urllib_req
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = json.dumps({
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-        }).encode()
-        req = _urllib_req.Request(url, data=payload,
-                                  headers={"Content-Type": "application/json"})
-        with _urllib_req.urlopen(req, timeout=10):
-            pass
-    except Exception:
-        pass
-
-
-def _write_history(win_rate, n_resolved, changes_applied):
-    """Append an optimizer run entry to optimizer_history.json. Non-fatal."""
-    try:
-        history_path = _DATA_DIR / "optimizer_history.json"
-        if history_path.exists():
-            try:
-                entries = json.loads(history_path.read_text())
-            except Exception:
-                entries = []
-        else:
-            entries = []
-
-        parsed_changes = []
-        for raw in changes_applied:
-            raw_stripped = raw.strip()
-            category = ""
-            cat_match = raw_stripped.find("[")
-            cat_end = raw_stripped.find("]")
-            if cat_match != -1 and cat_end != -1:
-                category = raw_stripped[cat_match + 1:cat_end]
-            parsed_changes.append({"category": category, "raw": raw_stripped})
-
-        entry = {
-            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "win_rate": round(win_rate, 4) if win_rate is not None else None,
-            "n": n_resolved,
-            "changes": parsed_changes,
-        }
-        entries.append(entry)
-        # Keep last 500 entries
-        entries = entries[-500:]
-        history_path.write_text(json.dumps(entries, indent=2))
-    except Exception:
-        pass
-
-
-
-def _load_trades_db():
-    try:
-        conn = sqlite3.connect(_DB_PATH)
+        conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         rows = conn.execute("""
-            SELECT * FROM trades
+            SELECT side, entry_price, position_size, pnl,
+                   trade_outcome AS outcome, score,
+                   hour_utc, momentum_5m, vs_ref, poly_yes_price
+            FROM trades
             WHERE resolved = 1
-              AND outcome IN ('win', 'loss')
+              AND trade_outcome IN ('win', 'loss')
+            ORDER BY id ASC
         """).fetchall()
         conn.close()
         return [dict(r) for r in rows]
-    except Exception:
+    except Exception as e:
         return []
 
 
-def load_resolved_trades():
-    return _load_trades_db()
-
-
 # ---------------------------------------------------------------------------
-# Analysis functions
+# Analysis helpers
 # ---------------------------------------------------------------------------
 
-def _win_rate(trades):
-    resolved = [t for t in trades if t.get("outcome") in ("win", "loss")]
-    if not resolved:
-        return None, 0
-    wins = sum(1 for t in resolved if t["outcome"] == "win")
-    return wins / len(resolved), len(resolved)
+def _win_rate(group):
+    if not group:
+        return None
+    return sum(1 for t in group if t["outcome"] == "win") / len(group)
 
 
-def score_threshold_sweep(resolved):
+def _avg(values):
+    vals = [v for v in values if v is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def analyze_pnl_structure(trades):
     """
-    Sweep score thresholds from high to low.
-    Return the lowest threshold where win_rate >= TARGET and n >= MIN_SAMPLE.
-    Returns None if no threshold achieves the target.
+    Core profitability check.
+    Returns dict: win_rate, avg_win_pnl, avg_loss_pnl, pnl_ratio, total_pnl
+    pnl_ratio = avg_win_pnl / avg_loss_pnl  (must stay > 1.0)
     """
-    by_score = sorted(resolved, key=lambda t: t.get("score", 0.5), reverse=True)
-    best_threshold = None
-    for i in range(MIN_SAMPLE, len(by_score) + 1):
-        subset = by_score[:i]
-        wr, n = _win_rate(subset)
-        if wr is not None and wr >= TARGET_WIN_RATE:
-            best_threshold = subset[-1]["score"]
-    return best_threshold
+    wins   = [t for t in trades if t["outcome"] == "win"]
+    losses = [t for t in trades if t["outcome"] == "loss"]
+    if not trades:
+        return None
 
+    win_rate    = len(wins) / len(trades)
+    avg_win     = _avg([t["pnl"] for t in wins])   or 0.0
+    avg_loss    = _avg([abs(t["pnl"]) for t in losses]) or 0.0
+    pnl_ratio   = (avg_win / avg_loss) if avg_loss > 0 else 0.0
+    total_pnl   = sum(t["pnl"] for t in trades if t["pnl"] is not None)
+    expected_ev = win_rate * avg_win - (1 - win_rate) * avg_loss
 
-def hour_win_rates(resolved):
-    buckets = defaultdict(list)
-    for t in resolved:
-        h = t.get("hour_utc")
-        if h is not None:
-            buckets[int(h)].append(t)
-    return {h: _win_rate(trades) for h, trades in buckets.items()}
-
-
-def momentum_threshold_sweep(resolved):
-    """
-    Sweep |momentum_5m| lower-bound thresholds from 0.04 to 0.25 and return
-    (best_threshold, win_rate_at_threshold).
-
-    'Best' = highest win rate on the subset of trades where |m5| >= threshold,
-    subject to MIN_SAMPLE trades in that subset.
-    """
-    thresholds = [round(x * 0.01, 2) for x in range(4, 26)]  # 0.04 → 0.25
-    best = None
-    best_wr = 0.0
-    for thresh in thresholds:
-        subset = [t for t in resolved
-                  if abs(t.get("momentum_5m", 0) or 0) >= thresh]
-        wr, n = _win_rate(subset)
-        if n >= MIN_SAMPLE and wr is not None and wr > best_wr:
-            best_wr = wr
-            best = thresh
-    return best, best_wr
-
-
-def momentum_band_win_rates(resolved):
-    """
-    Win rates split by |momentum_5m| magnitude band.
-
-    Tells the optimizer which strength of momentum signal is actually profitable
-    vs which is noise.  Used to decide whether to raise or lower min_momentum_pct.
-
-    Returns dict: band_label → (win_rate, n_trades)
-    """
-    bands = {
-        "0.04-0.08": [t for t in resolved if 0.04 <= abs(t.get("momentum_5m", 0) or 0) < 0.08],
-        "0.08-0.12": [t for t in resolved if 0.08 <= abs(t.get("momentum_5m", 0) or 0) < 0.12],
-        "0.12-0.18": [t for t in resolved if 0.12 <= abs(t.get("momentum_5m", 0) or 0) < 0.18],
-        "0.18-0.25": [t for t in resolved if 0.18 <= abs(t.get("momentum_5m", 0) or 0) < 0.25],
-        "0.25+":     [t for t in resolved if abs(t.get("momentum_5m", 0) or 0) >= 0.25],
-    }
-    return {k: _win_rate(v) for k, v in bands.items()}
-
-
-def time_window_sweep(resolved):
-    """
-    Find the joint (min_time_remaining, max_time_remaining) window that maximises
-    win rate on resolved trades.
-
-    Sweeps all combinations of:
-        min_time: 120 → 260 step 20s
-        max_time: 260 → 460 step 20s
-    subject to: window width >= 80s and n >= MIN_SAMPLE.
-
-    Returns (best_min, best_max, best_win_rate, n_trades) or None if no valid window found.
-    """
-    best = None
-    best_wr = 0.0
-    for min_t in range(MIN_MIN_TIME, MAX_MIN_TIME, 20):
-        for max_t in range(MIN_MAX_TIME, MAX_MAX_TIME + 1, 20):
-            if max_t - min_t < 80:
-                continue
-            subset = [t for t in resolved
-                      if min_t <= (t.get("time_remaining") or 0) <= max_t]
-            wr, n = _win_rate(subset)
-            if n >= MIN_SAMPLE and wr is not None and wr > best_wr:
-                best_wr = wr
-                best = (min_t, max_t, wr, n)
-    return best
-
-
-def entry_price_win_rates(resolved):
-    """Win rate split: entry <= 0.50 vs entry > 0.50."""
-    low  = [t for t in resolved if (t.get("entry_price") or 0.5) <= 0.50]
-    high = [t for t in resolved if (t.get("entry_price") or 0.5) >  0.50]
     return {
-        "<=0.50": _win_rate(low),
-        ">0.50":  _win_rate(high),
+        "n":           len(trades),
+        "wins":        len(wins),
+        "losses":      len(losses),
+        "win_rate":    win_rate,
+        "avg_win_pnl": avg_win,
+        "avg_loss_pnl": avg_loss,
+        "pnl_ratio":   pnl_ratio,
+        "total_pnl":   total_pnl,
+        "expected_ev": expected_ev,
     }
 
 
-def signal_win_deltas(resolved):
+def analyze_by_score_bucket(trades, bucket_size=0.05):
     """
-    For each raw signal stored at trade time, compute:
-        mean(value | win) - mean(value | loss)
-    Positive = higher values associated with wins.
+    Group trades by |score - 0.5| * 2 (signal strength in [0,1]).
+    Returns list of (bucket_label, n, win_rate) sorted by strength ascending.
+    Used to find the lowest-conviction bucket that still wins.
     """
-    signal_fields = [
-        "score", "confidence", "momentum_5m", "momentum_1m", "momentum_15m",
-        "vs_ref", "cex_poly_lag", "price_acceleration", "vol_adjusted_momentum",
-        "volume_ratio", "rsi_14",
-    ]
-    wins   = [t for t in resolved if t.get("outcome") == "win"]
-    losses = [t for t in resolved if t.get("outcome") == "loss"]
-    deltas = {}
-    for field in signal_fields:
-        wv = [t.get(field) for t in wins   if t.get(field) is not None]
-        lv = [t.get(field) for t in losses if t.get(field) is not None]
-        if len(wv) >= 3 and len(lv) >= 3:
-            deltas[field] = round(sum(wv) / len(wv) - sum(lv) / len(lv), 5)
-    return deltas
+    buckets = defaultdict(list)
+    for t in trades:
+        s = t.get("score")
+        if s is None:
+            continue
+        strength = abs(s - 0.5) * 2   # maps 0.5→0, 1.0→1
+        bucket   = round(int(strength / bucket_size) * bucket_size, 3)
+        buckets[bucket].append(t)
 
-
-def slow_market_win_rate(resolved):
-    """Win rate for slow-regime trades (|m5| < 0.12)."""
-    slow = [t for t in resolved if abs(t.get("momentum_5m", 0) or 0) < 0.12]
-    return _win_rate(slow)
-
-
-# Session hour definitions — mirrors composite_signal._SESSION_HOURS
-_SESSION_HOURS_OPT = {
-    "overlap":   [13, 14, 15],
-    "london":    [7, 8, 9, 10, 11, 12],
-    "new_york":  [16, 17, 18, 19, 20],
-    "asia":      [0, 1, 2, 3, 4, 5, 6],
-    "off":       [21, 22, 23],
-}
-
-_SESSION_DEFAULT_DELTAS = {
-    "overlap":  -0.03,
-    "london":   -0.02,
-    "new_york": -0.01,
-    "asia":      0.00,
-    "off":      +0.02,
-}
-
-_SESSION_DEFAULT_CAPS = {
-    "overlap":  1.00,
-    "london":   0.95,
-    "new_york": 0.90,
-    "asia":     0.85,
-    "off":      0.70,
-}
-
-
-def session_win_rates(resolved, cfg=None):
-    """
-    Win rate and trade count for each major market session.
-
-    Uses the hour_utc field stored in each trade record.
-    Returns dict: {session_name: (win_rate, n_trades)}
-    """
-    cfg = cfg or {}
-    sess_hours = {**_SESSION_HOURS_OPT, **cfg.get("session_hours", {})}
-    result = {}
-    for sess, hours in sess_hours.items():
-        trades = [t for t in resolved if t.get("hour_utc") in hours]
-        result[sess] = _win_rate(trades)
+    result = []
+    for b in sorted(buckets.keys()):
+        group = buckets[b]
+        wr    = _win_rate(group)
+        result.append({
+            "bucket":    f"{b:.2f}-{b+bucket_size:.2f}",
+            "min_score": 0.5 + b / 2,   # YES score equivalent
+            "n":         len(group),
+            "win_rate":  wr,
+        })
     return result
 
 
-# ---------------------------------------------------------------------------
-# Optimization rules
-# ---------------------------------------------------------------------------
-
-def optimize(cfg: dict, resolved: list, apply: bool, verbose: bool = True) -> list[str]:
+def analyze_by_entry_price(trades):
     """
-    Analyse resolved trades and produce incremental config changes.
-
-    Returns list of human-readable change messages.
-    Modifies cfg in-place if apply=True.
+    Group trades by entry_price bucket (0.05 wide).
+    Returns list of (bucket, n, win_rate, avg_pnl_ratio).
     """
-    changes = []
-    overall_wr, n_total = _win_rate(resolved)
-
-    def log(msg):
-        changes.append(msg)
-        if verbose:
-            print(msg)
-
-    if overall_wr is None:
-        log("  [optimizer] No resolved trades — skipping")
-        return changes
-
-    log(f"  [optimizer] win_rate={overall_wr:.1%}  n={n_total}  target={TARGET_WIN_RATE:.0%}")
-
-    # ── Rule 1: Composite threshold ──────────────────────────────────────────
-    current_thresh = cfg.get("composite_threshold", 0.70)
-    best_thresh = score_threshold_sweep(resolved)
-
-    if best_thresh is not None:
-        # Clip and step-limit
-        target_t = round(min(max(best_thresh, MIN_THRESH), MAX_THRESH), 2)
-        # Step: move at most STEP_THRESH per run, allow small drops too
-        if target_t > current_thresh:
-            new_t = round(min(current_thresh + STEP_THRESH, target_t), 2)
-        else:
-            new_t = round(max(current_thresh - STEP_THRESH, target_t), 2)
-
-        if new_t != current_thresh:
-            log(f"  [threshold] {current_thresh:.2f} → {new_t:.2f}  "
-                f"(sweep found {best_thresh:.3f} achieves {TARGET_WIN_RATE:.0%}+)")
-            if apply:
-                cfg["composite_threshold"] = new_t
-    elif overall_wr < TARGET_WIN_RATE and n_total >= MIN_SAMPLE:
-        # No single threshold found — nudge upward to be more selective
-        new_t = round(min(current_thresh + STEP_THRESH, MAX_THRESH), 2)
-        if new_t != current_thresh:
-            log(f"  [threshold] nudge up {current_thresh:.2f} → {new_t:.2f}  "
-                f"(overall {overall_wr:.1%} below target, no clear cutoff found)")
-            if apply:
-                cfg["composite_threshold"] = new_t
-
-    # ── Rule 2: Slow-market composite threshold ──────────────────────────────
-    slow_wr, slow_n = slow_market_win_rate(resolved)
-    if slow_n >= MIN_SAMPLE and slow_wr is not None:
-        cur_slow = cfg.get("slow_composite_threshold", 0.73)
-        if slow_wr < TARGET_WIN_RATE - 0.05:
-            new_slow = round(min(cur_slow + STEP_THRESH, MAX_THRESH), 2)
-            if new_slow != cur_slow:
-                log(f"  [slow_threshold] {cur_slow:.2f} → {new_slow:.2f}  "
-                    f"(slow win_rate={slow_wr:.1%} n={slow_n})")
-                if apply:
-                    cfg["slow_composite_threshold"] = new_slow
-        elif slow_wr >= TARGET_WIN_RATE and cur_slow > current_thresh + 0.01:
-            # Slow-market strategy is working — relax slightly to capture more
-            new_slow = round(max(cur_slow - STEP_THRESH, current_thresh + 0.01), 2)
-            if new_slow != cur_slow:
-                log(f"  [slow_threshold] relax {cur_slow:.2f} → {new_slow:.2f}  "
-                    f"(slow win_rate={slow_wr:.1%} already at target)")
-                if apply:
-                    cfg["slow_composite_threshold"] = new_slow
-
-    # ── Rule 3: Hour blocking / boosting ─────────────────────────────────────
-    h_rates = hour_win_rates(resolved)
-    blocked  = set(cfg.get("blocked_hours", [6, 8, 16]))
-    boosted  = {int(k): v for k, v in cfg.get("boosted_hours", {}).items()}
-
-    for h, (wr_h, n_h) in h_rates.items():
-        if n_h < MIN_SAMPLE or wr_h is None:
+    buckets = defaultdict(list)
+    for t in trades:
+        p = t.get("entry_price")
+        if p is None:
             continue
-        if wr_h < 0.50 and h not in blocked:
-            if len(blocked) < MAX_BLOCK_HOURS:
-                log(f"  [hours] BLOCK {h:02d}h  win_rate={wr_h:.1%}  n={n_h}")
-                if apply:
-                    blocked.add(h)
-        elif wr_h >= 0.55 and h in blocked:
-            # Recovered — unblock
-            log(f"  [hours] UNBLOCK {h:02d}h  win_rate improved to {wr_h:.1%}  n={n_h}")
-            if apply:
-                blocked.discard(h)
-        if wr_h >= 0.72 and n_h >= MIN_SAMPLE and h not in blocked:
-            delta = round(-min(0.04, (wr_h - 0.65) * 0.25), 2)
-            if boosted.get(h) != delta:
-                log(f"  [hours] BOOST {h:02d}h  delta={delta:+.2f}  win_rate={wr_h:.1%}")
-                if apply:
-                    boosted[h] = delta
-        elif wr_h < 0.65 and h in boosted:
-            log(f"  [hours] REMOVE boost {h:02d}h  win_rate={wr_h:.1%} no longer earns boost")
-            if apply:
-                del boosted[h]
+        bucket = round(int(p / 0.05) * 0.05, 3)
+        buckets[bucket].append(t)
 
-    if apply:
-        cfg["blocked_hours"] = sorted(blocked)
-        cfg["boosted_hours"]  = {str(k): v for k, v in sorted(boosted.items())}
+    result = []
+    for b in sorted(buckets.keys()):
+        group    = buckets[b]
+        wr       = _win_rate(group)
+        pnl_vals = [t["pnl"] for t in group if t["pnl"] is not None]
+        avg_pnl  = _avg(pnl_vals)
+        result.append({
+            "bucket":   f"{b:.2f}-{b+0.05:.2f}",
+            "n":        len(group),
+            "win_rate": wr,
+            "avg_pnl":  avg_pnl,
+        })
+    return result
 
-    # ── Rule 4: Minimum momentum threshold ───────────────────────────────────
-    #
-    # Two-stage analysis:
-    #   a) Band analysis — find which |m5| strength bands actually win or lose.
-    #      This tells us if we're blocking good trades (low-mom bands win) or
-    #      letting in noise (low-mom bands lose).
-    #   b) Sweep — find the global |m5| floor that maximises win rate.
-    #
-    # Direction logic:
-    #   • If the 0.04-0.08 band has a GOOD win rate (>= target): current floor
-    #     may be too high — lower it to capture those trades.
-    #   • If the 0.04-0.08 band has a BAD win rate (< 0.50): noise below current
-    #     floor is leaking through — raise the floor.
-    #   • Sweep result acts as a second confirmation and sets the target.
-    bands = momentum_band_win_rates(resolved)
-    band_low_wr,  band_low_n  = bands.get("0.04-0.08", (None, 0))
-    band_mid_wr,  band_mid_n  = bands.get("0.08-0.12", (None, 0))
-    best_mom, best_mom_wr     = momentum_threshold_sweep(resolved)
-    cur_mom = cfg.get("min_momentum_pct", 0.08)
 
-    if n_total >= MIN_SAMPLE:
-        if best_mom is not None and best_mom != cur_mom:
-            if best_mom > cur_mom:
-                new_mom = round(min(cur_mom + STEP_MOM, best_mom, MAX_MOM), 2)
-            else:
-                new_mom = round(max(cur_mom - STEP_MOM, best_mom, MIN_MOM), 2)
-            if new_mom != cur_mom:
-                log(f"  [momentum] min_momentum_pct {cur_mom:.2f} → {new_mom:.2f}  "
-                    f"(sweep: best win_rate={best_mom_wr:.1%} at |m5|>={best_mom:.2f}%)")
-                if apply:
-                    cfg["min_momentum_pct"] = new_mom
-                cur_mom = new_mom  # reflect the change for band logic below
+def analyze_by_hour(trades):
+    """
+    Win rate per UTC hour (0-23).
+    Returns dict: {hour_int: {"n": int, "win_rate": float}}
+    """
+    by_hour = defaultdict(list)
+    for t in trades:
+        h = t.get("hour_utc")
+        if h is not None:
+            by_hour[int(h)].append(t)
 
-        # Band insight logging (always, so report shows what each band earns)
-        for band, (bwr, bn) in bands.items():
-            if bn >= MIN_SAMPLE and bwr is not None:
-                log(f"  [momentum:band] |m5|={band}  win_rate={bwr:.1%}  n={bn}")
+    result = {}
+    for h in range(24):
+        group = by_hour[h]
+        if group:
+            result[h] = {"n": len(group), "win_rate": _win_rate(group)}
+    return result
 
-        # If the lowest band (trades we're currently blocking) has a GOOD win rate,
-        # flag it so we converge faster on the next run.
-        if band_low_n >= MIN_SAMPLE and band_low_wr is not None:
-            if band_low_wr >= TARGET_WIN_RATE and cur_mom > MIN_MOM + STEP_MOM:
-                new_mom = round(max(cur_mom - STEP_MOM, MIN_MOM), 2)
-                if new_mom != cur_mom:
-                    log(f"  [momentum] lower min_momentum_pct {cur_mom:.2f} → {new_mom:.2f}  "
-                        f"(low band wins at {band_low_wr:.1%}, relaxing floor)")
-                    if apply:
-                        cfg["min_momentum_pct"] = new_mom
-            elif band_low_wr < 0.45 and cur_mom < band_low_wr + 0.02:
-                # Low-momentum trades losing badly — tighten the floor
-                new_mom = round(min(cur_mom + STEP_MOM, MAX_MOM), 2)
-                if new_mom != cur_mom:
-                    log(f"  [momentum] raise min_momentum_pct {cur_mom:.2f} → {new_mom:.2f}  "
-                        f"(low band loses at {band_low_wr:.1%}, tightening floor)")
-                    if apply:
-                        cfg["min_momentum_pct"] = new_mom
 
-    # ── Rule 5: Entry price gate ─────────────────────────────────────────────
-    ep = entry_price_win_rates(resolved)
-    low_wr, low_n   = ep["<=0.50"]
-    high_wr, high_n = ep[">0.50"]
-    cur_payout = cfg.get("min_payout_ratio", 0.90)
-    if low_n >= MIN_SAMPLE and high_n >= MIN_SAMPLE:
-        if high_wr is not None and high_wr < 0.55 and cur_payout < 1.0:
-            new_payout = round(min(cur_payout + 0.05, 1.20), 2)
-            log(f"  [payout] min_payout_ratio {cur_payout:.2f} → {new_payout:.2f}  "
-                f"(high-entry trades win_rate={high_wr:.1%} n={high_n})")
-            if apply:
-                cfg["min_payout_ratio"] = new_payout
-        elif low_wr is not None and low_wr >= TARGET_WIN_RATE and cur_payout > 0.85:
-            new_payout = round(max(cur_payout - 0.05, 0.85), 2)
-            log(f"  [payout] relax min_payout_ratio {cur_payout:.2f} → {new_payout:.2f}  "
-                f"(low-entry trades win_rate={low_wr:.1%} n={low_n})")
-            if apply:
-                cfg["min_payout_ratio"] = new_payout
+def analyze_by_side(trades):
+    """Win rate and P&L breakdown for YES vs NO trades."""
+    yes_trades = [t for t in trades if t.get("side") == "yes"]
+    no_trades  = [t for t in trades if t.get("side") == "no"]
+    return {
+        "yes": analyze_pnl_structure(yes_trades) if yes_trades else None,
+        "no":  analyze_pnl_structure(no_trades)  if no_trades  else None,
+    }
 
-    # ── Rule 6: Signal weight nudges (needs >= 20 resolved) ─────────────────
-    if n_total >= 20:
-        deltas = signal_win_deltas(resolved)
-        weights = dict(cfg.get("signal_weights", {}))
-        # Map trade-log field name → config weight key
-        field_to_weight = {
-            "vol_adjusted_momentum": "vol_adjusted_momentum",
-            "cex_poly_lag":          "cex_poly_lag",
-            "vs_ref":                "btc_vs_reference",
-            "momentum_5m":          "momentum_5m",
-            "momentum_1m":          "momentum_1m",
-            "price_acceleration":   "price_acceleration",
-            "momentum_15m":         "momentum_15m",
-        }
-        weight_changes = {}
-        for field, wkey in field_to_weight.items():
-            d = deltas.get(field)
-            if d is None or wkey not in weights:
+
+# ---------------------------------------------------------------------------
+# Adjustment engine
+# ---------------------------------------------------------------------------
+
+def _clamp(value, param_name):
+    lo, hi = BOUNDS.get(param_name, (float("-inf"), float("inf")))
+    return max(lo, min(hi, value))
+
+
+def _step(current, delta, param_name):
+    """Apply delta, respect max step size, then clamp to bounds."""
+    max_s  = MAX_STEP.get(param_name, 0.05)
+    delta  = max(-max_s, min(max_s, delta))
+    return _clamp(current + delta, param_name)
+
+
+def compute_adjustments(overall, score_buckets, price_buckets, hour_analysis,
+                        side_analysis, config):
+    """
+    Produce a list of (param, new_value, reason) tuples.
+    All proposed values are already bounded.
+    """
+    changes  = []
+    n        = overall["n"]
+    wr       = overall["win_rate"]
+    pr       = overall["pnl_ratio"]
+    cur_thr  = config.get("composite_threshold", 0.70)
+    cur_mpr  = config.get("min_payout_ratio", 1.10)
+    cur_smpr = config.get("slow_min_payout_ratio", 1.15)
+    cur_mey  = config.get("max_entry_yes", 0.476)
+
+    # ── 1. Payout structure (runs regardless of trade count if we have wins/losses)
+    # This is the most critical check: avg win must cover avg loss.
+    if overall["wins"] >= 3 and overall["losses"] >= 3:
+        if pr < MIN_PNL_RATIO:
+            # Wins not covering losses → tighten entry price (lower max_entry_yes)
+            # At lower entry price, payout ratio improves structurally.
+            new_mey = _step(cur_mey, -0.01, "max_entry_yes")
+            if new_mey < cur_mey:
+                changes.append((
+                    "max_entry_yes", new_mey,
+                    f"pnl_ratio={pr:.3f} < {MIN_PNL_RATIO} — tighten entry price "
+                    f"to improve payout (wins not covering losses)"
+                ))
+            # Also raise min_payout_ratio target
+            new_mpr = _step(cur_mpr, 0.05, "min_payout_ratio")
+            if new_mpr > cur_mpr:
+                changes.append((
+                    "min_payout_ratio", new_mpr,
+                    f"pnl_ratio={pr:.3f} below target — raise payout floor"
+                ))
+
+        elif pr > TARGET_PNL_RATIO * 1.5 and wr > TARGET_WIN_RATE:
+            # Very high payout + high win rate → slightly relax entry price cap
+            new_mey = _step(cur_mey, +0.005, "max_entry_yes")
+            if new_mey > cur_mey:
+                changes.append((
+                    "max_entry_yes", new_mey,
+                    f"pnl_ratio={pr:.3f} healthy, wr={wr:.1%} — minor relaxation"
+                ))
+
+    # ── 2. Win rate calibration (needs MIN_TRADES_OVERALL)
+    if n >= MIN_TRADES_OVERALL:
+        if wr < MIN_WIN_RATE:
+            new_thr = _step(cur_thr, +0.02, "composite_threshold")
+            if new_thr > cur_thr:
+                changes.append((
+                    "composite_threshold", new_thr,
+                    f"win_rate={wr:.1%} < {MIN_WIN_RATE:.0%} target "
+                    f"— raising threshold to filter weak signals"
+                ))
+
+        elif wr > MAX_WIN_RATE and pr >= TARGET_PNL_RATIO:
+            # High win rate + good payout = can accept slightly weaker signals
+            new_thr = _step(cur_thr, -0.01, "composite_threshold")
+            if new_thr < cur_thr:
+                changes.append((
+                    "composite_threshold", new_thr,
+                    f"win_rate={wr:.1%} > {MAX_WIN_RATE:.0%}, pnl_ratio={pr:.2f} "
+                    f"— minor threshold relaxation"
+                ))
+
+    # ── 3. Score bucket analysis — raise threshold if low-conviction bucket is losing
+    if n >= MIN_TRADES_OVERALL * 2:
+        # Find lowest score bucket (nearest to threshold) with enough trades
+        for bucket_info in score_buckets:
+            if bucket_info["n"] < MIN_TRADES_BUCKET:
                 continue
-            cur_w = weights[wkey]
-            if d > 0.02:     # wins score higher — boost this signal
-                nudge = min(MAX_WEIGHT_NUDGE, abs(d) * 0.05)
-                weight_changes[wkey] = round(cur_w + nudge, 4)
-            elif d < -0.02:  # losses score higher — reduce this signal
-                nudge = min(MAX_WEIGHT_NUDGE, abs(d) * 0.05)
-                weight_changes[wkey] = round(max(0.0, cur_w - nudge), 4)
+            bwr = bucket_info["win_rate"]
+            b_score = bucket_info["min_score"]  # equivalent YES score
+            # This bucket is near our entry threshold and losing — raise threshold
+            if bwr is not None and bwr < 0.58 and b_score < cur_thr + 0.10:
+                # The weakest-conviction bucket is a drag — raise threshold past it
+                new_thr = _step(cur_thr, +0.02, "composite_threshold")
+                if new_thr > cur_thr:
+                    changes.append((
+                        "composite_threshold", new_thr,
+                        f"score bucket {bucket_info['bucket']} has wr={bwr:.1%} "
+                        f"(N={bucket_info['n']}) — raising threshold above this bucket"
+                    ))
+                break  # only act on the weakest bucket once per run
 
-        if weight_changes:
-            # Merge and re-normalise to sum = 1.0
-            new_weights = {**weights, **weight_changes}
-            total = sum(new_weights.values())
-            if total > 0:
-                new_weights = {k: round(v / total, 4) for k, v in new_weights.items()}
-            diff_parts = [
-                f"{k}: {weights[k]:.3f}→{v:.3f}"
-                for k, v in weight_changes.items()
-                if abs(v - weights.get(k, 0)) > 0.001
-            ]
-            if diff_parts:
-                log(f"  [weights] nudge: {', '.join(diff_parts)}")
-                if apply:
-                    cfg["signal_weights"] = new_weights
+    # ── 4. Entry price analysis — check if high entry prices are losing more
+    if n >= MIN_TRADES_OVERALL:
+        # Find the highest entry price bucket with enough trades and bad win rate
+        for pb in reversed(price_buckets):
+            if pb["n"] < MIN_TRADES_BUCKET:
+                continue
+            pwr = pb["win_rate"]
+            # Parse bucket upper bound
+            try:
+                p_upper = float(pb["bucket"].split("-")[1])
+            except Exception:
+                continue
+            # High entry price with bad win rate → tighten max_entry_yes
+            if pwr is not None and pwr < 0.55 and p_upper > cur_mey - 0.03:
+                new_mey = _step(cur_mey, -0.01, "max_entry_yes")
+                if new_mey < cur_mey:
+                    changes.append((
+                        "max_entry_yes", new_mey,
+                        f"entry price bucket {pb['bucket']} has wr={pwr:.1%} "
+                        f"(N={pb['n']}) — tighten entry price cap"
+                    ))
+                break  # one change per run
 
-    # ── Rule 7: Active-market composite threshold ────────────────────────────
-    active = [t for t in resolved if abs(t.get("momentum_5m", 0) or 0) >= 0.25]
-    active_wr, active_n = _win_rate(active)
-    if active_n >= MIN_SAMPLE and active_wr is not None:
-        cur_active = cfg.get("active_composite_threshold", 0.68)
-        if active_wr < TARGET_WIN_RATE - 0.05:
-            new_active = round(min(cur_active + STEP_THRESH, MAX_THRESH), 2)
-            if new_active != cur_active:
-                log(f"  [active_threshold] {cur_active:.2f} → {new_active:.2f}  "
-                    f"(active win_rate={active_wr:.1%} n={active_n})")
-                if apply:
-                    cfg["active_composite_threshold"] = new_active
-        elif active_wr >= TARGET_WIN_RATE and cur_active > MIN_THRESH:
-            new_active = round(max(cur_active - STEP_THRESH, MIN_THRESH), 2)
-            if new_active != cur_active:
-                log(f"  [active_threshold] relax {cur_active:.2f} → {new_active:.2f}  "
-                    f"(active win_rate={active_wr:.1%} already at target)")
-                if apply:
-                    cfg["active_composite_threshold"] = new_active
+    # ── 5. Hour analysis — block bad hours, boost good ones
+    if n >= MIN_TRADES_OVERALL:
+        blocked = list(config.get("blocked_hours", [6, 8, 16]))
+        boosted = {int(k): v for k, v in
+                   config.get("boosted_hours", {}).items()}
+        hour_changes = False
 
-    # ── Rule 8: max_entry_yes / max_entry_no (poly price gate) ───────────────
-    # If trades entered at higher poly prices lose more, tighten the bounds.
-    if n_total >= MIN_SAMPLE:
-        wins   = [t for t in resolved if t.get("outcome") == "win"]
-        losses = [t for t in resolved if t.get("outcome") == "loss"]
+        for h, hdata in hour_analysis.items():
+            hn  = hdata["n"]
+            hwr = hdata["win_rate"]
+            if hn < MIN_TRADES_HOUR:
+                continue
 
-        yes_trades = [t for t in resolved if t.get("side") == "yes"]
-        no_trades  = [t for t in resolved if t.get("side") == "no"]
+            if hwr < 0.45 and h not in blocked:
+                blocked.append(h)
+                # Remove from boosted if it was there
+                boosted.pop(h, None)
+                hour_changes = True
+                changes.append((
+                    "_blocked_hours_add", h,
+                    f"hour {h:02d}h has wr={hwr:.1%} (N={hn}) — adding to blocked_hours"
+                ))
 
-        # YES side: tighten max_entry_yes if high-price YES trades lose
-        if len(yes_trades) >= MIN_SAMPLE:
-            cur_max_yes = cfg.get("max_entry_yes", 0.60)
-            high_yes = [t for t in yes_trades
-                        if (t.get("poly_yes_price") or 0.5) > cur_max_yes - 0.05]
-            low_yes  = [t for t in yes_trades
-                        if (t.get("poly_yes_price") or 0.5) <= cur_max_yes - 0.05]
-            high_wr_y, high_n_y = _win_rate(high_yes)
-            low_wr_y,  low_n_y  = _win_rate(low_yes)
-            if high_n_y >= MIN_SAMPLE and high_wr_y is not None and high_wr_y < 0.50:
-                new_max_yes = round(max(cur_max_yes - 0.02, 0.52), 2)
-                if new_max_yes != cur_max_yes:
-                    log(f"  [poly_gate] max_entry_yes {cur_max_yes:.2f} → {new_max_yes:.2f}  "
-                        f"(high-price YES win_rate={high_wr_y:.1%} n={high_n_y})")
-                    if apply:
-                        cfg["max_entry_yes"] = new_max_yes
-            elif high_n_y >= MIN_SAMPLE and high_wr_y is not None and high_wr_y >= TARGET_WIN_RATE:
-                new_max_yes = round(min(cur_max_yes + 0.02, 0.70), 2)
-                if new_max_yes != cur_max_yes:
-                    log(f"  [poly_gate] relax max_entry_yes {cur_max_yes:.2f} → {new_max_yes:.2f}  "
-                        f"(high-price YES win_rate={high_wr_y:.1%})")
-                    if apply:
-                        cfg["max_entry_yes"] = new_max_yes
+            elif hwr > 0.77 and hn >= MIN_TRADES_HOUR * 2 and h not in blocked:
+                # Good hour — ensure it has a boost
+                current_delta = boosted.get(h, 0.0)
+                if current_delta > -0.03:
+                    boosted[h] = round(current_delta - 0.01, 3)
+                    hour_changes = True
+                    changes.append((
+                        "_boosted_hours_add", h,
+                        f"hour {h:02d}h has wr={hwr:.1%} (N={hn}) — adding/improving boost"
+                    ))
 
-        # NO side: tighten min_entry_no if low-price NO trades lose
-        if len(no_trades) >= MIN_SAMPLE:
-            cur_min_no = cfg.get("min_entry_no", 0.28)
-            low_no  = [t for t in no_trades
-                       if (t.get("poly_yes_price") or 0.5) < cur_min_no + 0.05]
-            high_no = [t for t in no_trades
-                       if (t.get("poly_yes_price") or 0.5) >= cur_min_no + 0.05]
-            low_wr_n, low_n_n = _win_rate(low_no)
-            if low_n_n >= MIN_SAMPLE and low_wr_n is not None and low_wr_n < 0.50:
-                new_min_no = round(min(cur_min_no + 0.02, 0.40), 2)
-                if new_min_no != cur_min_no:
-                    log(f"  [poly_gate] min_entry_no {cur_min_no:.2f} → {new_min_no:.2f}  "
-                        f"(low-price NO win_rate={low_wr_n:.1%} n={low_n_n})")
-                    if apply:
-                        cfg["min_entry_no"] = new_min_no
+            elif hwr > 0.50 and h in blocked:
+                # Hour was blocked but is now performing okay — unblock
+                blocked.remove(h)
+                hour_changes = True
+                changes.append((
+                    "_blocked_hours_remove", h,
+                    f"hour {h:02d}h now has wr={hwr:.1%} (N={hn}) — removing block"
+                ))
 
-    # ── Rule 9: max_no_score (cap on NO-side score) ──────────────────────────
-    no_trades = [t for t in resolved if t.get("side") == "no"]
-    no_wr, no_n = _win_rate(no_trades)
-    if no_n >= MIN_SAMPLE and no_wr is not None:
-        cur_max_no = cfg.get("max_no_score", 0.25)
-        if no_wr < TARGET_WIN_RATE - 0.08:
-            # NO trades losing badly — cap the score lower (require stronger signal)
-            new_max_no = round(max(cur_max_no - 0.01, 0.20), 3)
-            if new_max_no != cur_max_no:
-                log(f"  [no_score] max_no_score {cur_max_no:.3f} → {new_max_no:.3f}  "
-                    f"(NO win_rate={no_wr:.1%} n={no_n})")
-                if apply:
-                    cfg["max_no_score"] = new_max_no
-        elif no_wr >= TARGET_WIN_RATE and cur_max_no < 0.30:
-            new_max_no = round(min(cur_max_no + 0.01, 0.30), 3)
-            if new_max_no != cur_max_no:
-                log(f"  [no_score] relax max_no_score {cur_max_no:.3f} → {new_max_no:.3f}  "
-                    f"(NO win_rate={no_wr:.1%})")
-                if apply:
-                    cfg["max_no_score"] = new_max_no
+        if hour_changes:
+            changes.append(("blocked_hours", sorted(set(blocked)), "hour analysis update"))
+            changes.append(("boosted_hours",
+                            {str(k): v for k, v in sorted(boosted.items())},
+                            "hour analysis update"))
 
-    # ── Rules 10 & 19: timing window (min_time_remaining / max_time_remaining) ──
-    #
-    # Joint sweep approach: rather than optimising min and max independently with
-    # a crude binary split, we sweep all (min, max) pairs across a wide grid and
-    # find the window that produces the highest win rate on resolved trades.
-    #
-    # This directly answers "does entering earlier or later win more?" and
-    # "is there a sweet spot window width that correlates with wins?".
-    #
-    # Steps toward the optimal window are still bounded (TIME_STEP per run) so
-    # the system converges gradually and can be corrected by future data.
-    if n_total >= MIN_SAMPLE:
-        cur_min_time = cfg.get("min_time_remaining", 200)
-        cur_max_time = cfg.get("max_time_remaining", 350)
-        best_window = time_window_sweep(resolved)
+    # ── 6. NO side underperformance — tighten max_no_score
+    no_stats = side_analysis.get("no")
+    if no_stats and no_stats["n"] >= MIN_TRADES_BUCKET:
+        no_wr = no_stats["win_rate"]
+        cur_mns = config.get("max_no_score", 0.30)
+        if no_wr < 0.50:
+            new_mns = _step(cur_mns, -0.02, "max_no_score")
+            if new_mns < cur_mns:
+                changes.append((
+                    "max_no_score", new_mns,
+                    f"NO-side win_rate={no_wr:.1%} (N={no_stats['n']}) "
+                    f"— tighten max_no_score to filter weaker NO signals"
+                ))
+        elif no_wr > 0.78 and no_stats["n"] >= MIN_TRADES_BUCKET * 2:
+            new_mns = _step(cur_mns, +0.01, "max_no_score")
+            if new_mns > cur_mns:
+                changes.append((
+                    "max_no_score", new_mns,
+                    f"NO-side win_rate={no_wr:.1%} strong — minor relaxation"
+                ))
 
-        if best_window is not None:
-            opt_min, opt_max, opt_wr, opt_n = best_window
-            log(f"  [timing:sweep] best window [{opt_min}s–{opt_max}s]  "
-                f"win_rate={opt_wr:.1%}  n={opt_n}")
+    # ── Deduplicate: keep first occurrence of each param key
+    seen = set()
+    deduped = []
+    for item in changes:
+        key = item[0]
+        if key.startswith("_"):
+            continue   # internal markers, already merged into blocked/boosted
+        if key not in seen:
+            seen.add(key)
+            deduped.append(item)
 
-            # ── min_time_remaining ────────────────────────────────────────────
-            if opt_min != cur_min_time:
-                if opt_min > cur_min_time:
-                    new_min_time = min(cur_min_time + TIME_STEP, opt_min, MAX_MIN_TIME)
-                else:
-                    new_min_time = max(cur_min_time - TIME_STEP, opt_min, MIN_MIN_TIME)
-                if new_min_time != cur_min_time:
-                    log(f"  [timing] min_time_remaining {cur_min_time} → {new_min_time}s  "
-                        f"(sweep target={opt_min}s at win_rate={opt_wr:.1%})")
-                    if apply:
-                        cfg["min_time_remaining"] = new_min_time
-
-            # ── max_time_remaining ────────────────────────────────────────────
-            if opt_max != cur_max_time:
-                if opt_max > cur_max_time:
-                    new_max_time = min(cur_max_time + TIME_STEP, opt_max, MAX_MAX_TIME)
-                else:
-                    new_max_time = max(cur_max_time - TIME_STEP, opt_max, MIN_MAX_TIME)
-                if new_max_time != cur_max_time:
-                    log(f"  [timing] max_time_remaining {cur_max_time} → {new_max_time}s  "
-                        f"(sweep target={opt_max}s at win_rate={opt_wr:.1%})")
-                    if apply:
-                        cfg["max_time_remaining"] = new_max_time
-
-        else:
-            # Not enough data for sweep — fall back to simple directional nudges
-            # based on whether trades at the boundary of the current window win.
-            near_min = [t for t in resolved
-                        if cur_min_time <= (t.get("time_remaining") or 0) < cur_min_time + 30]
-            near_max = [t for t in resolved
-                        if cur_max_time - 30 < (t.get("time_remaining") or 0) <= cur_max_time]
-            wr_near_min, n_near_min = _win_rate(near_min)
-            wr_near_max, n_near_max = _win_rate(near_max)
-
-            if n_near_min >= MIN_SAMPLE and wr_near_min is not None and wr_near_min < 0.45:
-                new_min_time = min(cur_min_time + TIME_STEP, MAX_MIN_TIME)
-                if new_min_time != cur_min_time:
-                    log(f"  [timing] nudge min_time_remaining {cur_min_time} → {new_min_time}s  "
-                        f"(near-min-floor trades win_rate={wr_near_min:.1%})")
-                    if apply:
-                        cfg["min_time_remaining"] = new_min_time
-            elif n_near_min >= MIN_SAMPLE and wr_near_min is not None \
-                    and wr_near_min >= TARGET_WIN_RATE and cur_min_time > MIN_MIN_TIME:
-                new_min_time = max(cur_min_time - TIME_STEP, MIN_MIN_TIME)
-                if new_min_time != cur_min_time:
-                    log(f"  [timing] relax min_time_remaining {cur_min_time} → {new_min_time}s  "
-                        f"(near-floor trades winning at {wr_near_min:.1%})")
-                    if apply:
-                        cfg["min_time_remaining"] = new_min_time
-
-            if n_near_max >= MIN_SAMPLE and wr_near_max is not None and wr_near_max < 0.45:
-                new_max_time = max(cur_max_time - TIME_STEP, MIN_MAX_TIME)
-                if new_max_time != cur_max_time:
-                    log(f"  [timing] nudge max_time_remaining {cur_max_time} → {new_max_time}s  "
-                        f"(near-max-ceiling trades win_rate={wr_near_max:.1%})")
-                    if apply:
-                        cfg["max_time_remaining"] = new_max_time
-            elif n_near_max >= MIN_SAMPLE and wr_near_max is not None \
-                    and wr_near_max >= TARGET_WIN_RATE and cur_max_time < MAX_MAX_TIME:
-                new_max_time = min(cur_max_time + TIME_STEP, MAX_MAX_TIME)
-                if new_max_time != cur_max_time:
-                    log(f"  [timing] relax max_time_remaining {cur_max_time} → {new_max_time}s  "
-                        f"(near-ceiling trades winning at {wr_near_max:.1%})")
-                    if apply:
-                        cfg["max_time_remaining"] = new_max_time
-
-    # ── Rule 11: RSI thresholds ───────────────────────────────────────────────
-    # If loss trades have high RSI on YES or low RSI on NO, tighten filters.
-    if n_total >= MIN_SAMPLE:
-        yes_losses = [t for t in resolved
-                      if t.get("side") == "yes" and t.get("outcome") == "loss"
-                      and t.get("rsi_14") is not None]
-        no_losses  = [t for t in resolved
-                      if t.get("side") == "no" and t.get("outcome") == "loss"
-                      and t.get("rsi_14") is not None]
-        cur_ob = cfg.get("rsi_overbought", 85)
-        cur_os = cfg.get("rsi_oversold", 15)
-        if len(yes_losses) >= MIN_SAMPLE:
-            avg_rsi_yes_loss = sum(t["rsi_14"] for t in yes_losses) / len(yes_losses)
-            if avg_rsi_yes_loss > 70 and cur_ob > 72:
-                new_ob = max(cur_ob - 2, 72)
-                log(f"  [rsi] rsi_overbought {cur_ob} → {new_ob}  "
-                    f"(avg RSI in YES losses={avg_rsi_yes_loss:.0f})")
-                if apply:
-                    cfg["rsi_overbought"] = new_ob
-            elif avg_rsi_yes_loss < 60 and cur_ob < 88:
-                new_ob = min(cur_ob + 2, 88)
-                log(f"  [rsi] relax rsi_overbought {cur_ob} → {new_ob}  "
-                    f"(avg RSI in YES losses={avg_rsi_yes_loss:.0f}, not extreme)")
-                if apply:
-                    cfg["rsi_overbought"] = new_ob
-        if len(no_losses) >= MIN_SAMPLE:
-            avg_rsi_no_loss = sum(t["rsi_14"] for t in no_losses) / len(no_losses)
-            if avg_rsi_no_loss < 30 and cur_os < 28:
-                new_os = min(cur_os + 2, 28)
-                log(f"  [rsi] rsi_oversold {cur_os} → {new_os}  "
-                    f"(avg RSI in NO losses={avg_rsi_no_loss:.0f})")
-                if apply:
-                    cfg["rsi_oversold"] = new_os
-
-    # ── Rule 12: slow_min_payout_ratio ───────────────────────────────────────
-    slow_trades = [t for t in resolved if abs(t.get("momentum_5m", 0) or 0) < 0.12]
-    slow_wr2, slow_n2 = _win_rate(slow_trades)
-    if slow_n2 >= MIN_SAMPLE and slow_wr2 is not None:
-        cur_slow_pay = cfg.get("slow_min_payout_ratio", 1.10)
-        if slow_wr2 < TARGET_WIN_RATE - 0.05 and cur_slow_pay < 1.30:
-            new_slow_pay = round(min(cur_slow_pay + 0.05, 1.30), 2)
-            log(f"  [slow_payout] slow_min_payout_ratio {cur_slow_pay:.2f} → {new_slow_pay:.2f}  "
-                f"(slow win_rate={slow_wr2:.1%} n={slow_n2})")
-            if apply:
-                cfg["slow_min_payout_ratio"] = new_slow_pay
-        elif slow_wr2 >= TARGET_WIN_RATE and cur_slow_pay > 1.00:
-            new_slow_pay = round(max(cur_slow_pay - 0.05, 1.00), 2)
-            log(f"  [slow_payout] relax slow_min_payout_ratio {cur_slow_pay:.2f} → {new_slow_pay:.2f}  "
-                f"(slow win_rate={slow_wr2:.1%})")
-            if apply:
-                cfg["slow_min_payout_ratio"] = new_slow_pay
-
-    # ── Rule 13: slow_position_pct_cap ───────────────────────────────────────
-    if slow_n2 >= MIN_SAMPLE and slow_wr2 is not None:
-        cur_slow_cap = cfg.get("slow_position_pct_cap", 0.70)
-        if slow_wr2 < TARGET_WIN_RATE - 0.10:
-            new_slow_cap = round(max(cur_slow_cap - 0.05, 0.40), 2)
-            if new_slow_cap != cur_slow_cap:
-                log(f"  [slow_sizing] slow_position_pct_cap {cur_slow_cap:.2f} → {new_slow_cap:.2f}  "
-                    f"(slow win_rate={slow_wr2:.1%}, reducing exposure)")
-                if apply:
-                    cfg["slow_position_pct_cap"] = new_slow_cap
-        elif slow_wr2 >= TARGET_WIN_RATE and cur_slow_cap < 1.0:
-            new_slow_cap = round(min(cur_slow_cap + 0.05, 1.0), 2)
-            if new_slow_cap != cur_slow_cap:
-                log(f"  [slow_sizing] slow_position_pct_cap {cur_slow_cap:.2f} → {new_slow_cap:.2f}  "
-                    f"(slow win_rate={slow_wr2:.1%}, adding exposure)")
-                if apply:
-                    cfg["slow_position_pct_cap"] = new_slow_cap
-
-    # ── Rule 14: max_entry_no (poly price gate for NO side) ──────────────────
-    no_trades_ep = [t for t in resolved if t.get("side") == "no"]
-    if len(no_trades_ep) >= MIN_SAMPLE:
-        cur_max_no_ep = cfg.get("max_entry_no", 0.65)
-        # For NO trades, poly_yes_price is the opponent's price.
-        # If trades at high poly_yes_price (market is bullish) are losing NO bets → tighten
-        high_no = [t for t in no_trades_ep
-                   if (t.get("poly_yes_price") or 0.5) > cur_max_no_ep - 0.05]
-        wr_high_no, n_high_no = _win_rate(high_no)
-        if n_high_no >= MIN_SAMPLE and wr_high_no is not None and wr_high_no < 0.50:
-            new_max_no_ep = round(max(cur_max_no_ep - 0.02, 0.52), 2)
-            if new_max_no_ep != cur_max_no_ep:
-                log(f"  [poly_gate] max_entry_no {cur_max_no_ep:.2f} → {new_max_no_ep:.2f}  "
-                    f"(high poly_yes NO trades win_rate={wr_high_no:.1%} n={n_high_no})")
-                if apply:
-                    cfg["max_entry_no"] = new_max_no_ep
-        elif n_high_no >= MIN_SAMPLE and wr_high_no is not None and wr_high_no >= TARGET_WIN_RATE:
-            new_max_no_ep = round(min(cur_max_no_ep + 0.02, 0.70), 2)
-            if new_max_no_ep != cur_max_no_ep:
-                log(f"  [poly_gate] relax max_entry_no {cur_max_no_ep:.2f} → {new_max_no_ep:.2f}  "
-                    f"(high poly_yes NO win_rate={wr_high_no:.1%})")
-                if apply:
-                    cfg["max_entry_no"] = new_max_no_ep
-
-    # ── Rule 15: max_no_size (hard cap on NO trade size) ─────────────────────
-    no_wr2, no_n2 = _win_rate([t for t in resolved if t.get("side") == "no"])
-    if no_n2 >= MIN_SAMPLE and no_wr2 is not None:
-        cur_max_no_sz = cfg.get("max_no_size", 2.50)
-        if no_wr2 < TARGET_WIN_RATE - 0.10:
-            # NO trades losing badly — shrink the max size to limit damage
-            new_max_no_sz = round(max(cur_max_no_sz - 0.25, 0.50), 2)
-            if new_max_no_sz != cur_max_no_sz:
-                log(f"  [no_size] max_no_size ${cur_max_no_sz:.2f} → ${new_max_no_sz:.2f}  "
-                    f"(NO win_rate={no_wr2:.1%} n={no_n2})")
-                if apply:
-                    cfg["max_no_size"] = new_max_no_sz
-        elif no_wr2 >= TARGET_WIN_RATE and cur_max_no_sz < cfg.get("max_position", 3.50):
-            new_max_no_sz = round(min(cur_max_no_sz + 0.25, cfg.get("max_position", 3.50)), 2)
-            if new_max_no_sz != cur_max_no_sz:
-                log(f"  [no_size] relax max_no_size ${cur_max_no_sz:.2f} → ${new_max_no_sz:.2f}  "
-                    f"(NO win_rate={no_wr2:.1%})")
-                if apply:
-                    cfg["max_no_size"] = new_max_no_sz
-
-    # ── Rule 16: min_yes_conf (minimum confidence for YES trades) ────────────
-    yes_trades = [t for t in resolved if t.get("side") == "yes"]
-    yes_wr, yes_n = _win_rate(yes_trades)
-    if yes_n >= MIN_SAMPLE and yes_wr is not None:
-        cur_min_conf = cfg.get("min_yes_conf", 0.0)
-        if yes_wr < TARGET_WIN_RATE - 0.05:
-            # Sweep confidence levels to find floor that hits target
-            best_conf_thresh = None
-            for conf_t in [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40]:
-                subset = [t for t in yes_trades
-                          if (t.get("confidence") or 0) >= conf_t]
-                wr_c, n_c = _win_rate(subset)
-                if n_c >= MIN_SAMPLE and wr_c is not None and wr_c >= TARGET_WIN_RATE:
-                    best_conf_thresh = conf_t
-                    break
-            if best_conf_thresh is not None:
-                # Step toward it
-                if best_conf_thresh > cur_min_conf:
-                    new_conf = round(min(cur_min_conf + 0.05, best_conf_thresh), 2)
-                else:
-                    new_conf = round(max(cur_min_conf - 0.05, best_conf_thresh), 2)
-                if new_conf != cur_min_conf:
-                    log(f"  [yes_conf] min_yes_conf {cur_min_conf:.2f} → {new_conf:.2f}  "
-                        f"(YES win_rate={yes_wr:.1%} n={yes_n})")
-                    if apply:
-                        cfg["min_yes_conf"] = new_conf
-        elif yes_wr >= TARGET_WIN_RATE and cur_min_conf > 0:
-            # Already at target — relax confidence gate to allow more trades
-            new_conf = round(max(cur_min_conf - 0.05, 0.0), 2)
-            if new_conf != cur_min_conf:
-                log(f"  [yes_conf] relax min_yes_conf {cur_min_conf:.2f} → {new_conf:.2f}  "
-                    f"(YES win_rate={yes_wr:.1%} already at target)")
-                if apply:
-                    cfg["min_yes_conf"] = new_conf
-
-    # ── Rule 17: min_entry_price ──────────────────────────────────────────────
-    if n_total >= MIN_SAMPLE:
-        cur_min_ep = cfg.get("min_entry_price", 0.35)
-        low_ep = [t for t in resolved if (t.get("entry_price") or 0.5) < cur_min_ep + 0.05]
-        wr_low_ep, n_low_ep = _win_rate(low_ep)
-        if n_low_ep >= MIN_SAMPLE and wr_low_ep is not None and wr_low_ep < 0.45:
-            new_min_ep = round(min(cur_min_ep + 0.02, 0.42), 2)
-            if new_min_ep != cur_min_ep:
-                log(f"  [entry_price] min_entry_price {cur_min_ep:.2f} → {new_min_ep:.2f}  "
-                    f"(low-entry trades win_rate={wr_low_ep:.1%} n={n_low_ep})")
-                if apply:
-                    cfg["min_entry_price"] = new_min_ep
-        elif n_low_ep >= MIN_SAMPLE and wr_low_ep is not None and wr_low_ep >= TARGET_WIN_RATE \
-                and cur_min_ep > 0.30:
-            new_min_ep = round(max(cur_min_ep - 0.02, 0.30), 2)
-            if new_min_ep != cur_min_ep:
-                log(f"  [entry_price] relax min_entry_price {cur_min_ep:.2f} → {new_min_ep:.2f}  "
-                    f"(low-entry win_rate={wr_low_ep:.1%})")
-                if apply:
-                    cfg["min_entry_price"] = new_min_ep
-
-    # ── Rule 18: min_entry_yes / slow_max_entry_yes / slow_min_entry_no ──────
-    # YES trades that entered too cheap (market hadn't moved) might signal under-conviction.
-    yes_trades_e = [t for t in resolved if t.get("side") == "yes"]
-    if len(yes_trades_e) >= MIN_SAMPLE:
-        cur_min_yes = cfg.get("min_entry_yes", 0.35)
-        too_cheap = [t for t in yes_trades_e
-                     if (t.get("poly_yes_price") or 0.5) < cur_min_yes + 0.04]
-        wr_cheap, n_cheap = _win_rate(too_cheap)
-        if n_cheap >= MIN_SAMPLE and wr_cheap is not None and wr_cheap < 0.45:
-            new_min_yes = round(min(cur_min_yes + 0.02, 0.44), 2)
-            if new_min_yes != cur_min_yes:
-                log(f"  [poly_gate] min_entry_yes {cur_min_yes:.2f} → {new_min_yes:.2f}  "
-                    f"(cheap YES win_rate={wr_cheap:.1%} n={n_cheap})")
-                if apply:
-                    cfg["min_entry_yes"] = new_min_yes
-
-    # Slow-market specific entry gates (tuned tighter than normal)
-    slow_yes = [t for t in resolved
-                if t.get("side") == "yes" and abs(t.get("momentum_5m", 0) or 0) < 0.12]
-    if len(slow_yes) >= MIN_SAMPLE:
-        cur_slow_max_yes = cfg.get("slow_max_entry_yes", 0.54)
-        high_slow_yes = [t for t in slow_yes
-                         if (t.get("poly_yes_price") or 0.5) > cur_slow_max_yes - 0.03]
-        wr_hsly, n_hsly = _win_rate(high_slow_yes)
-        if n_hsly >= MIN_SAMPLE and wr_hsly is not None and wr_hsly < 0.45:
-            new_val = round(max(cur_slow_max_yes - 0.02, 0.48), 2)
-            if new_val != cur_slow_max_yes:
-                log(f"  [slow_gate] slow_max_entry_yes {cur_slow_max_yes:.2f} → {new_val:.2f}  "
-                    f"(slow YES win_rate={wr_hsly:.1%} n={n_hsly})")
-                if apply:
-                    cfg["slow_max_entry_yes"] = new_val
-        elif n_hsly >= MIN_SAMPLE and wr_hsly is not None and wr_hsly >= TARGET_WIN_RATE \
-                and cur_slow_max_yes < 0.58:
-            new_val = round(min(cur_slow_max_yes + 0.02, 0.58), 2)
-            if new_val != cur_slow_max_yes:
-                log(f"  [slow_gate] relax slow_max_entry_yes {cur_slow_max_yes:.2f} → {new_val:.2f}  "
-                    f"(slow YES win_rate={wr_hsly:.1%})")
-                if apply:
-                    cfg["slow_max_entry_yes"] = new_val
-
-    # ── Rule 20a: min_lag_override ────────────────────────────────────────────
-    # min_lag_override: the minimum CEX/poly lag needed to override the poly
-    # directional gate (i.e. allow a trade even when poly disagrees with CEX).
-    # If trades that passed through the lag override are losing, raise the bar.
-    if n_total >= MIN_SAMPLE:
-        cur_lag = cfg.get("min_lag_override", 0.12)
-        # We don't store lag in the trade log directly, so proxy: trades where
-        # cex_poly_lag > cur_lag and outcome is win/loss
-        lag_trades = [t for t in resolved if abs(t.get("cex_poly_lag") or 0) >= cur_lag]
-        wr_lag, n_lag = _win_rate(lag_trades)
-        if n_lag >= MIN_SAMPLE and wr_lag is not None and wr_lag < TARGET_WIN_RATE - 0.08:
-            new_lag = round(min(cur_lag + 0.02, 0.25), 2)
-            if new_lag != cur_lag:
-                log(f"  [lag] min_lag_override {cur_lag:.2f} → {new_lag:.2f}  "
-                    f"(lag-override trades win_rate={wr_lag:.1%} n={n_lag})")
-                if apply:
-                    cfg["min_lag_override"] = new_lag
-        elif n_lag >= MIN_SAMPLE and wr_lag is not None and wr_lag >= TARGET_WIN_RATE \
-                and cur_lag > 0.08:
-            new_lag = round(max(cur_lag - 0.02, 0.08), 2)
-            if new_lag != cur_lag:
-                log(f"  [lag] relax min_lag_override {cur_lag:.2f} → {new_lag:.2f}  "
-                    f"(lag trades win_rate={wr_lag:.1%})")
-                if apply:
-                    cfg["min_lag_override"] = new_lag
-
-    # ── Rule 20: max_position_per_window ─────────────────────────────────────
-    # If we're deploying too much into a single window and losing, reduce the cap.
-    if n_total >= MIN_SAMPLE:
-        cur_max_win = cfg.get("max_position_per_window", 4.0)
-        max_pos = cfg.get("max_position", 3.5)
-        if overall_wr < TARGET_WIN_RATE - 0.10 and cur_max_win > max_pos:
-            new_max_win = round(max(cur_max_win - 0.25, max_pos), 2)
-            if new_max_win != cur_max_win:
-                log(f"  [window_cap] max_position_per_window ${cur_max_win:.2f} → ${new_max_win:.2f}  "
-                    f"(overall win_rate={overall_wr:.1%}, reducing per-window exposure)")
-                if apply:
-                    cfg["max_position_per_window"] = new_max_win
-        elif overall_wr >= TARGET_WIN_RATE and cur_max_win < max_pos * 1.5:
-            new_max_win = round(min(cur_max_win + 0.25, max_pos * 1.5), 2)
-            if new_max_win != cur_max_win:
-                log(f"  [window_cap] relax max_position_per_window ${cur_max_win:.2f} → ${new_max_win:.2f}  "
-                    f"(overall win_rate={overall_wr:.1%})")
-                if apply:
-                    cfg["max_position_per_window"] = new_max_win
-
-    # ── Rule 21: normal_position_pct_cap ─────────────────────────────────────
-    # Normal-regime trades: if win rate is poor, reduce the exposure cap.
-    # Uses |m5| between slow and active thresholds as proxy for normal regime.
-    _slow_mom  = cfg.get("slow_mom_threshold",   0.12)
-    _active_mom = cfg.get("active_mom_threshold", 0.25)
-    normal_trades = [t for t in resolved
-                     if _slow_mom <= abs(t.get("momentum_5m", 0) or 0) < _active_mom]
-    normal_wr, normal_n = _win_rate(normal_trades)
-    if normal_n >= MIN_SAMPLE and normal_wr is not None:
-        cur_norm_cap = cfg.get("normal_position_pct_cap", 0.90)
-        if normal_wr < TARGET_WIN_RATE - 0.08:
-            new_norm_cap = round(max(cur_norm_cap - 0.05, 0.50), 2)
-            if new_norm_cap != cur_norm_cap:
-                log(f"  [normal_sizing] normal_position_pct_cap {cur_norm_cap:.2f} → {new_norm_cap:.2f}  "
-                    f"(normal win_rate={normal_wr:.1%} n={normal_n})")
-                if apply:
-                    cfg["normal_position_pct_cap"] = new_norm_cap
-        elif normal_wr >= TARGET_WIN_RATE and cur_norm_cap < 1.0:
-            new_norm_cap = round(min(cur_norm_cap + 0.05, 1.0), 2)
-            if new_norm_cap != cur_norm_cap:
-                log(f"  [normal_sizing] relax normal_position_pct_cap {cur_norm_cap:.2f} → {new_norm_cap:.2f}  "
-                    f"(normal win_rate={normal_wr:.1%})")
-                if apply:
-                    cfg["normal_position_pct_cap"] = new_norm_cap
-
-    # ── Rule 22: active_position_pct_cap ─────────────────────────────────────
-    # Active-regime trades: reduce cap if strong-momentum trades are losing.
-    active_trades2 = [t for t in resolved
-                      if abs(t.get("momentum_5m", 0) or 0) >= _active_mom]
-    active_wr2, active_n2 = _win_rate(active_trades2)
-    if active_n2 >= MIN_SAMPLE and active_wr2 is not None:
-        cur_act_cap = cfg.get("active_position_pct_cap", 1.0)
-        if active_wr2 < TARGET_WIN_RATE - 0.08:
-            new_act_cap = round(max(cur_act_cap - 0.05, 0.55), 2)
-            if new_act_cap != cur_act_cap:
-                log(f"  [active_sizing] active_position_pct_cap {cur_act_cap:.2f} → {new_act_cap:.2f}  "
-                    f"(active win_rate={active_wr2:.1%} n={active_n2})")
-                if apply:
-                    cfg["active_position_pct_cap"] = new_act_cap
-        elif active_wr2 >= TARGET_WIN_RATE and cur_act_cap < 1.0:
-            new_act_cap = round(min(cur_act_cap + 0.05, 1.0), 2)
-            if new_act_cap != cur_act_cap:
-                log(f"  [active_sizing] relax active_position_pct_cap {cur_act_cap:.2f} → {new_act_cap:.2f}  "
-                    f"(active win_rate={active_wr2:.1%})")
-                if apply:
-                    cfg["active_position_pct_cap"] = new_act_cap
-
-    # ── Rule 23: momentum_agreement_min_1m (noise filter sensitivity) ─────────
-    # If overall win rate is poor and there are enough trades, tighten the noise
-    # filter to catch more turning-point disagreements earlier.
-    if n_total >= MIN_SAMPLE:
-        cur_min_m1 = cfg.get("momentum_agreement_min_1m", 0.05)
-        if overall_wr < TARGET_WIN_RATE - 0.07:
-            # Win rate below target — make the noise filter more aggressive
-            new_min_m1 = round(max(cur_min_m1 - 0.01, 0.02), 2)
-            if new_min_m1 != cur_min_m1:
-                log(f"  [noise_filter] momentum_agreement_min_1m {cur_min_m1:.2f} → {new_min_m1:.2f}  "
-                    f"(overall win_rate={overall_wr:.1%}, tightening noise gate)")
-                if apply:
-                    cfg["momentum_agreement_min_1m"] = new_min_m1
-        elif overall_wr >= TARGET_WIN_RATE and cur_min_m1 < 0.10:
-            # At target — relax noise filter slightly to let more trades through
-            new_min_m1 = round(min(cur_min_m1 + 0.01, 0.10), 2)
-            if new_min_m1 != cur_min_m1:
-                log(f"  [noise_filter] relax momentum_agreement_min_1m {cur_min_m1:.2f} → {new_min_m1:.2f}  "
-                    f"(overall win_rate={overall_wr:.1%})")
-                if apply:
-                    cfg["momentum_agreement_min_1m"] = new_min_m1
-
-    # ── Rules 24-28: Market session optimisation ──────────────────────────────
-    #
-    # London (07-13h UTC) and NY (13-21h UTC) drive the heaviest institutional
-    # BTC order flow.  Their overlap (13-16h) is the peak-liquidity window.
-    # Each session's threshold delta and position cap is tuned independently so
-    # the system automatically becomes more aggressive in high-win sessions and
-    # more defensive in low-win sessions.
-    #
-    # Threshold delta bounds:  -0.05 (very easy to enter) ↔ +0.04 (very strict)
-    # Position cap bounds:      0.55 (small size) ↔ 1.0 (full size)
-    # Minimum trades per session before touching parameters: MIN_SAMPLE
-    # Maximum step per run: 0.01 (threshold delta), 0.05 (position cap)
-    _s_rates = session_win_rates(resolved, cfg)
-
-    for sess in ("overlap", "london", "new_york", "asia", "off"):
-        sess_wr, sess_n = _s_rates.get(sess, (None, 0))
-        if sess_n < MIN_SAMPLE or sess_wr is None:
-            continue
-
-        delta_key = f"{sess}_threshold_delta"
-        cap_key   = f"{sess}_position_cap"
-        cur_delta = cfg.get(delta_key, _SESSION_DEFAULT_DELTAS.get(sess, 0.0))
-        cur_cap   = cfg.get(cap_key,   _SESSION_DEFAULT_CAPS.get(sess, 0.85))
-
-        # Threshold delta — move toward -0.05 for winning sessions, +0.04 for losing
-        if sess_wr >= TARGET_WIN_RATE + 0.05:
-            # Outperforming — lower the threshold more to capture more trades
-            new_delta = round(max(cur_delta - 0.01, -0.05), 2)
-            if new_delta != cur_delta:
-                log(f"  [session:{sess}] {delta_key} {cur_delta:+.2f} → {new_delta:+.2f}  "
-                    f"(win_rate={sess_wr:.1%} n={sess_n}, boosting session)")
-                if apply:
-                    cfg[delta_key] = new_delta
-        elif sess_wr < TARGET_WIN_RATE - 0.07:
-            # Underperforming — raise the threshold to be more selective
-            new_delta = round(min(cur_delta + 0.01, 0.04), 2)
-            if new_delta != cur_delta:
-                log(f"  [session:{sess}] {delta_key} {cur_delta:+.2f} → {new_delta:+.2f}  "
-                    f"(win_rate={sess_wr:.1%} n={sess_n}, tightening session)")
-                if apply:
-                    cfg[delta_key] = new_delta
-
-        # Position cap — expand when winning, contract when losing
-        if sess_wr >= TARGET_WIN_RATE + 0.05 and cur_cap < 1.0:
-            new_cap = round(min(cur_cap + 0.05, 1.0), 2)
-            if new_cap != cur_cap:
-                log(f"  [session:{sess}] {cap_key} {cur_cap:.2f} → {new_cap:.2f}  "
-                    f"(win_rate={sess_wr:.1%}, expanding position size)")
-                if apply:
-                    cfg[cap_key] = new_cap
-        elif sess_wr < TARGET_WIN_RATE - 0.07 and cur_cap > 0.55:
-            new_cap = round(max(cur_cap - 0.05, 0.55), 2)
-            if new_cap != cur_cap:
-                log(f"  [session:{sess}] {cap_key} {cur_cap:.2f} → {new_cap:.2f}  "
-                    f"(win_rate={sess_wr:.1%}, reducing position size)")
-                if apply:
-                    cfg[cap_key] = new_cap
-
-    # ── Rule 29: Block entire sessions with sustained losses ──────────────────
-    # If a session's win rate is persistently below 0.50 and there are enough
-    # resolved trades, extend blocked_hours to cover that session entirely.
-    # Never block overlap — it's the primary liquidity window.
-    # Always maintains a minimum of 8 tradeable hours per day.
-    ALWAYS_ALLOW = {"overlap"}
-    for sess in ("london", "new_york", "asia", "off"):
-        sess_wr, sess_n = _s_rates.get(sess, (None, 0))
-        if sess_n < MIN_SAMPLE * 3 or sess_wr is None:   # needs 3x sample for session block
-            continue
-        sess_hrs = _SESSION_HOURS_OPT.get(sess, [])
-        if sess_wr < 0.45:
-            # Extend blocked hours into this session
-            new_blocked = sorted(set(cfg.get("blocked_hours", [])) | set(sess_hrs))
-            # Guard: never block more than MAX_BLOCK_HOURS
-            if len(new_blocked) <= MAX_BLOCK_HOURS:
-                if new_blocked != cfg.get("blocked_hours", []):
-                    log(f"  [session:{sess}] extend blocked_hours to cover {sess_hrs}  "
-                        f"(session win_rate={sess_wr:.1%} n={sess_n})")
-                    if apply:
-                        cfg["blocked_hours"] = new_blocked
-        elif sess_wr >= 0.55:
-            # Session has recovered — unblock its hours
-            cur_blocked = set(cfg.get("blocked_hours", []))
-            unblocked = cur_blocked - set(sess_hrs)
-            if unblocked != cur_blocked:
-                log(f"  [session:{sess}] unblock {sess} hours (win_rate={sess_wr:.1%})")
-                if apply:
-                    cfg["blocked_hours"] = sorted(unblocked)
-
-    return changes
+    return deduped
 
 
 # ---------------------------------------------------------------------------
-# Report (human-readable summary, no changes)
+# Config I/O
 # ---------------------------------------------------------------------------
 
-def print_report(resolved):
-    overall_wr, n = _win_rate(resolved)
-    if overall_wr is None:
-        print("  No resolved trades to report.")
+def _load_config():
+    path = _DATA_CONFIG if _DATA_CONFIG.exists() else _IMAGE_CONFIG
+    try:
+        with open(path) as f:
+            return json.load(f), path
+    except Exception as e:
+        return {}, None
+
+
+def _save_config(config):
+    """Write to /data/config.json (persistent volume). Never touches /app/config.json."""
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(_DATA_CONFIG, "w") as f:
+        json.dump(config, f, indent=2)
+
+
+def _log_changes(changes, overall):
+    try:
+        with open(_OPT_LOG, "a") as f:
+            ts  = datetime.now(timezone.utc).isoformat()
+            wr  = overall["win_rate"]
+            pr  = overall["pnl_ratio"]
+            pnl = overall["total_pnl"]
+            f.write(
+                f"\n[{ts}] n={overall['n']} win_rate={wr:.1%} "
+                f"pnl_ratio={pr:.3f} total_pnl={pnl:+.2f}\n"
+            )
+            for param, value, reason in changes:
+                f.write(f"  {param} = {value!r}  ({reason})\n")
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def run_optimizer(apply=False, verbose=True):
+    """
+    Main entry point — called by scheduler.py every 30 minutes.
+
+    apply=True  → writes config.json and logs changes.
+    apply=False → analysis-only (dry run), prints proposed changes.
+    """
+    db_path = _find_db()
+    if not db_path:
+        if verbose:
+            print("[optimizer] No signal_research.db found — skipping")
         return
 
-    w = sum(1 for t in resolved if t.get("outcome") == "win")
-    l = sum(1 for t in resolved if t.get("outcome") == "loss")
-    avg_win  = sum(t["pnl"] for t in resolved if t.get("outcome") == "win" and t.get("pnl")) / max(w, 1)
-    avg_loss = sum(t["pnl"] for t in resolved if t.get("outcome") == "loss" and t.get("pnl")) / max(l, 1)
-    total_pnl = sum(t.get("pnl") or 0 for t in resolved)
+    trades = _load_trades(db_path)
+    if not trades:
+        if verbose:
+            print("[optimizer] No resolved trades in DB — skipping")
+        return
 
-    print(f"\n{'━'*58}")
-    print(f"  OPTIMIZER REPORT  —  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-    print(f"{'━'*58}")
-    print(f"  Resolved trades : {n}  (wins={w}  losses={l})")
-    print(f"  Win rate        : {overall_wr:.1%}  (target={TARGET_WIN_RATE:.0%})")
-    print(f"  Total PnL       : ${total_pnl:+.2f}")
-    print(f"  Avg win PnL     : ${avg_win:+.3f}")
-    print(f"  Avg loss PnL    : ${avg_loss:+.3f}")
-    if w > 0 and l > 0:
-        print(f"  Win/loss ratio  : {abs(avg_win/avg_loss):.2f}x")
+    config, cfg_path = _load_config()
+    if not config:
+        if verbose:
+            print("[optimizer] Could not load config — skipping")
+        return
 
-    print(f"\n  Win rate by hour (UTC):")
-    h_rates = hour_win_rates(resolved)
-    for h in sorted(h_rates):
-        wr_h, n_h = h_rates[h]
-        if n_h < 2:
-            continue
-        bar = "█" * int((wr_h or 0) * 20)
-        tag = " ← BLOCK" if (wr_h or 1) < 0.50 else (" ← BOOST" if (wr_h or 0) >= 0.72 else "")
-        print(f"    {h:02d}h  {bar:<20} {wr_h*100:5.1f}%  n={n_h}{tag}")
-
-    print(f"\n  Win rate by score bucket:")
-    buckets = [(0.60, 0.65), (0.65, 0.70), (0.70, 0.75), (0.75, 0.80), (0.80, 1.00)]
-    for lo, hi in buckets:
-        sub = [t for t in resolved if lo <= (t.get("score") or 0) < hi]
-        wr_s, n_s = _win_rate(sub)
-        if n_s > 0:
-            print(f"    score {lo:.2f}-{hi:.2f}  win_rate={wr_s*100:.1f}%  n={n_s}")
-
-    print(f"\n  Signal win-delta (positive = higher in wins):")
-    deltas = signal_win_deltas(resolved)
-    for field, d in sorted(deltas.items(), key=lambda x: -abs(x[1])):
-        bar = ("+" if d > 0 else "-") * min(20, int(abs(d) * 200))
-        print(f"    {field:<28} {d:+.4f}  {bar}")
-
-    print(f"\n  Momentum bands (|m5| range → win rate):")
-    bands = momentum_band_win_rates(resolved)
-    cur_mom_floor = _load_config().get("min_momentum_pct", 0.08)
-    for band, (bwr, bn) in bands.items():
-        if bn == 0:
-            continue
-        bar = "█" * int((bwr or 0) * 20) if bwr else ""
-        blocked_tag = "  [BELOW FLOOR — currently blocked]" if band == "0.04-0.08" and cur_mom_floor > 0.04 else ""
-        print(f"    |m5|={band:<10}  {bar:<20} {(bwr or 0)*100:5.1f}%  n={bn}{blocked_tag}")
-    best_mom, best_mom_wr = momentum_threshold_sweep(resolved)
-    if best_mom is not None:
-        print(f"    → sweep: best floor = {best_mom:.2f}%  (win_rate={best_mom_wr:.1%})")
-
-    print(f"\n  Time-remaining window analysis:")
-    time_bands = [
-        (120, 180, "120-180s"),
-        (180, 240, "180-240s"),
-        (240, 300, "240-300s"),
-        (300, 360, "300-360s"),
-        (360, 460, "360-460s"),
-    ]
-    for lo, hi, label in time_bands:
-        sub = [t for t in resolved if lo <= (t.get("time_remaining") or 0) < hi]
-        wr_t, n_t = _win_rate(sub)
-        if n_t > 0:
-            bar = "█" * int((wr_t or 0) * 20)
-            print(f"    {label}  {bar:<20} {(wr_t or 0)*100:5.1f}%  n={n_t}")
-    best_win = time_window_sweep(resolved)
-    if best_win:
-        opt_min, opt_max, opt_wr, opt_n = best_win
-        print(f"    → sweep: best window = [{opt_min}s–{opt_max}s]  (win_rate={opt_wr:.1%}  n={opt_n})")
-
-    print(f"\n  Session win rates:")
-    s_rates = session_win_rates(resolved)
-    for sess in ("overlap", "london", "new_york", "asia", "off"):
-        swr, sn = s_rates.get(sess, (None, 0))
-        if sn > 0 and swr is not None:
-            bar = "█" * int(swr * 20)
-            print(f"    {sess:<10}  {bar:<20} {swr*100:5.1f}%  n={sn}")
-
-    slow_wr, slow_n = slow_market_win_rate(resolved)
-    if slow_n > 0:
-        print(f"\n  Slow-regime trades: win_rate={slow_wr*100:.1f}%  n={slow_n}")
-
-    print(f"{'━'*58}\n")
-
-
-# ---------------------------------------------------------------------------
-# Main entry points
-# ---------------------------------------------------------------------------
-
-def run_optimizer(apply: bool = False, verbose: bool = True):
-    """Called from scheduler or directly."""
-    resolved = load_resolved_trades()
-    cfg = _load_config()
+    # ── Run all analyses ──────────────────────────────────────────────────────
+    overall       = analyze_pnl_structure(trades)
+    score_buckets = analyze_by_score_bucket(trades)
+    price_buckets = analyze_by_entry_price(trades)
+    hour_analysis = analyze_by_hour(trades)
+    side_analysis = analyze_by_side(trades)
 
     if verbose:
-        print_report(resolved)
+        wr  = overall["win_rate"]
+        pr  = overall["pnl_ratio"]
+        ev  = overall["expected_ev"]
+        pnl = overall["total_pnl"]
+        print(f"\n[optimizer] ── Resolved trades: {overall['n']} "
+              f"({overall['wins']}W / {overall['losses']}L)")
+        print(f"  Win rate:    {wr:.1%}   (target {TARGET_WIN_RATE:.0%})")
+        print(f"  P&L ratio:   {pr:.3f}   (avg win / avg loss — must be ≥1.0)")
+        print(f"  Expected EV: {ev:+.3f}  per trade")
+        print(f"  Total P&L:   {pnl:+.2f} USDC")
 
-    overall_wr, n_total = _win_rate(resolved)
-    changes = optimize(cfg, resolved, apply=apply, verbose=verbose)
+        if score_buckets:
+            print(f"\n  Score bucket win rates (YES-equivalent):")
+            for sb in score_buckets:
+                if sb["n"] >= MIN_TRADES_BUCKET:
+                    print(f"    {sb['bucket']}  wr={sb['win_rate']:.1%}  N={sb['n']}")
 
-    if apply and changes:
-        _save_config(cfg)
-        _append_log(changes)
+        if price_buckets:
+            print(f"\n  Entry price win rates:")
+            for pb in price_buckets:
+                if pb["n"] >= MIN_TRADES_BUCKET:
+                    avg_s = f"{pb['avg_pnl']:+.3f}" if pb["avg_pnl"] is not None else "n/a"
+                    print(f"    {pb['bucket']}  wr={pb['win_rate']:.1%}  N={pb['n']}  avg_pnl={avg_s}")
+
+        if hour_analysis:
+            print(f"\n  Hour win rates (UTC, min {MIN_TRADES_HOUR} trades):")
+            for h in sorted(hour_analysis.keys()):
+                hd = hour_analysis[h]
+                if hd["n"] >= MIN_TRADES_HOUR:
+                    blocked = h in config.get("blocked_hours", [])
+                    tag = " [BLOCKED]" if blocked else ""
+                    print(f"    {h:02d}h  wr={hd['win_rate']:.1%}  N={hd['n']}{tag}")
+
+        for label, stats in [("YES", side_analysis.get("yes")),
+                              ("NO",  side_analysis.get("no"))]:
+            if stats:
+                print(f"\n  {label} trades: {stats['n']}  "
+                      f"wr={stats['win_rate']:.1%}  "
+                      f"pnl_ratio={stats['pnl_ratio']:.3f}  "
+                      f"total={stats['total_pnl']:+.2f}")
+
+    # ── Generate adjustments ──────────────────────────────────────────────────
+    changes = compute_adjustments(
+        overall, score_buckets, price_buckets, hour_analysis, side_analysis, config
+    )
+
+    if not changes:
         if verbose:
-            print(f"\n  Config updated ({len(changes)} changes logged to optimizer.log)")
-        # Filter to only the actual change lines (skip start/end lines)
-        changes_applied = [c for c in changes if not c.strip().startswith("[optimizer]")]
-        _send_telegram_alert(cfg, changes_applied, overall_wr)
-        _write_history(overall_wr, n_total, changes_applied)
-    elif not apply and verbose:
-        print(f"\n  [dry-run] {len(changes)} potential changes — pass --apply to commit")
-
-    return cfg
-
-
-def main():
-    global TARGET_WIN_RATE  # must be declared before any use in this scope
-    parser = argparse.ArgumentParser(description="Pknwitq Signal Optimizer")
-    parser.add_argument("--apply",   action="store_true", help="Write changes to config.json")
-    parser.add_argument("--report",  action="store_true", help="Print report only, no changes")
-    parser.add_argument("--watch",   type=int, metavar="MINUTES",
-                        help="Run continuously every N minutes (implies --apply)")
-    parser.add_argument("--target",  type=float, default=TARGET_WIN_RATE,
-                        help=f"Win rate target (default: {TARGET_WIN_RATE:.0%})")
-    args = parser.parse_args()
-
-    TARGET_WIN_RATE = args.target
-
-    if args.report:
-        resolved = load_resolved_trades()
-        print_report(resolved)
+            print(f"\n[optimizer] No adjustments needed.")
         return
 
-    if args.watch:
-        interval = args.watch * 60
-        print(f"[watch] Running every {args.watch}min — apply=True")
-        while True:
-            try:
-                run_optimizer(apply=True, verbose=True)
-            except Exception as e:
-                print(f"[watch] ERROR: {e}")
-            print(f"[watch] sleeping {args.watch}min...")
-            time.sleep(interval)
-    else:
-        run_optimizer(apply=args.apply, verbose=True)
+    if verbose:
+        print(f"\n[optimizer] Proposed changes ({len(changes)}):")
+        for param, value, reason in changes:
+            cur = config.get(param, "—")
+            print(f"  {param}: {cur!r} → {value!r}")
+            print(f"    reason: {reason}")
 
+    if apply:
+        for param, value, _ in changes:
+            config[param] = value
+        _save_config(config)
+        _log_changes(changes, overall)
+        if verbose:
+            print(f"\n[optimizer] ✓ Config updated ({len(changes)} change(s))")
+    else:
+        if verbose:
+            print(f"\n[optimizer] Dry run — pass --apply to write changes")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Pknwitq Signal Optimizer")
+    parser.add_argument("--apply",  action="store_true",
+                        help="Apply changes to config.json")
+    parser.add_argument("--watch",  type=int, metavar="MINUTES",
+                        help="Re-run every N minutes (implies --apply)")
+    parser.add_argument("--report", action="store_true",
+                        help="Detailed report, no changes")
+    parser.add_argument("--quiet",  action="store_true",
+                        help="Minimal output")
+    args = parser.parse_args()
+
+    _apply   = args.apply or (args.watch is not None)
+    _verbose = not args.quiet
+
+    if args.watch:
+        print(f"[optimizer] Watching — running every {args.watch} minutes (Ctrl+C to stop)")
+        while True:
+            run_optimizer(apply=_apply, verbose=_verbose)
+            time.sleep(args.watch * 60)
+    else:
+        run_optimizer(apply=_apply, verbose=_verbose)

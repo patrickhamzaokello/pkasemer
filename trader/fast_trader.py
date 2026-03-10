@@ -1018,7 +1018,9 @@ def run_fast_market_strategy(
         return
 
     # ── NO side score cap ─────────────────────────────────────────────────────
-    MAX_NO_SCORE = cfg.get("max_no_score", 0.284)
+    # FIX: use raw_cfg (full config.json). cfg is schema-filtered and does NOT
+    # include max_no_score, so cfg.get(...) always returned the hardcoded 0.284.
+    MAX_NO_SCORE = raw_cfg.get("max_no_score", 0.30)
     if side == "no" and score > MAX_NO_SCORE:
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
@@ -1067,8 +1069,9 @@ def run_fast_market_strategy(
         win_profit   = (1 - entry_price) * (1 - fee_rate)
         breakeven_wr = entry_price / (win_profit + entry_price)
         implied_wr   = score if side == "yes" else (1 - score)
-        # Tighter edge requirement in slow markets: score must beat breakeven by 0.05
-        min_edge = 0.05 if regime == "slow" else 0.03
+        # Tighter edge requirement in slow markets. Config-overridable.
+        min_edge = raw_cfg.get("fee_ev_min_edge_slow", 0.05) if regime == "slow" \
+                   else raw_cfg.get("fee_ev_min_edge", 0.03)
         if implied_wr < breakeven_wr + min_edge:
             log(
                 f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "

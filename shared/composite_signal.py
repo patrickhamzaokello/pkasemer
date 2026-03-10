@@ -490,7 +490,7 @@ def apply_filters(cex, poly, config=None):
     poly_price = poly.get("poly_yes_price", 0.5) or 0.5
     cex_lag    = _calc_cex_poly_lag(cex, poly) or 0.0  # compute live; not in cex dict yet
 
-    MAX_ENTRY_YES    = (config or {}).get("max_entry_yes",    0.72)
+    MAX_ENTRY_YES    = (config or {}).get("max_entry_yes",    0.476)
     MIN_ENTRY_YES    = (config or {}).get("min_entry_yes",    0.35)
     MIN_ENTRY_NO     = (config or {}).get("min_entry_no",     0.28)
     MAX_ENTRY_NO     = (config or {}).get("max_entry_no",     0.65)
@@ -613,17 +613,10 @@ def _calc_cex_poly_lag(cex, poly):
     return m5 * (0.15 - max(-0.15, min(0.15, poly_div))) / 0.15
 
 
-def calculate_fee_adjusted_threshold(poly_price, base_threshold):
-    """
-    Polymarket 2026 dynamic fees can reach ~3.15% near 0.50.
-    Adjust the entry threshold so we only trade if edge > fee.
-    """
-    # Fee is highest at 0.50, tapering off as it nears 0 or 1
-    dist_from_pin = abs(poly_price - 0.5)
-    dynamic_fee_estimate = max(0.001, 0.0315 * (1 - (dist_from_pin / 0.5)))
-    
-    # Increase the required composite score to cover the fee
-    return base_threshold + (dynamic_fee_estimate * 2.0)
+# NOTE: fee-adjusted threshold logic is handled live in fast_trader.py via the
+# fee_rate_bps field returned by the Gamma API, not estimated here. The fee EV
+# check (fast_trader.py lines ~1066-1078) computes the actual breakeven win-rate
+# from the market's real fee_rate and blocks trades where edge < min_edge.
 
 # =============================================================================
 # Main Interface
