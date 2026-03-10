@@ -5,7 +5,7 @@
   "max_no_score": 0.30,
 
   "min_time_remaining": 120,
-  "max_time_remaining": 200,
+  "max_time_remaining": 275,
 
   "scheduler_interval": 20,
   "asset": "BTC",
