@@ -66,6 +66,10 @@
 
   "momentum_agreement_filter": true,
   "momentum_agreement_min_1m": 0.05,
+  "momentum_15m_agreement_filter": true,
+  "momentum_agreement_min_15m": 0.05,
+
+  "one_trade_per_window": true,
 
   "loss_cooldown_enabled": true,
   "loss_cooldown_streak": 3,

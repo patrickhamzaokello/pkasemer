@@ -514,7 +514,7 @@ def apply_filters(cex, poly, config=None):
     if volume_confidence and vol_ratio is not None and vol_ratio != 1.0 and vol_ratio < 0.3:
         return False, f"Volume too low ({vol_ratio:.2f}x avg)"
 
-    # Cross-timeframe momentum agreement filter
+    # Cross-timeframe momentum agreement filter (1m vs 5m)
     # When 1m momentum opposes 5m momentum and both are meaningful, the market
     # is at a likely reversal point. Trading into disagreement is noise, not edge.
     if (config or {}).get("momentum_agreement_filter", True):
@@ -526,6 +526,22 @@ def apply_filters(cex, poly, config=None):
             return False, (
                 f"timeframe disagreement: 1m={m1:+.3f}% opposes 5m={m5:+.3f}% "
                 f"— reversal risk, skipping"
+            )
+
+    # Multi-timeframe alignment: 15m vs 5m direction agreement
+    # A 5m move that runs against the 15m trend is a counter-trend spike —
+    # the kind that causes the composite score to flip direction mid-window.
+    # Only fires when both timeframes are above their minimum thresholds so
+    # near-flat readings don't generate false blocks.
+    if (config or {}).get("momentum_15m_agreement_filter", True):
+        m15 = cex.get("momentum_15m")
+        min_m15 = (config or {}).get("momentum_agreement_min_15m", 0.05)
+        if (m15 is not None and m5 is not None
+                and abs(m15) >= min_m15 and abs(m5) >= min_mom
+                and (m15 > 0) != (m5 > 0)):
+            return False, (
+                f"timeframe disagreement: 15m={m15:+.3f}% opposes 5m={m5:+.3f}% "
+                f"— counter-trend spike, skipping"
             )
 
     return True, "ok"

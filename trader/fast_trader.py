@@ -1130,6 +1130,22 @@ def run_fast_market_strategy(
         )
         return
 
+    # ── One-trade-per-window lock ─────────────────────────────────────────────
+    # Once a trade has been entered in a market, all subsequent cycles for that
+    # same window are blocked — regardless of direction. This prevents the system
+    # from flip-flopping (e.g. buying YES early, then NO mid-window when the
+    # composite score reverses). The lock is stored in daily_spend.json and
+    # resets automatically with the daily spend record at midnight UTC.
+    if raw_cfg.get("one_trade_per_window", True):
+        window_traded_key = f"window_{slug}_traded"
+        if daily_spend.get(window_traded_key):
+            log(
+                f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+                f"score={score:.3f} → {side.upper()} BLOCK: already traded this window "
+                f"(one_trade_per_window=true)"
+            )
+            return
+
     position_size = min(position_size, remaining_budget)
 
     if position_size < 0.50:
@@ -1219,6 +1235,10 @@ def run_fast_market_strategy(
         if import_error != "429_rate_limited":
             log(f"  ERROR import failed: {import_error}", force=True)
         return
+
+    # ── Mark window as traded (locks out subsequent cycles for this market) ──
+    daily_spend[f"window_{slug}_traded"] = True
+    _save_daily_spend(daily_spend)
 
     # ── Trade execution ───────────────────────────────────────────────────────
     if dry_run:
