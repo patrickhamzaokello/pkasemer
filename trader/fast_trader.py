@@ -65,9 +65,11 @@ except ImportError:
 TRADE_SOURCE = "sdk:pknwitq"
 SMART_SIZING_PCT = 0.05
 MIN_SHARES_PER_ORDER = 6.0
+# These are defaults; overridden each cycle from config.json
 MIN_SCORE_TO_IMPORT = 0.65
-IMPORT_DAILY_LIMIT = 1000           
-MIN_ENTRY_PRICE      = 0.35     # skip if market already priced in the move
+IMPORT_DAILY_LIMIT  = 1000
+MIN_ENTRY_PRICE     = 0.35
+MIN_LIQUIDITY_RATIO = 0.20
 
 
 ASSET_SYMBOLS = {
@@ -94,23 +96,21 @@ _CACHE_FILE = Path(_DATA_DIR) / "market_id_cache.json"
 # =============================================================================
 
 CONFIG_SCHEMA = {
-    "entry_threshold":    {"default": 0.05,      "env": "SIMMER_SPRINT_ENTRY",        "type": float},
-    "min_momentum_pct":   {"default": 0.15,      "env": "SIMMER_SPRINT_MOMENTUM",     "type": float},
-    "max_position":       {"default": 5.0,       "env": "SIMMER_SPRINT_MAX_POSITION", "type": float},
-    "signal_source":      {"default": "binance", "env": "SIMMER_SPRINT_SIGNAL",       "type": str},
-    "lookback_minutes":   {"default": 5,         "env": "SIMMER_SPRINT_LOOKBACK",     "type": int},
-    "min_time_remaining": {"default": 120,       "env": "SIMMER_SPRINT_MIN_TIME",     "type": int},
-    "max_time_remaining": {"default": 420,       "env": "SIMMER_SPRINT_MAX_TIME",     "type": int},
-    "asset":              {"default": "BTC",     "env": "SIMMER_SPRINT_ASSET",        "type": str},
-    "window":             {"default": "5m",      "env": "SIMMER_SPRINT_WINDOW",       "type": str},
-    "volume_confidence":  {"default": True,      "env": "SIMMER_SPRINT_VOL_CONF",     "type": bool},
-    "daily_budget":       {"default": 10.0,      "env": "SIMMER_SPRINT_DAILY_BUDGET", "type": float},
-    "composite_threshold":{"default": 0.60,      "env": "SIMMER_SPRINT_COMP_THRESH",  "type": float},
-    "max_position_per_window": {"default": 3.50,  "env": "SIMMER_MAX_PER_WINDOW",       "type": float},
-    "max_no_score":            {"default": 0.284, "env": "SIMMER_MAX_NO_SCORE",          "type": float},
-    "webhook_url":        {"default": "",         "env": "SIMMER_WEBHOOK_URL",          "type": str},
-    "telegram_bot_token": {"default": "",         "env": "TELEGRAM_BOT_TOKEN",          "type": str},
-    "telegram_chat_id":   {"default": "",         "env": "TELEGRAM_CHAT_ID",            "type": str},
+    "min_momentum_pct":        {"default": 0.15,      "env": "SIMMER_SPRINT_MOMENTUM",     "type": float},
+    "max_position":            {"default": 5.0,       "env": "SIMMER_SPRINT_MAX_POSITION", "type": float},
+    "signal_source":           {"default": "binance", "env": "SIMMER_SPRINT_SIGNAL",       "type": str},
+    "min_time_remaining":      {"default": 120,       "env": "SIMMER_SPRINT_MIN_TIME",     "type": int},
+    "max_time_remaining":      {"default": 420,       "env": "SIMMER_SPRINT_MAX_TIME",     "type": int},
+    "asset":                   {"default": "BTC",     "env": "SIMMER_SPRINT_ASSET",        "type": str},
+    "window":                  {"default": "5m",      "env": "SIMMER_SPRINT_WINDOW",       "type": str},
+    "volume_confidence":       {"default": True,      "env": "SIMMER_SPRINT_VOL_CONF",     "type": bool},
+    "daily_budget":            {"default": 10.0,      "env": "SIMMER_SPRINT_DAILY_BUDGET", "type": float},
+    "composite_threshold":     {"default": 0.60,      "env": "SIMMER_SPRINT_COMP_THRESH",  "type": float},
+    "max_position_per_window": {"default": 3.50,      "env": "SIMMER_MAX_PER_WINDOW",      "type": float},
+    "max_no_score":            {"default": 0.284,     "env": "SIMMER_MAX_NO_SCORE",        "type": float},
+    "webhook_url":             {"default": "",        "env": "SIMMER_WEBHOOK_URL",         "type": str},
+    "telegram_bot_token":      {"default": "",        "env": "TELEGRAM_BOT_TOKEN",         "type": str},
+    "telegram_chat_id":        {"default": "",        "env": "TELEGRAM_CHAT_ID",           "type": str},
 }
 
 
@@ -773,26 +773,29 @@ def run_fast_market_strategy(
 ):
     # ── Reload config each cycle so optimizer changes take effect immediately ─
     global cfg, raw_cfg
-    global ENTRY_THRESHOLD, MIN_MOMENTUM_PCT, MAX_POSITION_USD, SIGNAL_SOURCE
-    global LOOKBACK_MINUTES, MIN_TIME_REMAINING, MAX_TIME_REMAINING, ASSET
+    global MIN_MOMENTUM_PCT, MAX_POSITION_USD, SIGNAL_SOURCE
+    global MIN_TIME_REMAINING, MAX_TIME_REMAINING, ASSET
     global WINDOW, VOLUME_CONFIDENCE, DAILY_BUDGET
+    global MIN_SCORE_TO_IMPORT, IMPORT_DAILY_LIMIT, MIN_ENTRY_PRICE, MIN_LIQUIDITY_RATIO
     cfg = _load_config(CONFIG_SCHEMA, __file__)
     try:
         with open(_get_config_path(__file__)) as _f:
             raw_cfg = json.load(_f)
     except Exception:
         raw_cfg = cfg
-    ENTRY_THRESHOLD    = cfg["entry_threshold"]
-    MIN_MOMENTUM_PCT   = cfg["min_momentum_pct"]
-    MAX_POSITION_USD   = cfg["max_position"]
-    SIGNAL_SOURCE      = cfg["signal_source"]
-    LOOKBACK_MINUTES   = cfg["lookback_minutes"]
-    MIN_TIME_REMAINING = cfg["min_time_remaining"]
-    MAX_TIME_REMAINING = cfg.get("max_time_remaining", 420)
-    ASSET              = cfg["asset"].upper()
-    WINDOW             = cfg["window"]
-    VOLUME_CONFIDENCE  = cfg["volume_confidence"]
-    DAILY_BUDGET       = cfg["daily_budget"]
+    MIN_MOMENTUM_PCT    = cfg["min_momentum_pct"]
+    MAX_POSITION_USD    = cfg["max_position"]
+    SIGNAL_SOURCE       = cfg["signal_source"]
+    MIN_TIME_REMAINING  = cfg["min_time_remaining"]
+    MAX_TIME_REMAINING  = cfg.get("max_time_remaining", 420)
+    ASSET               = cfg["asset"].upper()
+    WINDOW              = cfg["window"]
+    VOLUME_CONFIDENCE   = cfg["volume_confidence"]
+    DAILY_BUDGET        = cfg["daily_budget"]
+    MIN_SCORE_TO_IMPORT = raw_cfg.get("min_score_to_import", 0.65)
+    IMPORT_DAILY_LIMIT  = raw_cfg.get("daily_import_limit", 1000)
+    MIN_ENTRY_PRICE     = raw_cfg.get("min_entry_price", 0.35)
+    MIN_LIQUIDITY_RATIO = raw_cfg.get("min_liquidity_ratio", 0.20)
 
     now_str  = datetime.now(timezone.utc).strftime("%H:%M:%S")
     mode_tag = "[DRY]" if dry_run else "[LIVE]"
@@ -965,6 +968,19 @@ def run_fast_market_strategy(
     side         = signal["side"]
     position_pct = signal["position_pct"]
 
+    # ── YES confidence gate ───────────────────────────────────────────────────
+    # min_yes_conf: minimum confidence required to enter a YES trade.
+    # Confidence = how far score is from 0.5 (0 = coin-flip, 1 = max certainty).
+    # Protects against low-conviction YES trades in noisy markets.
+    min_yes_conf = raw_cfg.get("min_yes_conf", 0.0)
+    if side == "yes" and min_yes_conf > 0 and confidence < min_yes_conf:
+        log(
+            f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+            f"score={score:.3f} conf={confidence:.3f} → YES BLOCK: "
+            f"confidence {confidence:.3f} < min_yes_conf {min_yes_conf:.3f}"
+        )
+        return
+
     # ── NO side score cap ─────────────────────────────────────────────────────
     MAX_NO_SCORE = cfg.get("max_no_score", 0.284)
     if side == "no" and score > MAX_NO_SCORE:
@@ -1051,6 +1067,10 @@ def run_fast_market_strategy(
 
     # ── Position sizing ───────────────────────────────────────────────────────
     position_size    = calculate_position_size(MAX_POSITION_USD * position_pct, smart_sizing)
+    # max_no_size: hard cap on NO-side trade size to limit downside on contrarian bets
+    if side == "no":
+        max_no_size = raw_cfg.get("max_no_size", MAX_POSITION_USD)
+        position_size = min(position_size, max_no_size)
     remaining_budget = DAILY_BUDGET - daily_spend["spent"]
 
     if remaining_budget <= 0:

@@ -43,7 +43,15 @@ from fast_trader import backfill_trade_outcomes, run_redeemer
 # ─────────────────────────────────────────────
 
 MODE     = os.environ.get("PKNWITQ_MODE", "collect").lower()
-INTERVAL = int(os.environ.get("PKNWITQ_INTERVAL", "20"))
+# INTERVAL: env var wins; fall back to config.json scheduler_interval; default 20s
+def _read_interval_from_config(default=20):
+    try:
+        import json
+        cfg_path = os.path.join(os.path.dirname(__file__), "config.json")
+        return int(json.load(open(cfg_path)).get("scheduler_interval", default))
+    except Exception:
+        return default
+INTERVAL = int(os.environ.get("PKNWITQ_INTERVAL", _read_interval_from_config()))
 ASSET    = os.environ.get("PKNWITQ_ASSET", "BTC").upper()
 WINDOW   = os.environ.get("PKNWITQ_WINDOW", "5m")
 DB_PATH  = os.environ.get("DB_PATH", "/data/signal_research.db")

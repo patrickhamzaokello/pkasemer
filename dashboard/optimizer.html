@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pknwitq — Optimizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0a; --surface: #111111; --border: #1e1e1e; --border-bright: #2a2a2a;
+    --text: #d4d4d4; --text-dim: #666666; --text-bright: #f0f0f0;
+    --green: #22c55e; --green-dim: #16a34a; --red: #ef4444; --amber: #f59e0b;
+    --blue: #3b82f6; --cyan: #06b6d4; --purple: #a855f7;
+    --mono: 'JetBrains Mono', monospace; --display: 'Syne', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 12px; min-height: 100vh; overflow-x: hidden; }
+  body::before { content: ''; position: fixed; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px); pointer-events: none; z-index: 1000; }
+
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 100; }
+  .logo { font-family: var(--display); font-size: 18px; font-weight: 800; letter-spacing: -0.5px; color: var(--text-bright); }
+  .logo span { color: var(--green); }
+  .header-right { display: flex; align-items: center; gap: 14px; }
+
+  .kill-btn { background: none; border: 1px solid var(--red); color: var(--red); padding: 4px 12px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px; cursor: pointer; transition: all 0.15s; }
+  .kill-btn:hover { background: rgba(255,61,87,0.12); }
+  .kill-btn.armed { background: var(--red); color: #080b0f; font-weight: 700; }
+
+  .nav { display: flex; gap: 2px; padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 46px; z-index: 90; }
+  .nav-link { padding: 8px 16px; font-size: 11px; letter-spacing: 0.5px; color: var(--text-dim); text-decoration: none; border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s; margin-bottom: -1px; }
+  .nav-link:hover { color: var(--text-bright); }
+  .nav-link.active { color: var(--text-bright); border-bottom-color: var(--purple); }
+  .nav-logout { margin-left: auto; background: none; border: none; font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px; color: var(--text-dim); cursor: pointer; padding: 8px 4px; transition: color 0.15s; }
+  .nav-logout:hover { color: var(--red); }
+
+  .deploy-bar { display: flex; align-items: center; gap: 6px; padding: 4px 20px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 10px; color: var(--text-dim); letter-spacing: 0.08em; font-family: var(--mono); position: sticky; top: 88px; z-index: 80; }
+  .deploy-label { color: var(--text-dim); font-size: 9px; letter-spacing: 0.12em; font-weight: 500; }
+  .deploy-sep { color: var(--border-bright); }
+  #deploy-count { color: var(--blue); font-weight: 600; }
+  #deploy-ts { color: var(--text); }
+
+  .page { max-width: 1100px; margin: 0 auto; padding: 24px 20px; display: flex; flex-direction: column; gap: 20px; }
+
+  .panel { background: var(--surface); border: 1px solid var(--border); overflow: hidden; }
+  .panel-header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .panel-title { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+
+  /* Summary bar */
+  .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 14px 16px; }
+  .dig-cell { text-align: center; padding: 12px 10px; background: var(--bg); border: 1px solid var(--border); }
+  .dig-label { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
+  .dig-val { font-family: var(--display); font-size: 22px; font-weight: 700; color: var(--text-bright); }
+  .dig-sub { font-size: 9px; color: var(--text-dim); margin-top: 3px; }
+
+  /* Chart */
+  .chart-wrap { padding: 16px; position: relative; }
+  #param-canvas { display: block; width: 100%; height: 220px; }
+  .chart-legend { display: flex; gap: 16px; padding: 0 16px 12px; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-dim); }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* Heatmap */
+  .heatmap-wrap { padding: 16px; }
+  .heatmap-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px; }
+  .hour-cell { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; border: 1px solid var(--border); cursor: default; border-radius: 2px; transition: opacity 0.15s; }
+  .hour-cell.normal { background: rgba(34,197,94,0.08); color: var(--text-dim); }
+  .hour-cell.blocked { background: rgba(239,68,68,0.25); color: var(--red); border-color: var(--red); }
+  .hour-cell.boosted { background: rgba(245,158,11,0.25); color: var(--amber); border-color: var(--amber); }
+  .heatmap-legend { display: flex; gap: 14px; margin-top: 10px; font-size: 10px; color: var(--text-dim); }
+  .hm-legend-item { display: flex; align-items: center; gap: 5px; }
+  .hm-dot { width: 10px; height: 10px; border-radius: 2px; border: 1px solid; }
+  .hm-dot.blocked { background: rgba(239,68,68,0.25); border-color: var(--red); }
+  .hm-dot.boosted { background: rgba(245,158,11,0.25); border-color: var(--amber); }
+  .hm-dot.normal { background: rgba(34,197,94,0.08); border-color: var(--green-dim); }
+
+  /* Feed */
+  .feed { padding: 0; max-height: 600px; overflow-y: auto; }
+  .run-entry { border-bottom: 1px solid var(--border); }
+  .run-header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; cursor: pointer; user-select: none; }
+  .run-header:hover { background: rgba(255,255,255,0.02); }
+  .run-ts { color: var(--text-dim); font-size: 10px; flex: 0 0 150px; }
+  .run-wr { font-family: var(--display); font-size: 14px; font-weight: 700; flex: 0 0 52px; }
+  .run-n { font-size: 10px; color: var(--text-dim); flex: 0 0 90px; }
+  .run-arrow { margin-left: auto; color: var(--text-dim); font-size: 10px; transition: transform 0.15s; }
+  .run-changes { display: none; padding: 8px 16px 12px 32px; border-top: 1px solid var(--border); background: rgba(0,0,0,0.2); }
+  .run-entry.open .run-changes { display: block; }
+  .run-entry.open .run-arrow { transform: rotate(180deg); }
+  .change-line { font-size: 11px; padding: 3px 0; display: flex; align-items: center; gap: 6px; }
+  .change-cat { font-size: 9px; letter-spacing: 1px; padding: 1px 4px; border-radius: 2px; }
+  .cat-threshold { background: rgba(6,182,212,0.15); color: var(--cyan); }
+  .cat-hours     { background: rgba(245,158,11,0.15); color: var(--amber); }
+  .cat-momentum  { background: rgba(34,197,94,0.15); color: var(--green); }
+  .cat-weights   { background: rgba(59,130,246,0.15); color: var(--blue); }
+  .cat-no        { background: rgba(239,68,68,0.15); color: var(--red); }
+  .cat-slow      { background: rgba(168,85,247,0.15); color: var(--purple); }
+  .cat-other     { background: rgba(100,100,100,0.15); color: var(--text-dim); }
+
+  .empty-state { padding: 40px 20px; text-align: center; color: var(--text-dim); font-size: 11px; }
+
+  ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: var(--bg); } ::-webkit-scrollbar-thumb { background: var(--border-bright); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">PKN<span>WITQ</span> <span style="font-size:11px;color:var(--text-dim);font-family:var(--mono);font-weight:400">/ optimizer</span></div>
+  <div class="header-right">
+    <span style="font-size:10px;color:var(--text-dim)" id="hdr-time">—</span>
+    <button class="kill-btn" id="kill-btn" onclick="toggleKillSwitch()">⏹ HALT TRADING</button>
+  </div>
+</div>
+
+<nav class="nav">
+  <a href="index.html" class="nav-link">Monitor</a>
+  <a href="dry-run.html" class="nav-link">Signal Lab</a>
+  <a href="live.html" class="nav-link">Live Trading</a>
+  <a href="config.html" class="nav-link">Config</a>
+  <a href="optimizer.html" class="nav-link active">Optimizer</a>
+  <button class="nav-logout" onclick="logout()">↪ logout</button>
+</nav>
+
+<div class="deploy-bar" id="deploy-bar">
+  <span class="deploy-label">BUILD</span>
+  <span id="deploy-count">#—</span>
+  <span class="deploy-sep">·</span>
+  <span class="deploy-label">DEPLOYED</span>
+  <span id="deploy-ts">—</span>
+</div>
+
+<div class="page">
+
+  <!-- Summary bar -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Optimizer Summary</div>
+      <div style="font-size:10px;color:var(--text-dim)" id="last-refresh">—</div>
+    </div>
+    <div class="summary-grid">
+      <div class="dig-cell">
+        <div class="dig-label">Total Runs</div>
+        <div class="dig-val" id="stat-runs">—</div>
+        <div class="dig-sub">optimizer cycles</div>
+      </div>
+      <div class="dig-cell">
+        <div class="dig-label">Total Changes Applied</div>
+        <div class="dig-val" id="stat-changes">—</div>
+        <div class="dig-sub">config adjustments</div>
+      </div>
+      <div class="dig-cell">
+        <div class="dig-label">Last Run</div>
+        <div class="dig-val" id="stat-last" style="font-size:14px">—</div>
+        <div class="dig-sub" id="stat-last-sub">—</div>
+      </div>
+      <div class="dig-cell">
+        <div class="dig-label">Current Win Rate</div>
+        <div class="dig-val" id="stat-wr">—</div>
+        <div class="dig-sub">most recent run</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Key Parameter Timeline -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Key Parameter Timeline</div>
+      <div style="font-size:10px;color:var(--text-dim)">composite thresholds + momentum</div>
+    </div>
+    <div class="chart-legend">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>composite_threshold</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--cyan)"></div>slow_composite_threshold</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>min_momentum_pct</div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="param-canvas"></canvas>
+    </div>
+  </div>
+
+  <!-- Blocked Hours Heatmap -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Hour Activity Heatmap</div>
+      <div style="font-size:10px;color:var(--text-dim)">current config state</div>
+    </div>
+    <div class="heatmap-wrap">
+      <div class="heatmap-grid" id="heatmap-grid"></div>
+      <div class="heatmap-legend">
+        <div class="hm-legend-item"><div class="hm-dot blocked"></div>blocked</div>
+        <div class="hm-legend-item"><div class="hm-dot boosted"></div>boosted</div>
+        <div class="hm-legend-item"><div class="hm-dot normal"></div>normal</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Change History Feed -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Change History</div>
+      <div style="font-size:10px;color:var(--text-dim)" id="feed-count">—</div>
+    </div>
+    <div class="feed" id="history-feed">
+      <div class="empty-state">Loading optimizer history…</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = '';
+let _historyEntries = [];
+let _cfg = {};
+let _ksActive = false;
+let _chartData = { composite: [], slow: [], momentum: [] };
+
+// ── Utilities ───────────────────────────────────────────────
+function fmtTs(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+function fmtWr(wr) {
+  if (wr == null) return '—';
+  return (wr * 100).toFixed(1) + '%';
+}
+function wrColor(wr) {
+  if (wr == null) return 'var(--text-bright)';
+  if (wr >= 0.60) return 'var(--green)';
+  if (wr >= 0.50) return 'var(--amber)';
+  return 'var(--red)';
+}
+function catClass(cat) {
+  if (!cat) return 'cat-other';
+  const c = cat.toLowerCase();
+  if (c === 'threshold' || c.includes('threshold')) return 'cat-threshold';
+  if (c === 'hours') return 'cat-hours';
+  if (c === 'momentum') return 'cat-momentum';
+  if (c === 'weights') return 'cat-weights';
+  if (c === 'no_score' || c === 'no_size') return 'cat-no';
+  if (c.startsWith('slow')) return 'cat-slow';
+  return 'cat-other';
+}
+
+// ── Kill switch ─────────────────────────────────────────────
+async function fetchKillSwitch() {
+  try {
+    const d = await fetch(`${API}/api/kill-switch`).then(r => r.json());
+    _ksActive = d.active;
+    updateKsUI();
+  } catch(e) {}
+}
+function updateKsUI() {
+  const btn = document.getElementById('kill-btn');
+  if (_ksActive) { btn.textContent = '⏹ TRADING HALTED'; btn.classList.add('armed'); }
+  else { btn.textContent = '⏹ HALT TRADING'; btn.classList.remove('armed'); }
+}
+async function toggleKillSwitch() {
+  try {
+    const d = await fetch(`${API}/api/kill-switch`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({active: !_ksActive})
+    }).then(r => r.json());
+    _ksActive = d.active;
+    updateKsUI();
+  } catch(e) {}
+}
+
+// ── History load ────────────────────────────────────────────
+async function loadHistory() {
+  try {
+    const d = await fetch(`${API}/api/optimizer-history?limit=200`).then(r => r.json());
+    _historyEntries = (d.entries || []).slice().reverse(); // newest first
+    renderSummary();
+    renderFeed();
+    buildChartData();
+    drawChart();
+  } catch(e) {
+    document.getElementById('history-feed').innerHTML =
+      '<div class="empty-state">Failed to load history: ' + e.message + '</div>';
+  }
+  document.getElementById('last-refresh').textContent =
+    'updated ' + new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12: false});
+}
+
+// ── Config load ─────────────────────────────────────────────
+async function loadConfig() {
+  try {
+    _cfg = await fetch(`${API}/api/config`).then(r => r.json());
+    renderHeatmap();
+  } catch(e) {}
+}
+
+// ── Summary ─────────────────────────────────────────────────
+function renderSummary() {
+  const entries = _historyEntries; // newest first
+  const totalRuns = entries.length;
+  const totalChanges = entries.reduce((s, e) => s + (e.changes ? e.changes.length : 0), 0);
+  const lastEntry = entries[0] || null;
+  const lastWr = lastEntry ? lastEntry.win_rate : null;
+  const lastTs = lastEntry ? lastEntry.ts : null;
+
+  document.getElementById('stat-runs').textContent = totalRuns || '—';
+  document.getElementById('stat-changes').textContent = totalChanges || '—';
+
+  const lastEl = document.getElementById('stat-last');
+  const lastSubEl = document.getElementById('stat-last-sub');
+  if (lastTs) {
+    const d = new Date(lastTs);
+    lastEl.textContent = d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:false});
+    lastSubEl.textContent = d.toLocaleDateString('en-US', {month:'short', day:'numeric'});
+  } else {
+    lastEl.textContent = '—';
+    lastSubEl.textContent = 'never';
+  }
+
+  const wrEl = document.getElementById('stat-wr');
+  wrEl.textContent = fmtWr(lastWr);
+  wrEl.style.color = wrColor(lastWr);
+}
+
+// ── Feed ────────────────────────────────────────────────────
+function renderFeed() {
+  const feed = document.getElementById('history-feed');
+  const entries = _historyEntries;
+  document.getElementById('feed-count').textContent = entries.length + ' runs';
+
+  if (!entries.length) {
+    feed.innerHTML = '<div class="empty-state">No optimizer history yet. Run the optimizer with --apply to generate data.</div>';
+    return;
+  }
+
+  feed.innerHTML = entries.map((entry, idx) => {
+    const n = entry.changes ? entry.changes.length : 0;
+    const wr = entry.win_rate;
+    const changesHtml = (entry.changes || []).map(ch => {
+      const cls = catClass(ch.category);
+      const label = ch.category || '?';
+      return `<div class="change-line"><span class="change-cat ${cls}">${label}</span><span style="color:var(--text)">${ch.raw || ''}</span></div>`;
+    }).join('');
+
+    return `<div class="run-entry" id="run-${idx}">
+      <div class="run-header" onclick="toggleRun(${idx})">
+        <span class="run-ts">${fmtTs(entry.ts)}</span>
+        <span class="run-wr" style="color:${wrColor(wr)}">${fmtWr(wr)}</span>
+        <span class="run-n">${n} change${n !== 1 ? 's' : ''}</span>
+        <span class="run-arrow">▼</span>
+      </div>
+      <div class="run-changes">${changesHtml || '<span style="color:var(--text-dim);font-size:11px">No individual change lines recorded.</span>'}</div>
+    </div>`;
+  }).join('');
+}
+
+function toggleRun(idx) {
+  const el = document.getElementById('run-' + idx);
+  if (el) el.classList.toggle('open');
+}
+
+// ── Heatmap ─────────────────────────────────────────────────
+function renderHeatmap() {
+  const grid = document.getElementById('heatmap-grid');
+  const blocked = new Set(_cfg.blocked_hours || []);
+  const boosted = new Set(Object.keys(_cfg.boosted_hours || {}).map(Number));
+
+  grid.innerHTML = Array.from({length: 24}, (_, h) => {
+    let cls = 'normal', title = `Hour ${h}:00 UTC — normal`;
+    if (blocked.has(h)) { cls = 'blocked'; title = `Hour ${h}:00 UTC — BLOCKED`; }
+    else if (boosted.has(h)) { cls = 'boosted'; title = `Hour ${h}:00 UTC — BOOSTED`; }
+    return `<div class="hour-cell ${cls}" title="${title}">${h}</div>`;
+  }).join('');
+}
+
+// ── Chart ───────────────────────────────────────────────────
+function buildChartData() {
+  // Walk entries oldest-first to build timeline
+  const oldest = _historyEntries.slice().reverse();
+  _chartData = { composite: [], slow: [], momentum: [] };
+
+  // We need to reconstruct param values from change history.
+  // We extract from change raw text if possible, otherwise track running value.
+  // Use a simple approach: collect ts + any value we can extract.
+  // If a run had no change for that param, we carry forward the last known value.
+
+  let curComposite = null, curSlow = null, curMomentum = null;
+
+  for (const entry of oldest) {
+    const ts = new Date(entry.ts).getTime();
+    for (const ch of (entry.changes || [])) {
+      const raw = ch.raw || '';
+      const cat = (ch.category || '').toLowerCase();
+      // Try to extract "→ 0.XX" pattern
+      const toMatch = raw.match(/→\s*([\d.]+)/);
+      if (!toMatch) continue;
+      const val = parseFloat(toMatch[1]);
+      if (isNaN(val)) continue;
+
+      if (cat === 'threshold' && raw.toLowerCase().includes('composite_threshold') && !raw.toLowerCase().includes('slow') && !raw.toLowerCase().includes('active')) {
+        curComposite = val;
+      } else if (cat === 'slow' || raw.toLowerCase().includes('slow_composite')) {
+        curSlow = val;
+      } else if (cat === 'momentum' || raw.toLowerCase().includes('min_momentum')) {
+        curMomentum = val;
+      }
+    }
+    if (curComposite !== null) _chartData.composite.push({ ts, val: curComposite });
+    if (curSlow !== null) _chartData.slow.push({ ts, val: curSlow });
+    if (curMomentum !== null) _chartData.momentum.push({ ts, val: curMomentum });
+  }
+}
+
+function drawChart() {
+  const canvas = document.getElementById('param-canvas');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  const PAD = { top: 10, right: 20, bottom: 30, left: 50 };
+  const cW = W - PAD.left - PAD.right;
+  const cH = H - PAD.top - PAD.bottom;
+
+  ctx.clearRect(0, 0, W, H);
+
+  const allPoints = [
+    ..._chartData.composite,
+    ..._chartData.slow,
+    ..._chartData.momentum,
+  ];
+
+  if (!allPoints.length) {
+    ctx.fillStyle = '#444';
+    ctx.font = '11px JetBrains Mono, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('No parameter change data yet', W / 2, H / 2);
+    return;
+  }
+
+  const minTs = Math.min(...allPoints.map(p => p.ts));
+  const maxTs = Math.max(...allPoints.map(p => p.ts));
+  const minVal = Math.min(...allPoints.map(p => p.val)) - 0.02;
+  const maxVal = Math.max(...allPoints.map(p => p.val)) + 0.02;
+  const tsRange = maxTs - minTs || 1;
+  const valRange = maxVal - minVal || 0.1;
+
+  function toX(ts) { return PAD.left + ((ts - minTs) / tsRange) * cW; }
+  function toY(val) { return PAD.top + (1 - (val - minVal) / valRange) * cH; }
+
+  // Grid lines
+  ctx.strokeStyle = '#1e1e1e';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = PAD.top + (i / 4) * cH;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + cW, y); ctx.stroke();
+    const v = maxVal - (i / 4) * valRange;
+    ctx.fillStyle = '#555';
+    ctx.font = '9px JetBrains Mono, monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(v.toFixed(2), PAD.left - 4, y + 3);
+  }
+
+  // Series
+  const series = [
+    { data: _chartData.composite, color: '#22c55e' },
+    { data: _chartData.slow,      color: '#06b6d4' },
+    { data: _chartData.momentum,  color: '#f59e0b' },
+  ];
+
+  for (const { data, color } of series) {
+    if (!data.length) continue;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    data.forEach((pt, i) => {
+      const x = toX(pt.ts), y = toY(pt.val);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    // Dots
+    ctx.fillStyle = color;
+    for (const pt of data) {
+      ctx.beginPath();
+      ctx.arc(toX(pt.ts), toY(pt.val), 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // X-axis labels (2-3 timestamps)
+  ctx.fillStyle = '#555';
+  ctx.font = '9px JetBrains Mono, monospace';
+  ctx.textAlign = 'center';
+  const ticks = [minTs, (minTs + maxTs) / 2, maxTs];
+  for (const t of ticks) {
+    const x = toX(t);
+    const d = new Date(t);
+    const label = d.toLocaleDateString('en-US', {month:'short', day:'numeric'});
+    ctx.fillText(label, x, PAD.top + cH + 18);
+  }
+}
+
+// ── Auth ────────────────────────────────────────────────────
+async function logout() {
+  await fetch('/auth/logout', { method: 'POST' });
+  window.location.href = '/login.html';
+}
+
+// ── Clock ───────────────────────────────────────────────────
+function updateClock() {
+  const el = document.getElementById('hdr-time');
+  if (el) el.textContent = new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}) + ' UTC';
+}
+
+// ── Deploy tracker ──────────────────────────────────────────
+(async () => {
+  try {
+    const d = await fetch(`${API}/api/import-status`).then(r => r.json());
+    if (d.build_number) document.getElementById('deploy-count').textContent = '#' + d.build_number;
+    if (d.deployed_at) document.getElementById('deploy-ts').textContent = d.deployed_at;
+  } catch(e) {}
+})();
+
+// ── Init ────────────────────────────────────────────────────
+async function refresh() {
+  await Promise.all([loadHistory(), loadConfig()]);
+}
+
+refresh();
+fetchKillSwitch();
+setInterval(updateClock, 1000);
+setInterval(refresh, 60000);
+updateClock();
+
+// Redraw chart on resize
+window.addEventListener('resize', () => {
+  buildChartData();
+  drawChart();
+});
+</script>
+</body>
+</html>

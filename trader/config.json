@@ -1,5 +1,4 @@
 {
-  "entry_threshold": 0.035,
   "min_momentum_pct": 0.08,
   "max_position": 3.5,
   "max_position_per_window": 4.0,
@@ -21,8 +20,11 @@
   "min_entry_no": 0.28,
   "max_entry_no": 0.65,
   "min_lag_override": 0.12,
-  "min_yes_conf": 0.45,
+  "min_yes_conf": 0.0,
   "max_no_size": 2.50,
+  "min_entry_price": 0.35,
+  "min_liquidity_ratio": 0.20,
+  "min_score_to_import": 0.65,
   "webhook_url": "",
   "signal_weights": {
     "vol_adjusted_momentum": 0.28,

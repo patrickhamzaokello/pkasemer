@@ -86,6 +86,81 @@ def _append_log(lines: list[str]):
             f.write(f"{ts}  {line}\n")
 
 
+def _send_telegram_alert(cfg, changes_applied, overall_wr):
+    """Send a Telegram message summarising optimizer changes. Non-fatal."""
+    try:
+        token = cfg.get("telegram_bot_token", "")
+        chat_id = cfg.get("telegram_chat_id", "")
+        if not token or not chat_id:
+            return
+
+        wr_pct = f"{overall_wr * 100:.1f}%" if overall_wr is not None else "n/a"
+        target_pct = f"{TARGET_WIN_RATE * 100:.0f}%"
+        n_changes = len(changes_applied)
+
+        lines_html = ""
+        for line in changes_applied[:8]:
+            lines_html += f"\n• {line.strip()}"
+
+        text = (
+            f"⚙️ <b>OPTIMIZER UPDATE</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Win rate: {wr_pct}  →  target {target_pct}\n"
+            f"Changes: {n_changes}"
+            + (f"\n{lines_html}" if lines_html else "")
+        )
+
+        import urllib.request as _urllib_req
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = json.dumps({
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+        }).encode()
+        req = _urllib_req.Request(url, data=payload,
+                                  headers={"Content-Type": "application/json"})
+        with _urllib_req.urlopen(req, timeout=10):
+            pass
+    except Exception:
+        pass
+
+
+def _write_history(win_rate, n_resolved, changes_applied):
+    """Append an optimizer run entry to optimizer_history.json. Non-fatal."""
+    try:
+        history_path = _DATA_DIR / "optimizer_history.json"
+        if history_path.exists():
+            try:
+                entries = json.loads(history_path.read_text())
+            except Exception:
+                entries = []
+        else:
+            entries = []
+
+        parsed_changes = []
+        for raw in changes_applied:
+            raw_stripped = raw.strip()
+            category = ""
+            cat_match = raw_stripped.find("[")
+            cat_end = raw_stripped.find("]")
+            if cat_match != -1 and cat_end != -1:
+                category = raw_stripped[cat_match + 1:cat_end]
+            parsed_changes.append({"category": category, "raw": raw_stripped})
+
+        entry = {
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "win_rate": round(win_rate, 4) if win_rate is not None else None,
+            "n": n_resolved,
+            "changes": parsed_changes,
+        }
+        entries.append(entry)
+        # Keep last 500 entries
+        entries = entries[-500:]
+        history_path.write_text(json.dumps(entries, indent=2))
+    except Exception:
+        pass
+
+
 def _load_trades_json():
     if not _TRADE_LOG.exists():
         return []
@@ -579,7 +654,6 @@ def optimize(cfg: dict, resolved: list, apply: bool, verbose: bool = True) -> li
                 cfg["slow_min_payout_ratio"] = new_slow_pay
 
     # ── Rule 13: slow_position_pct_cap ───────────────────────────────────────
-    # Shrink position size in slow markets if they're losing; grow if winning.
     if slow_n2 >= MIN_SAMPLE and slow_wr2 is not None:
         cur_slow_cap = cfg.get("slow_position_pct_cap", 0.70)
         if slow_wr2 < TARGET_WIN_RATE - 0.10:
@@ -596,6 +670,214 @@ def optimize(cfg: dict, resolved: list, apply: bool, verbose: bool = True) -> li
                     f"(slow win_rate={slow_wr2:.1%}, adding exposure)")
                 if apply:
                     cfg["slow_position_pct_cap"] = new_slow_cap
+
+    # ── Rule 14: max_entry_no (poly price gate for NO side) ──────────────────
+    no_trades_ep = [t for t in resolved if t.get("side") == "no"]
+    if len(no_trades_ep) >= MIN_SAMPLE:
+        cur_max_no_ep = cfg.get("max_entry_no", 0.65)
+        # For NO trades, poly_yes_price is the opponent's price.
+        # If trades at high poly_yes_price (market is bullish) are losing NO bets → tighten
+        high_no = [t for t in no_trades_ep
+                   if (t.get("poly_yes_price") or 0.5) > cur_max_no_ep - 0.05]
+        wr_high_no, n_high_no = _win_rate(high_no)
+        if n_high_no >= MIN_SAMPLE and wr_high_no is not None and wr_high_no < 0.50:
+            new_max_no_ep = round(max(cur_max_no_ep - 0.02, 0.52), 2)
+            if new_max_no_ep != cur_max_no_ep:
+                log(f"  [poly_gate] max_entry_no {cur_max_no_ep:.2f} → {new_max_no_ep:.2f}  "
+                    f"(high poly_yes NO trades win_rate={wr_high_no:.1%} n={n_high_no})")
+                if apply:
+                    cfg["max_entry_no"] = new_max_no_ep
+        elif n_high_no >= MIN_SAMPLE and wr_high_no is not None and wr_high_no >= TARGET_WIN_RATE:
+            new_max_no_ep = round(min(cur_max_no_ep + 0.02, 0.70), 2)
+            if new_max_no_ep != cur_max_no_ep:
+                log(f"  [poly_gate] relax max_entry_no {cur_max_no_ep:.2f} → {new_max_no_ep:.2f}  "
+                    f"(high poly_yes NO win_rate={wr_high_no:.1%})")
+                if apply:
+                    cfg["max_entry_no"] = new_max_no_ep
+
+    # ── Rule 15: max_no_size (hard cap on NO trade size) ─────────────────────
+    no_wr2, no_n2 = _win_rate([t for t in resolved if t.get("side") == "no"])
+    if no_n2 >= MIN_SAMPLE and no_wr2 is not None:
+        cur_max_no_sz = cfg.get("max_no_size", 2.50)
+        if no_wr2 < TARGET_WIN_RATE - 0.10:
+            # NO trades losing badly — shrink the max size to limit damage
+            new_max_no_sz = round(max(cur_max_no_sz - 0.25, 0.50), 2)
+            if new_max_no_sz != cur_max_no_sz:
+                log(f"  [no_size] max_no_size ${cur_max_no_sz:.2f} → ${new_max_no_sz:.2f}  "
+                    f"(NO win_rate={no_wr2:.1%} n={no_n2})")
+                if apply:
+                    cfg["max_no_size"] = new_max_no_sz
+        elif no_wr2 >= TARGET_WIN_RATE and cur_max_no_sz < cfg.get("max_position", 3.50):
+            new_max_no_sz = round(min(cur_max_no_sz + 0.25, cfg.get("max_position", 3.50)), 2)
+            if new_max_no_sz != cur_max_no_sz:
+                log(f"  [no_size] relax max_no_size ${cur_max_no_sz:.2f} → ${new_max_no_sz:.2f}  "
+                    f"(NO win_rate={no_wr2:.1%})")
+                if apply:
+                    cfg["max_no_size"] = new_max_no_sz
+
+    # ── Rule 16: min_yes_conf (minimum confidence for YES trades) ────────────
+    yes_trades = [t for t in resolved if t.get("side") == "yes"]
+    yes_wr, yes_n = _win_rate(yes_trades)
+    if yes_n >= MIN_SAMPLE and yes_wr is not None:
+        cur_min_conf = cfg.get("min_yes_conf", 0.0)
+        if yes_wr < TARGET_WIN_RATE - 0.05:
+            # Sweep confidence levels to find floor that hits target
+            best_conf_thresh = None
+            for conf_t in [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40]:
+                subset = [t for t in yes_trades
+                          if (t.get("confidence") or 0) >= conf_t]
+                wr_c, n_c = _win_rate(subset)
+                if n_c >= MIN_SAMPLE and wr_c is not None and wr_c >= TARGET_WIN_RATE:
+                    best_conf_thresh = conf_t
+                    break
+            if best_conf_thresh is not None:
+                # Step toward it
+                if best_conf_thresh > cur_min_conf:
+                    new_conf = round(min(cur_min_conf + 0.05, best_conf_thresh), 2)
+                else:
+                    new_conf = round(max(cur_min_conf - 0.05, best_conf_thresh), 2)
+                if new_conf != cur_min_conf:
+                    log(f"  [yes_conf] min_yes_conf {cur_min_conf:.2f} → {new_conf:.2f}  "
+                        f"(YES win_rate={yes_wr:.1%} n={yes_n})")
+                    if apply:
+                        cfg["min_yes_conf"] = new_conf
+        elif yes_wr >= TARGET_WIN_RATE and cur_min_conf > 0:
+            # Already at target — relax confidence gate to allow more trades
+            new_conf = round(max(cur_min_conf - 0.05, 0.0), 2)
+            if new_conf != cur_min_conf:
+                log(f"  [yes_conf] relax min_yes_conf {cur_min_conf:.2f} → {new_conf:.2f}  "
+                    f"(YES win_rate={yes_wr:.1%} already at target)")
+                if apply:
+                    cfg["min_yes_conf"] = new_conf
+
+    # ── Rule 17: min_entry_price ──────────────────────────────────────────────
+    if n_total >= MIN_SAMPLE:
+        cur_min_ep = cfg.get("min_entry_price", 0.35)
+        low_ep = [t for t in resolved if (t.get("entry_price") or 0.5) < cur_min_ep + 0.05]
+        wr_low_ep, n_low_ep = _win_rate(low_ep)
+        if n_low_ep >= MIN_SAMPLE and wr_low_ep is not None and wr_low_ep < 0.45:
+            new_min_ep = round(min(cur_min_ep + 0.02, 0.42), 2)
+            if new_min_ep != cur_min_ep:
+                log(f"  [entry_price] min_entry_price {cur_min_ep:.2f} → {new_min_ep:.2f}  "
+                    f"(low-entry trades win_rate={wr_low_ep:.1%} n={n_low_ep})")
+                if apply:
+                    cfg["min_entry_price"] = new_min_ep
+        elif n_low_ep >= MIN_SAMPLE and wr_low_ep is not None and wr_low_ep >= TARGET_WIN_RATE \
+                and cur_min_ep > 0.30:
+            new_min_ep = round(max(cur_min_ep - 0.02, 0.30), 2)
+            if new_min_ep != cur_min_ep:
+                log(f"  [entry_price] relax min_entry_price {cur_min_ep:.2f} → {new_min_ep:.2f}  "
+                    f"(low-entry win_rate={wr_low_ep:.1%})")
+                if apply:
+                    cfg["min_entry_price"] = new_min_ep
+
+    # ── Rule 18: min_entry_yes / slow_max_entry_yes / slow_min_entry_no ──────
+    # YES trades that entered too cheap (market hadn't moved) might signal under-conviction.
+    yes_trades_e = [t for t in resolved if t.get("side") == "yes"]
+    if len(yes_trades_e) >= MIN_SAMPLE:
+        cur_min_yes = cfg.get("min_entry_yes", 0.35)
+        too_cheap = [t for t in yes_trades_e
+                     if (t.get("poly_yes_price") or 0.5) < cur_min_yes + 0.04]
+        wr_cheap, n_cheap = _win_rate(too_cheap)
+        if n_cheap >= MIN_SAMPLE and wr_cheap is not None and wr_cheap < 0.45:
+            new_min_yes = round(min(cur_min_yes + 0.02, 0.44), 2)
+            if new_min_yes != cur_min_yes:
+                log(f"  [poly_gate] min_entry_yes {cur_min_yes:.2f} → {new_min_yes:.2f}  "
+                    f"(cheap YES win_rate={wr_cheap:.1%} n={n_cheap})")
+                if apply:
+                    cfg["min_entry_yes"] = new_min_yes
+
+    # Slow-market specific entry gates (tuned tighter than normal)
+    slow_yes = [t for t in resolved
+                if t.get("side") == "yes" and abs(t.get("momentum_5m", 0) or 0) < 0.12]
+    if len(slow_yes) >= MIN_SAMPLE:
+        cur_slow_max_yes = cfg.get("slow_max_entry_yes", 0.54)
+        high_slow_yes = [t for t in slow_yes
+                         if (t.get("poly_yes_price") or 0.5) > cur_slow_max_yes - 0.03]
+        wr_hsly, n_hsly = _win_rate(high_slow_yes)
+        if n_hsly >= MIN_SAMPLE and wr_hsly is not None and wr_hsly < 0.45:
+            new_val = round(max(cur_slow_max_yes - 0.02, 0.48), 2)
+            if new_val != cur_slow_max_yes:
+                log(f"  [slow_gate] slow_max_entry_yes {cur_slow_max_yes:.2f} → {new_val:.2f}  "
+                    f"(slow YES win_rate={wr_hsly:.1%} n={n_hsly})")
+                if apply:
+                    cfg["slow_max_entry_yes"] = new_val
+        elif n_hsly >= MIN_SAMPLE and wr_hsly is not None and wr_hsly >= TARGET_WIN_RATE \
+                and cur_slow_max_yes < 0.58:
+            new_val = round(min(cur_slow_max_yes + 0.02, 0.58), 2)
+            if new_val != cur_slow_max_yes:
+                log(f"  [slow_gate] relax slow_max_entry_yes {cur_slow_max_yes:.2f} → {new_val:.2f}  "
+                    f"(slow YES win_rate={wr_hsly:.1%})")
+                if apply:
+                    cfg["slow_max_entry_yes"] = new_val
+
+    # ── Rule 19: max_time_remaining ───────────────────────────────────────────
+    # Trades entered very early (lots of time left) may be premature.
+    if n_total >= MIN_SAMPLE:
+        cur_max_time = cfg.get("max_time_remaining", 350)
+        early = [t for t in resolved if (t.get("time_remaining") or 0) > cur_max_time - 30]
+        wr_early, n_early = _win_rate(early)
+        if n_early >= MIN_SAMPLE and wr_early is not None and wr_early < 0.45:
+            new_max_time = max(cur_max_time - 15, 260)
+            if new_max_time != cur_max_time:
+                log(f"  [timing] max_time_remaining {cur_max_time} → {new_max_time}s  "
+                    f"(early-entry win_rate={wr_early:.1%} n={n_early})")
+                if apply:
+                    cfg["max_time_remaining"] = new_max_time
+        elif n_early >= MIN_SAMPLE and wr_early is not None and wr_early >= TARGET_WIN_RATE \
+                and cur_max_time < 420:
+            new_max_time = min(cur_max_time + 15, 420)
+            if new_max_time != cur_max_time:
+                log(f"  [timing] relax max_time_remaining {cur_max_time} → {new_max_time}s  "
+                    f"(early-entry win_rate={wr_early:.1%})")
+                if apply:
+                    cfg["max_time_remaining"] = new_max_time
+
+    # ── Rule 20a: min_lag_override ────────────────────────────────────────────
+    # min_lag_override: the minimum CEX/poly lag needed to override the poly
+    # directional gate (i.e. allow a trade even when poly disagrees with CEX).
+    # If trades that passed through the lag override are losing, raise the bar.
+    if n_total >= MIN_SAMPLE:
+        cur_lag = cfg.get("min_lag_override", 0.12)
+        # We don't store lag in the trade log directly, so proxy: trades where
+        # cex_poly_lag > cur_lag and outcome is win/loss
+        lag_trades = [t for t in resolved if abs(t.get("cex_poly_lag") or 0) >= cur_lag]
+        wr_lag, n_lag = _win_rate(lag_trades)
+        if n_lag >= MIN_SAMPLE and wr_lag is not None and wr_lag < TARGET_WIN_RATE - 0.08:
+            new_lag = round(min(cur_lag + 0.02, 0.25), 2)
+            if new_lag != cur_lag:
+                log(f"  [lag] min_lag_override {cur_lag:.2f} → {new_lag:.2f}  "
+                    f"(lag-override trades win_rate={wr_lag:.1%} n={n_lag})")
+                if apply:
+                    cfg["min_lag_override"] = new_lag
+        elif n_lag >= MIN_SAMPLE and wr_lag is not None and wr_lag >= TARGET_WIN_RATE \
+                and cur_lag > 0.08:
+            new_lag = round(max(cur_lag - 0.02, 0.08), 2)
+            if new_lag != cur_lag:
+                log(f"  [lag] relax min_lag_override {cur_lag:.2f} → {new_lag:.2f}  "
+                    f"(lag trades win_rate={wr_lag:.1%})")
+                if apply:
+                    cfg["min_lag_override"] = new_lag
+
+    # ── Rule 20: max_position_per_window ─────────────────────────────────────
+    # If we're deploying too much into a single window and losing, reduce the cap.
+    if n_total >= MIN_SAMPLE:
+        cur_max_win = cfg.get("max_position_per_window", 4.0)
+        max_pos = cfg.get("max_position", 3.5)
+        if overall_wr < TARGET_WIN_RATE - 0.10 and cur_max_win > max_pos:
+            new_max_win = round(max(cur_max_win - 0.25, max_pos), 2)
+            if new_max_win != cur_max_win:
+                log(f"  [window_cap] max_position_per_window ${cur_max_win:.2f} → ${new_max_win:.2f}  "
+                    f"(overall win_rate={overall_wr:.1%}, reducing per-window exposure)")
+                if apply:
+                    cfg["max_position_per_window"] = new_max_win
+        elif overall_wr >= TARGET_WIN_RATE and cur_max_win < max_pos * 1.5:
+            new_max_win = round(min(cur_max_win + 0.25, max_pos * 1.5), 2)
+            if new_max_win != cur_max_win:
+                log(f"  [window_cap] relax max_position_per_window ${cur_max_win:.2f} → ${new_max_win:.2f}  "
+                    f"(overall win_rate={overall_wr:.1%})")
+                if apply:
+                    cfg["max_position_per_window"] = new_max_win
 
     return changes
 
@@ -678,6 +960,7 @@ def run_optimizer(apply: bool = False, verbose: bool = True):
     if verbose:
         print_report(resolved)
 
+    overall_wr, n_total = _win_rate(resolved)
     changes = optimize(cfg, resolved, apply=apply, verbose=verbose)
 
     if apply and changes:
@@ -685,6 +968,10 @@ def run_optimizer(apply: bool = False, verbose: bool = True):
         _append_log(changes)
         if verbose:
             print(f"\n  Config updated ({len(changes)} changes logged to optimizer.log)")
+        # Filter to only the actual change lines (skip start/end lines)
+        changes_applied = [c for c in changes if not c.strip().startswith("[optimizer]")]
+        _send_telegram_alert(cfg, changes_applied, overall_wr)
+        _write_history(overall_wr, n_total, changes_applied)
     elif not apply and verbose:
         print(f"\n  [dry-run] {len(changes)} potential changes — pass --apply to commit")
 

@@ -1280,6 +1280,25 @@ def config_endpoint():
 # NEW: Analytics, operations, real-time stream
 # ─────────────────────────────────────────────────────────────────────────────
 
+OPT_HISTORY_PATH = "/data/optimizer_history.json"
+
+@app.route("/api/optimizer-history")
+def optimizer_history():
+    """Return structured optimizer run history from optimizer_history.json."""
+    try:
+        path = OPT_HISTORY_PATH
+        if not os.path.exists(path):
+            return jsonify({"entries": [], "total": 0})
+        with open(path) as f:
+            entries = json.load(f)
+        # Optionally limit to last N
+        limit = int(request.args.get("limit", 200))
+        entries = entries[-limit:]
+        return jsonify({"entries": entries, "total": len(entries)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/rolling-winrate")
 def rolling_winrate():
     window = int(request.args.get("window", 30))
