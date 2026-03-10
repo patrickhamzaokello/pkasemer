@@ -130,6 +130,87 @@ def check_hour_gate(hour_utc, config=None):
     delta = boosted.get(hour_utc, 0.0)
     return True, delta, "ok"
 
+
+# =============================================================================
+# Market Session Detection (UTC)
+#
+# Polymarket BTC fast markets are directly influenced by traditional finance
+# liquidity windows, even though crypto trades 24/7.  The three major sessions:
+#
+#   Asia      00:00-07:00 UTC  — Tokyo / Singapore
+#   London    07:00-16:00 UTC  — European open (07:00-13:00 pre-overlap)
+#   New York  13:00-21:00 UTC  — US open (13:00-16:00 overlaps London)
+#   Off       21:00-00:00 UTC  — Post-NY quiet period
+#
+# The London-NY overlap (13:00-16:00 UTC) is the highest-liquidity window of
+# the day: institutional order flow from both continents hits simultaneously.
+# Momentum signals are most reliable here — lower the threshold, allow full size.
+#
+# Override via config.json "session_hours" dict (session_name → list of hours).
+# =============================================================================
+
+_SESSION_HOURS = {
+    "overlap":   [13, 14, 15],              # London + NY simultaneously
+    "london":    [7, 8, 9, 10, 11, 12],     # London only, pre-overlap
+    "new_york":  [16, 17, 18, 19, 20],      # NY only, post London close
+    "asia":      [0, 1, 2, 3, 4, 5, 6],     # Asia / Tokyo
+    "off":       [21, 22, 23],              # Post-NY quiet period
+}
+
+# Composite threshold delta per session (negative = easier to trade)
+_DEFAULT_SESSION_DELTAS = {
+    "overlap":  -0.03,   # peak liquidity — most reliable signals
+    "london":   -0.02,   # strong European institutional flow
+    "new_york": -0.01,   # solid US session
+    "asia":      0.00,   # mixed — per-hour accuracy table handles fine-tuning
+    "off":      +0.02,   # low liquidity, be more selective
+}
+
+# Position-size cap per session (fraction of regime-adjusted max)
+_DEFAULT_SESSION_CAPS = {
+    "overlap":  1.00,   # full size during peak liquidity
+    "london":   0.95,
+    "new_york": 0.90,
+    "asia":     0.85,
+    "off":      0.70,   # protect capital in quiet hours
+}
+
+
+def get_market_session(hour_utc, config=None):
+    """
+    Return the primary market session label for a given UTC hour (0-23).
+
+    Priority order: overlap > london > new_york > asia > off
+    Override session hour lists via config.json "session_hours" dict.
+    Returns one of: "overlap" | "london" | "new_york" | "asia" | "off"
+    """
+    cfg = config or {}
+    sess_hours = {**_SESSION_HOURS, **{k: v for k, v in cfg.get("session_hours", {}).items()}}
+    for session in ("overlap", "london", "new_york", "asia", "off"):
+        if hour_utc in sess_hours.get(session, []):
+            return session
+    return "off"
+
+
+def get_session_threshold_delta(session, config=None):
+    """
+    Return the composite threshold adjustment for the given session.
+    Negative = lower threshold = easier to trigger a trade.
+    Config key: <session>_threshold_delta  (e.g. "london_threshold_delta": -0.02)
+    """
+    cfg = config or {}
+    return cfg.get(f"{session}_threshold_delta", _DEFAULT_SESSION_DELTAS.get(session, 0.0))
+
+
+def get_session_position_cap(session, config=None):
+    """
+    Return the position-size cap (0.0-1.0) for the given session.
+    Config key: <session>_position_cap  (e.g. "overlap_position_cap": 1.0)
+    """
+    cfg = config or {}
+    return cfg.get(f"{session}_position_cap", _DEFAULT_SESSION_CAPS.get(session, 0.85))
+
+
 # =============================================================================
 # Default signal weights
 # Override via config.json: { "signal_weights": { "btc_vs_reference": 0.50, ... } }
@@ -570,6 +651,7 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
     # ── Time-of-day gate ─────────────────────────────────────────────────────
     hour_utc = datetime.now(timezone.utc).hour
     hour_ok, threshold_delta, hour_reason = check_hour_gate(hour_utc, cfg)
+    session = get_market_session(hour_utc, cfg)
 
     result = {
         "should_trade":    False,
@@ -583,6 +665,7 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
         "hour_utc":        hour_utc,
         "hour_accuracy":   get_hour_accuracy(hour_utc, cfg),
         "threshold_delta": threshold_delta,
+        "session":         session,
     }
 
     if not hour_ok:
@@ -619,8 +702,12 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
     else:
         threshold = base_threshold
 
-    # Apply hour-of-day boost (threshold_delta is negative for good hours)
-    threshold = max(0.55, threshold + threshold_delta)
+    # Apply hour-of-day boost + market session adjustment
+    # Hour delta: per-hour accuracy (e.g. 2h=+85.7% → -0.03 boost)
+    # Session delta: London/NY/overlap liquidity windows lower the bar;
+    #                off-hours raise it.  Both compound intentionally.
+    session_delta = get_session_threshold_delta(session, cfg)
+    threshold = max(0.55, threshold + threshold_delta + session_delta)
 
     if score > threshold:
         result["should_trade"] = True
@@ -671,6 +758,13 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
         _range = max(_vmax - _vpthresh, 0.1)
         _penalty = min(0.50, (vol5 - _vpthresh) / _range)
         result["position_pct"] = max(MIN_POSITION_PCT, result["position_pct"] * (1.0 - _penalty))
+
+    # Session-aware position cap — applied last so it overrides regime sizing
+    # when market liquidity is low (off-hours, Asia) and allows full size
+    # during peak liquidity (London-NY overlap).
+    if cfg.get("session_gating_enabled", True):
+        sess_cap = get_session_position_cap(session, cfg)
+        result["position_pct"] = min(result["position_pct"], sess_cap)
 
     return result
 

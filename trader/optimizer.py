@@ -302,6 +302,48 @@ def slow_market_win_rate(resolved):
     return _win_rate(slow)
 
 
+# Session hour definitions — mirrors composite_signal._SESSION_HOURS
+_SESSION_HOURS_OPT = {
+    "overlap":   [13, 14, 15],
+    "london":    [7, 8, 9, 10, 11, 12],
+    "new_york":  [16, 17, 18, 19, 20],
+    "asia":      [0, 1, 2, 3, 4, 5, 6],
+    "off":       [21, 22, 23],
+}
+
+_SESSION_DEFAULT_DELTAS = {
+    "overlap":  -0.03,
+    "london":   -0.02,
+    "new_york": -0.01,
+    "asia":      0.00,
+    "off":      +0.02,
+}
+
+_SESSION_DEFAULT_CAPS = {
+    "overlap":  1.00,
+    "london":   0.95,
+    "new_york": 0.90,
+    "asia":     0.85,
+    "off":      0.70,
+}
+
+
+def session_win_rates(resolved, cfg=None):
+    """
+    Win rate and trade count for each major market session.
+
+    Uses the hour_utc field stored in each trade record.
+    Returns dict: {session_name: (win_rate, n_trades)}
+    """
+    cfg = cfg or {}
+    sess_hours = {**_SESSION_HOURS_OPT, **cfg.get("session_hours", {})}
+    result = {}
+    for sess, hours in sess_hours.items():
+        trades = [t for t in resolved if t.get("hour_utc") in hours]
+        result[sess] = _win_rate(trades)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Optimization rules
 # ---------------------------------------------------------------------------
@@ -947,6 +989,94 @@ def optimize(cfg: dict, resolved: list, apply: bool, verbose: bool = True) -> li
                     f"(overall win_rate={overall_wr:.1%})")
                 if apply:
                     cfg["momentum_agreement_min_1m"] = new_min_m1
+
+    # ── Rules 24-28: Market session optimisation ──────────────────────────────
+    #
+    # London (07-13h UTC) and NY (13-21h UTC) drive the heaviest institutional
+    # BTC order flow.  Their overlap (13-16h) is the peak-liquidity window.
+    # Each session's threshold delta and position cap is tuned independently so
+    # the system automatically becomes more aggressive in high-win sessions and
+    # more defensive in low-win sessions.
+    #
+    # Threshold delta bounds:  -0.05 (very easy to enter) ↔ +0.04 (very strict)
+    # Position cap bounds:      0.55 (small size) ↔ 1.0 (full size)
+    # Minimum trades per session before touching parameters: MIN_SAMPLE
+    # Maximum step per run: 0.01 (threshold delta), 0.05 (position cap)
+    _s_rates = session_win_rates(resolved, cfg)
+
+    for sess in ("overlap", "london", "new_york", "asia", "off"):
+        sess_wr, sess_n = _s_rates.get(sess, (None, 0))
+        if sess_n < MIN_SAMPLE or sess_wr is None:
+            continue
+
+        delta_key = f"{sess}_threshold_delta"
+        cap_key   = f"{sess}_position_cap"
+        cur_delta = cfg.get(delta_key, _SESSION_DEFAULT_DELTAS.get(sess, 0.0))
+        cur_cap   = cfg.get(cap_key,   _SESSION_DEFAULT_CAPS.get(sess, 0.85))
+
+        # Threshold delta — move toward -0.05 for winning sessions, +0.04 for losing
+        if sess_wr >= TARGET_WIN_RATE + 0.05:
+            # Outperforming — lower the threshold more to capture more trades
+            new_delta = round(max(cur_delta - 0.01, -0.05), 2)
+            if new_delta != cur_delta:
+                log(f"  [session:{sess}] {delta_key} {cur_delta:+.2f} → {new_delta:+.2f}  "
+                    f"(win_rate={sess_wr:.1%} n={sess_n}, boosting session)")
+                if apply:
+                    cfg[delta_key] = new_delta
+        elif sess_wr < TARGET_WIN_RATE - 0.07:
+            # Underperforming — raise the threshold to be more selective
+            new_delta = round(min(cur_delta + 0.01, 0.04), 2)
+            if new_delta != cur_delta:
+                log(f"  [session:{sess}] {delta_key} {cur_delta:+.2f} → {new_delta:+.2f}  "
+                    f"(win_rate={sess_wr:.1%} n={sess_n}, tightening session)")
+                if apply:
+                    cfg[delta_key] = new_delta
+
+        # Position cap — expand when winning, contract when losing
+        if sess_wr >= TARGET_WIN_RATE + 0.05 and cur_cap < 1.0:
+            new_cap = round(min(cur_cap + 0.05, 1.0), 2)
+            if new_cap != cur_cap:
+                log(f"  [session:{sess}] {cap_key} {cur_cap:.2f} → {new_cap:.2f}  "
+                    f"(win_rate={sess_wr:.1%}, expanding position size)")
+                if apply:
+                    cfg[cap_key] = new_cap
+        elif sess_wr < TARGET_WIN_RATE - 0.07 and cur_cap > 0.55:
+            new_cap = round(max(cur_cap - 0.05, 0.55), 2)
+            if new_cap != cur_cap:
+                log(f"  [session:{sess}] {cap_key} {cur_cap:.2f} → {new_cap:.2f}  "
+                    f"(win_rate={sess_wr:.1%}, reducing position size)")
+                if apply:
+                    cfg[cap_key] = new_cap
+
+    # ── Rule 29: Block entire sessions with sustained losses ──────────────────
+    # If a session's win rate is persistently below 0.50 and there are enough
+    # resolved trades, extend blocked_hours to cover that session entirely.
+    # Never block overlap — it's the primary liquidity window.
+    # Always maintains a minimum of 8 tradeable hours per day.
+    ALWAYS_ALLOW = {"overlap"}
+    for sess in ("london", "new_york", "asia", "off"):
+        sess_wr, sess_n = _s_rates.get(sess, (None, 0))
+        if sess_n < MIN_SAMPLE * 3 or sess_wr is None:   # needs 3x sample for session block
+            continue
+        sess_hrs = _SESSION_HOURS_OPT.get(sess, [])
+        if sess_wr < 0.45:
+            # Extend blocked hours into this session
+            new_blocked = sorted(set(cfg.get("blocked_hours", [])) | set(sess_hrs))
+            # Guard: never block more than MAX_BLOCK_HOURS
+            if len(new_blocked) <= MAX_BLOCK_HOURS:
+                if new_blocked != cfg.get("blocked_hours", []):
+                    log(f"  [session:{sess}] extend blocked_hours to cover {sess_hrs}  "
+                        f"(session win_rate={sess_wr:.1%} n={sess_n})")
+                    if apply:
+                        cfg["blocked_hours"] = new_blocked
+        elif sess_wr >= 0.55:
+            # Session has recovered — unblock its hours
+            cur_blocked = set(cfg.get("blocked_hours", []))
+            unblocked = cur_blocked - set(sess_hrs)
+            if unblocked != cur_blocked:
+                log(f"  [session:{sess}] unblock {sess} hours (win_rate={sess_wr:.1%})")
+                if apply:
+                    cfg["blocked_hours"] = sorted(unblocked)
 
     return changes
 

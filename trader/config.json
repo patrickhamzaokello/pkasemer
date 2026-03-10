@@ -77,5 +77,19 @@
     "10": -0.02,
     "17": -0.02,
     "0":  -0.01
-  }
+  },
+
+  "session_gating_enabled": true,
+
+  "overlap_threshold_delta": -0.03,
+  "london_threshold_delta":  -0.02,
+  "new_york_threshold_delta": -0.01,
+  "asia_threshold_delta":     0.00,
+  "off_threshold_delta":      0.02,
+
+  "overlap_position_cap":  1.00,
+  "london_position_cap":   0.95,
+  "new_york_position_cap": 0.90,
+  "asia_position_cap":     0.85,
+  "off_position_cap":      0.70
 }

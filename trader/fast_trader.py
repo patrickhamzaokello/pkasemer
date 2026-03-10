@@ -975,12 +975,13 @@ def run_fast_market_strategy(
     regime       = signal.get("regime", "normal")
     hour_acc     = signal.get("hour_accuracy", 0.0)
     hour_acc_str = f"{hour_acc:.0%}"
+    session      = signal.get("session", "?")
 
     if not signal["should_trade"]:
         reason = signal.get("filter_reason", "neutral band")
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
-            f"[{regime}/{hour_acc_str}] m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} "
+            f"[{regime}/{session}/{hour_acc_str}] m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} "
             f"lag={cex_lag_str} vol={vol_r:.2f}x | "
             f"score={score:.3f} BLOCK: {reason}"
         )
@@ -1188,7 +1189,7 @@ def run_fast_market_strategy(
     # ── Step 5: Import & execute ──────────────────────────────────────────────
     log(
         f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
-        f"[{regime}/{hour_acc_str}] m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} "
+        f"[{regime}/{session}/{hour_acc_str}] m5={m5:+.3f}% vs_ref={vs_ref_str} poly={poly_p:.3f} "
         f"lag={cex_lag_str} vol={vol_r:.2f}x payout={payout_ratio:.2f}x | "
         f"score={score:.3f} conf={confidence:.2f} → {side.upper()} ${position_size:.2f}"
     )
