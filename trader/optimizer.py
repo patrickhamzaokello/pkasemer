@@ -879,6 +879,75 @@ def optimize(cfg: dict, resolved: list, apply: bool, verbose: bool = True) -> li
                 if apply:
                     cfg["max_position_per_window"] = new_max_win
 
+    # ── Rule 21: normal_position_pct_cap ─────────────────────────────────────
+    # Normal-regime trades: if win rate is poor, reduce the exposure cap.
+    # Uses |m5| between slow and active thresholds as proxy for normal regime.
+    _slow_mom  = cfg.get("slow_mom_threshold",   0.12)
+    _active_mom = cfg.get("active_mom_threshold", 0.25)
+    normal_trades = [t for t in resolved
+                     if _slow_mom <= abs(t.get("momentum_5m", 0) or 0) < _active_mom]
+    normal_wr, normal_n = _win_rate(normal_trades)
+    if normal_n >= MIN_SAMPLE and normal_wr is not None:
+        cur_norm_cap = cfg.get("normal_position_pct_cap", 0.90)
+        if normal_wr < TARGET_WIN_RATE - 0.08:
+            new_norm_cap = round(max(cur_norm_cap - 0.05, 0.50), 2)
+            if new_norm_cap != cur_norm_cap:
+                log(f"  [normal_sizing] normal_position_pct_cap {cur_norm_cap:.2f} → {new_norm_cap:.2f}  "
+                    f"(normal win_rate={normal_wr:.1%} n={normal_n})")
+                if apply:
+                    cfg["normal_position_pct_cap"] = new_norm_cap
+        elif normal_wr >= TARGET_WIN_RATE and cur_norm_cap < 1.0:
+            new_norm_cap = round(min(cur_norm_cap + 0.05, 1.0), 2)
+            if new_norm_cap != cur_norm_cap:
+                log(f"  [normal_sizing] relax normal_position_pct_cap {cur_norm_cap:.2f} → {new_norm_cap:.2f}  "
+                    f"(normal win_rate={normal_wr:.1%})")
+                if apply:
+                    cfg["normal_position_pct_cap"] = new_norm_cap
+
+    # ── Rule 22: active_position_pct_cap ─────────────────────────────────────
+    # Active-regime trades: reduce cap if strong-momentum trades are losing.
+    active_trades2 = [t for t in resolved
+                      if abs(t.get("momentum_5m", 0) or 0) >= _active_mom]
+    active_wr2, active_n2 = _win_rate(active_trades2)
+    if active_n2 >= MIN_SAMPLE and active_wr2 is not None:
+        cur_act_cap = cfg.get("active_position_pct_cap", 1.0)
+        if active_wr2 < TARGET_WIN_RATE - 0.08:
+            new_act_cap = round(max(cur_act_cap - 0.05, 0.55), 2)
+            if new_act_cap != cur_act_cap:
+                log(f"  [active_sizing] active_position_pct_cap {cur_act_cap:.2f} → {new_act_cap:.2f}  "
+                    f"(active win_rate={active_wr2:.1%} n={active_n2})")
+                if apply:
+                    cfg["active_position_pct_cap"] = new_act_cap
+        elif active_wr2 >= TARGET_WIN_RATE and cur_act_cap < 1.0:
+            new_act_cap = round(min(cur_act_cap + 0.05, 1.0), 2)
+            if new_act_cap != cur_act_cap:
+                log(f"  [active_sizing] relax active_position_pct_cap {cur_act_cap:.2f} → {new_act_cap:.2f}  "
+                    f"(active win_rate={active_wr2:.1%})")
+                if apply:
+                    cfg["active_position_pct_cap"] = new_act_cap
+
+    # ── Rule 23: momentum_agreement_min_1m (noise filter sensitivity) ─────────
+    # If overall win rate is poor and there are enough trades, tighten the noise
+    # filter to catch more turning-point disagreements earlier.
+    if n_total >= MIN_SAMPLE:
+        cur_min_m1 = cfg.get("momentum_agreement_min_1m", 0.05)
+        if overall_wr < TARGET_WIN_RATE - 0.07:
+            # Win rate below target — make the noise filter more aggressive
+            new_min_m1 = round(max(cur_min_m1 - 0.01, 0.02), 2)
+            if new_min_m1 != cur_min_m1:
+                log(f"  [noise_filter] momentum_agreement_min_1m {cur_min_m1:.2f} → {new_min_m1:.2f}  "
+                    f"(overall win_rate={overall_wr:.1%}, tightening noise gate)")
+                if apply:
+                    cfg["momentum_agreement_min_1m"] = new_min_m1
+        elif overall_wr >= TARGET_WIN_RATE and cur_min_m1 < 0.10:
+            # At target — relax noise filter slightly to let more trades through
+            new_min_m1 = round(min(cur_min_m1 + 0.01, 0.10), 2)
+            if new_min_m1 != cur_min_m1:
+                log(f"  [noise_filter] relax momentum_agreement_min_1m {cur_min_m1:.2f} → {new_min_m1:.2f}  "
+                    f"(overall win_rate={overall_wr:.1%})")
+                if apply:
+                    cfg["momentum_agreement_min_1m"] = new_min_m1
+
     return changes
 
 

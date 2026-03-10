@@ -58,6 +58,18 @@
   "min_payout_ratio": 0.90,
   "slow_min_payout_ratio": 1.10,
 
+  "normal_position_pct_cap": 0.90,
+  "active_position_pct_cap": 1.00,
+
+  "max_volatility_5m": 2.0,
+  "vol_penalty_threshold": 1.2,
+
+  "momentum_agreement_filter": true,
+  "momentum_agreement_min_1m": 0.05,
+
+  "loss_cooldown_enabled": true,
+  "loss_cooldown_streak": 3,
+
   "blocked_hours": [6, 8, 16],
   "boosted_hours": {
     "2":  -0.03,

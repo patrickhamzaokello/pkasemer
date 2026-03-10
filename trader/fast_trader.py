@@ -809,6 +809,27 @@ def run_fast_market_strategy(
         log(f"{mode_tag} {now_str} | KILL SWITCH ACTIVE — trading halted this cycle", force=True)
         return
 
+    # ── Consecutive loss cooldown ─────────────────────────────────────────────
+    # After N resolved losses in a row, skip trading for one cycle to avoid
+    # feeding losses during an adverse or noisy market environment.
+    if raw_cfg.get("loss_cooldown_enabled", True):
+        _streak = int(raw_cfg.get("loss_cooldown_streak", 3))
+        if _TRADE_LOG_FILE.exists():
+            try:
+                _all_trades = json.loads(_TRADE_LOG_FILE.read_text())
+                _resolved = [t for t in _all_trades if t.get("outcome") in ("win", "loss")]
+                if len(_resolved) >= _streak:
+                    _recent = [t["outcome"] for t in _resolved[-_streak:]]
+                    if all(o == "loss" for o in _recent):
+                        log(
+                            f"{mode_tag} {now_str} | COOLDOWN: last {_streak} resolved trades "
+                            f"all losses — skipping cycle to protect capital",
+                            force=True,
+                        )
+                        return
+            except Exception:
+                pass
+
     # ── Config view ───────────────────────────────────────────────────────────
     if show_config:
         daily_spend = _load_daily_spend()

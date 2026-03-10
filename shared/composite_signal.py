@@ -384,9 +384,10 @@ def apply_filters(cex, poly, config=None):
     if m5 is not None and abs(m5) < min_mom:
         return False, f"momentum too weak ({m5:+.3f}% < ±{min_mom}%)"
 
-    # Volatility filter
-    if vol5 is not None and vol5 > MAX_VOLATILITY_5M:
-        return False, f"volatility too high ({vol5:.3f} > {MAX_VOLATILITY_5M})"
+    # Volatility filter — threshold is config-driven so the optimizer can tune it
+    max_vol_5m = (config or {}).get("max_volatility_5m", MAX_VOLATILITY_5M)
+    if vol5 is not None and vol5 > max_vol_5m:
+        return False, f"volatility too high ({vol5:.3f} > {max_vol_5m})"
 
     # RSI filters -- thresholds read from config if available, else module defaults
     rsi_ob = (config or {}).get("rsi_overbought", RSI_OVERBOUGHT)
@@ -431,6 +432,20 @@ def apply_filters(cex, poly, config=None):
     volume_confidence = config.get("volume_confidence", False) if config else False
     if volume_confidence and vol_ratio is not None and vol_ratio != 1.0 and vol_ratio < 0.3:
         return False, f"Volume too low ({vol_ratio:.2f}x avg)"
+
+    # Cross-timeframe momentum agreement filter
+    # When 1m momentum opposes 5m momentum and both are meaningful, the market
+    # is at a likely reversal point. Trading into disagreement is noise, not edge.
+    if (config or {}).get("momentum_agreement_filter", True):
+        m1 = cex.get("momentum_1m")
+        min_m1 = (config or {}).get("momentum_agreement_min_1m", 0.05)
+        if (m1 is not None and m5 is not None
+                and abs(m1) >= min_m1 and abs(m5) >= min_mom
+                and (m1 > 0) != (m5 > 0)):
+            return False, (
+                f"timeframe disagreement: 1m={m1:+.3f}% opposes 5m={m5:+.3f}% "
+                f"— reversal risk, skipping"
+            )
 
     return True, "ok"
 
@@ -621,9 +636,10 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
         return result
 
     # ── Regime-aware position sizing ──────────────────────────────────────────
-    # Slow market: reduce exposure — signals less reliable, protect capital.
-    # Active market: allow full size — signals most trustworthy.
-    # Floor at 0.55 when trading to clear 5-share minimum at $5 max_position.
+    # Slow:   reduce exposure — signals less reliable, protect capital.
+    # Normal: allow up to a configurable cap (default 1.0 = uncapped).
+    # Active: full size allowed — signals most trustworthy in trending markets.
+    # Floor at 0.55 to clear the 5-share minimum at $3.50 max_position.
     MIN_POSITION_PCT = 0.55
     if regime == "slow":
         slow_size_cap = cfg.get("slow_position_pct_cap", 0.70)
@@ -631,8 +647,30 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
             max(confidence, MIN_POSITION_PCT),
             slow_size_cap,
         )
-    else:
-        result["position_pct"] = max(confidence, MIN_POSITION_PCT)
+    elif regime == "normal":
+        normal_size_cap = cfg.get("normal_position_pct_cap", 1.0)
+        result["position_pct"] = min(
+            max(confidence, MIN_POSITION_PCT),
+            normal_size_cap,
+        )
+    else:  # active
+        active_size_cap = cfg.get("active_position_pct_cap", 1.0)
+        result["position_pct"] = min(
+            max(confidence, MIN_POSITION_PCT),
+            active_size_cap,
+        )
+
+    # Volatility position penalty — scale down size when price volatility is
+    # elevated. High volatility degrades signal reliability even in active markets.
+    # Penalty starts above vol_penalty_threshold and ramps linearly to -50% at
+    # max_volatility_5m. Uses volatility_5m (price swing), not volume_ratio.
+    vol5 = cex_signals.get("volatility_5m")
+    _vpthresh = cfg.get("vol_penalty_threshold", 1.2)
+    if vol5 is not None and vol5 > _vpthresh:
+        _vmax = cfg.get("max_volatility_5m", MAX_VOLATILITY_5M)
+        _range = max(_vmax - _vpthresh, 0.1)
+        _penalty = min(0.50, (vol5 - _vpthresh) / _range)
+        result["position_pct"] = max(MIN_POSITION_PCT, result["position_pct"] * (1.0 - _penalty))
 
     return result
 
