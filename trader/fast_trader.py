@@ -111,7 +111,7 @@ CONFIG_SCHEMA = {
     "webhook_url":             {"default": "",        "env": "SIMMER_WEBHOOK_URL",         "type": str},
     "telegram_bot_token":      {"default": "",        "env": "TELEGRAM_BOT_TOKEN",         "type": str},
     "telegram_chat_id":        {"default": "",        "env": "TELEGRAM_CHAT_ID",           "type": str},
-        "use_dynamic_price_bands":       {"default": True,  "env": None, "type": bool},
+    "use_dynamic_price_bands":       {"default": True,  "env": None, "type": bool},
     "dynamic_lag_weight":            {"default": 0.40,  "env": None, "type": float},
     "dynamic_vol_k":                 {"default": 0.01,  "env": None, "type": float},
     "global_max_yes":                {"default": 0.49,  "env": None, "type": float},
