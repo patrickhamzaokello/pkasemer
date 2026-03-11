@@ -631,6 +631,38 @@ def _calc_cex_poly_lag(cex, poly):
     return btc_ref - poly_div
 
 
+def compute_dynamic_bounds(poly_price, lag, volatility, config=None):
+    """
+    Compute dynamic entry bounds based on fair value.
+
+    fair_price = poly + lag_adjustment
+    edge       = volatility buffer
+    """
+
+    cfg = config or {}
+
+    lag_weight = cfg.get("dynamic_lag_weight", DYNAMIC_LAG_WEIGHT)
+    vol_k      = cfg.get("dynamic_vol_k", DYNAMIC_VOL_K)
+
+    if lag is None:
+        lag = 0
+
+    if volatility is None:
+        volatility = 0
+
+    fair = poly_price + lag * lag_weight
+    edge = abs(volatility) * vol_k
+
+    max_yes = fair - edge
+    min_no  = fair + edge
+
+    # Safety caps
+    max_yes = min(max_yes, cfg.get("global_max_yes", GLOBAL_MAX_YES))
+    min_no  = max(min_no,  cfg.get("global_min_no",  GLOBAL_MIN_NO))
+
+    return max_yes, min_no, fair, edge
+
+
 # =============================================================================
 # Pre-trade Filters  (hard gates applied before scoring)
 # =============================================================================
@@ -776,39 +808,37 @@ def apply_filters(cex, poly, config=None):
     # poly_yes_price used as risk control ceiling/floor, not as a score weight,
     # because the correlation data shows it is better as a hard gate.
     #
-    # v2 change: MAX_ENTRY_YES check now tests the lag override FIRST.
-    # In v1 the override was unreachable because the lag formula was broken
-    # (lag ≈ m5 ≈ small), so the block always fired. With the corrected lag,
-    # a strong btc_ref - poly_div residual can now correctly override the gate
-    # when poly is slightly expensive but CEX signal is strong and confirmed.
-    poly_price       = poly.get("poly_yes_price", 0.5) or 0.5
-    cex_lag          = _calc_cex_poly_lag(cex, poly) or 0.0
 
-    MAX_ENTRY_YES    = cfg.get("max_entry_yes",    0.476)
-    MIN_ENTRY_YES    = cfg.get("min_entry_yes",    0.35)
-    MIN_ENTRY_NO     = cfg.get("min_entry_no",     0.28)
-    MAX_ENTRY_NO     = cfg.get("max_entry_no",     0.65)
-    MIN_LAG_OVERRIDE = cfg.get("min_lag_override", 0.12)
+    poly_price = poly.get("poly_yes_price", 0.5) or 0.5
+    cex_lag    = _calc_cex_poly_lag(cex, poly) or 0.0
+    vol5       = cex.get("volatility_5m")
+    
+    use_dynamic = cfg.get("use_dynamic_price_bands", USE_DYNAMIC_PRICE_BANDS)
+    
+    if use_dynamic:
+        max_yes, min_no, fair_price, edge = compute_dynamic_bounds(
+            poly_price,
+            cex_lag,
+            vol5,
+            cfg
+        )
+    else:
+        max_yes = cfg.get("max_entry_yes", 0.476)
+        min_no  = cfg.get("min_entry_no", 0.52)
+   
 
     if m5 is not None and m5 > 0:   # signal wants YES
-        if poly_price > MAX_ENTRY_YES:
-            # Allow override if lag is strong — poly is lagging CEX significantly
-            if abs(cex_lag) < MIN_LAG_OVERRIDE:
-                return False, (
-                    f"Market priced in YES ({poly_price:.3f} > {MAX_ENTRY_YES}) -- no edge"
-                )
-            # else: lag override in effect — proceed to scoring
-        if poly_price < MIN_ENTRY_YES and abs(cex_lag) < MIN_LAG_OVERRIDE:
+    
+        if poly_price > max_yes:
             return False, (
-                f"Poly disagrees ({poly_price:.3f}) and CEX lag too small ({cex_lag:.4f})"
+                f"YES overpriced ({poly_price:.3f} > dynamic {max_yes:.3f})"
             )
 
     if m5 is not None and m5 < 0:   # signal wants NO
-        if poly_price < MIN_ENTRY_NO:
-            return False, f"Market priced in NO ({poly_price:.3f} < {MIN_ENTRY_NO}) -- no edge"
-        if poly_price > MAX_ENTRY_NO and cex_lag > -MIN_LAG_OVERRIDE:
+    
+        if poly_price < min_no:
             return False, (
-                f"Poly says UP ({poly_price:.3f}), CEX lag insufficient ({cex_lag:.4f})"
+                f"NO overpriced ({poly_price:.3f} < dynamic {min_no:.3f})"
             )
 
     # ── Volume confidence gate (optional) ────────────────────────────────────
