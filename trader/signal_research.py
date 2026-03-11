@@ -1244,7 +1244,7 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
 
             # 1. Time window gate (only enter at 120-200s remaining)
             _min_t = _raw_cfg.get("min_time_remaining", 120)
-            _max_t = _raw_cfg.get("max_time_remaining", 200)
+            _max_t = _raw_cfg.get("max_time_remaining", 420)
             if seconds_remaining > _max_t:
                 would_trade   = False
                 filter_reason = f"too early ({seconds_remaining:.0f}s > {_max_t}s max)"
