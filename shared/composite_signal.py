@@ -201,6 +201,33 @@ DYNAMIC_MOMENTUM_MULTIPLIER    = 1.0
 MIN_DYNAMIC_MOMENTUM           = 0.010
 MAX_DYNAMIC_MOMENTUM           = 0.120
 
+RSI_OVERBOUGHT = 80
+RSI_OVERSOLD   = 22
+
+
+USE_DYNAMIC_RSI_THRESHOLDS = True
+
+DYNAMIC_RSI_OB_BASE = 80
+DYNAMIC_RSI_OS_BASE = 22
+
+SLOW_RSI_OS_DELTA    = -4   # allow lower RSI before blocking shorts
+SLOW_RSI_OB_DELTA    = +2   # slightly stricter for longs in slow markets
+
+ACTIVE_RSI_OS_DELTA  = +2   # stricter shorts in fast trend unless lag confirms
+ACTIVE_RSI_OB_DELTA  = -2   # allow stronger RSI in active upside trend
+
+OFF_RSI_OS_DELTA     = -2   # off-hours: allow deeper RSI before block
+OFF_RSI_OB_DELTA     = -2
+ASIA_RSI_OS_DELTA    = -1
+ASIA_RSI_OB_DELTA    = -1
+LONDON_RSI_OS_DELTA  = +0
+LONDON_RSI_OB_DELTA  = +0
+OVERLAP_RSI_OS_DELTA = +1
+OVERLAP_RSI_OB_DELTA = -2
+
+STRONG_LAG_RSI_OS_DELTA = -3
+STRONG_LAG_RSI_OB_DELTA = +3
+
 
 # =============================================================================
 # Regime Detection
@@ -374,6 +401,61 @@ def compute_dynamic_momentum_threshold(volatility, config=None):
     threshold = base * abs(volatility) * multiplier
     threshold = max(min_floor, min(threshold, max_cap))
     return threshold
+
+
+def get_dynamic_rsi_thresholds(cex, poly, config=None):
+    """
+    Return (rsi_overbought, rsi_oversold) after regime/session/lag adjustment.
+
+    Higher overbought threshold = allow stronger upside trend before blocking long.
+    Lower oversold threshold    = allow deeper downside trend before blocking short.
+    """
+    cfg = config or {}
+
+    use_dynamic = cfg.get("use_dynamic_rsi_thresholds", USE_DYNAMIC_RSI_THRESHOLDS)
+    if not use_dynamic:
+        return (
+            cfg.get("rsi_overbought", RSI_OVERBOUGHT),
+            cfg.get("rsi_oversold", RSI_OVERSOLD),
+        )
+
+    ob = cfg.get("dynamic_rsi_overbought_base", cfg.get("rsi_overbought", DYNAMIC_RSI_OB_BASE))
+    os_ = cfg.get("dynamic_rsi_oversold_base", cfg.get("rsi_oversold", DYNAMIC_RSI_OS_BASE))
+
+    regime  = detect_market_regime(cex, cfg)
+    session = get_market_session(datetime.now(timezone.utc).hour, cfg)
+    lag     = abs(_calc_cex_poly_lag(cex, poly) or 0.0)
+    vol_r   = cex.get("volume_ratio", 1.0) or 1.0
+
+    # ── Regime adjustment ─────────────────────────────────────────────
+    if regime == "slow":
+        ob += cfg.get("slow_rsi_overbought_delta", +2)
+        os_ += cfg.get("slow_rsi_oversold_delta", -4)
+    elif regime == "active":
+        ob += cfg.get("active_rsi_overbought_delta", -2)
+        os_ += cfg.get("active_rsi_oversold_delta", +2)
+
+    # ── Session adjustment ────────────────────────────────────────────
+    ob += cfg.get(f"{session}_rsi_overbought_delta", 0)
+    os_ += cfg.get(f"{session}_rsi_oversold_delta", 0)
+
+    # ── Strong lag adjustment ─────────────────────────────────────────
+    strong_lag = cfg.get("min_lag_override", 0.12)
+    if lag >= strong_lag:
+        ob += cfg.get("strong_lag_rsi_overbought_delta", +3)
+        os_ += cfg.get("strong_lag_rsi_oversold_delta", -3)
+
+    # ── Volume adjustment ─────────────────────────────────────────────
+    # Low volume -> less trust in RSI extremes, allow deeper oversold/overbought
+    if vol_r != 1.0 and vol_r < 0.5:
+        ob += cfg.get("low_volume_rsi_overbought_delta", -1)
+        os_ += cfg.get("low_volume_rsi_oversold_delta", -2)
+
+    # Safety clamps
+    ob = max(65, min(92, ob))
+    os_ = max(8, min(40, os_))
+
+    return ob, os_
 
 
 # =============================================================================
