@@ -654,7 +654,7 @@ def extract_cex_signals(symbol="BTCUSDT"):
         closes_15m = [float(c[4]) for c in k15]
         signals["momentum_15m"] = (closes_15m[-1] - closes_15m[-2]) / closes_15m[-2] * 100
 
-    if signals.get("momentum_5m") and signals.get("volatility_5m") and signals["volatility_5m"] > 0:
+    if (signals.get("momentum_5m") is not None   and signals.get("volatility_5m") is not None   and signals["volatility_5m"] > 0):
         signals["vol_adjusted_momentum"] = signals["momentum_5m"] / signals["volatility_5m"]
 
     ob = fetch_binance_orderbook(symbol, 20)
