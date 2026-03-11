@@ -66,9 +66,7 @@
   "one_trade_per_window": true,
   "loss_cooldown_enabled": true,
   "loss_cooldown_streak": 3,
-  "blocked_hours": [
-    15
-  ],
+  "blocked_hours": [],
   "boosted_hours": {
     "0": -0.01,
     "2": -0.03,
