@@ -509,8 +509,7 @@ def apply_filters(cex, poly, config=None):
         return False, f"volatility too high ({vol5:.3f} > {max_vol_5m})"
 
     # RSI hard blocks
-    rsi_ob = cfg.get("rsi_overbought", RSI_OVERBOUGHT)
-    rsi_os = cfg.get("rsi_oversold", RSI_OVERSOLD)
+    rsi_ob, rsi_os = get_dynamic_rsi_thresholds(cex, poly, cfg)
 
     if rsi is not None:
         rsi_override = cfg.get("active_rsi_override", False)
