@@ -52,7 +52,7 @@
   "slow_max_entry_yes": 0.465,
   "slow_min_entry_no": 0.535,
   "slow_position_pct_cap": 0.7,
-  "slow_composite_threshold" = 0.68,
+  "slow_composite_threshold": 0.68,
   "min_payout_ratio": 0.96,
   "slow_min_payout_ratio": 0.96,
   "normal_position_pct_cap": 0.9,
