@@ -1043,7 +1043,7 @@ def run_fast_market_strategy(
     # ratios (you earn more per dollar if the rare move materialises). Block
     # entries where the market has already drifted far from 0.50 in a slow
     # regime — the edge is gone and the payout is poor.
-    if regime == "slow":
+    if regime == "slow" and not raw_cfg.get("use_dynamic_price_bands", True):
         slow_max_entry_yes = raw_cfg.get("slow_max_entry_yes", 0.54)
         slow_min_entry_no  = raw_cfg.get("slow_min_entry_no",  0.46)
         if side == "yes" and market_yes_price > slow_max_entry_yes:
