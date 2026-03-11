@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pknwitq Composite Signal Engine  —  v2.0
+Pknwitq Composite Signal Engine  —  v2.1
 
 Drop-in replacement for the single-momentum signal in fast_trader.py.
 Combines multiple signal factors into a scored, directional trade decision.
@@ -15,6 +15,67 @@ Integration:
         side         = signal["side"]
         confidence   = signal["confidence"]
         position_pct = signal["position_pct"]   # 0.0–1.0, scale your max size by this
+
+─────────────────────────────────────────────────────────────────────────────
+  CHANGELOG v2.1
+─────────────────────────────────────────────────────────────────────────────
+
+  10. Active-regime RSI override  (config: "active_rsi_override": true)
+        In v2.0 the RSI hard block fired unconditionally at rsi_overbought /
+        rsi_oversold regardless of market context. RSI correlates +0.103 with
+        outcomes — high RSI in a genuine trend is bullish confirmation, not
+        an exhaustion signal. During a validated active regime, a hard RSI
+        block was inverting the signal's own meaning.
+
+        New: when active_rsi_override is enabled and ALL of the following are
+        true simultaneously, the RSI hard block is bypassed:
+          • regime == "active"          (strong momentum + above-avg volume)
+          • |cex_poly_lag| >= min_lag_override  (genuine arb gap confirmed)
+          • session in ("overlap", "london")    (peak institutional liquidity)
+
+        Only these three conditions together justify override. The RSI block
+        remains fully active in slow and normal regimes, in off/asia sessions,
+        and whenever lag is below the override threshold. Disabled by default
+        (active_rsi_override: false) — must be explicitly enabled in config.
+
+        Observed impact: 13:05–13:15 UTC session, active/overlap, RSI 76–92,
+        lag +0.100 to +0.331. All 20 cycles blocked in v2.0. With override
+        enabled, the early cycles (RSI 76–84, lag confirmed) would proceed
+        to scoring and the composite score would determine entry. The extreme
+        exhaustion cycles (RSI 89–92 at candle-end with momentum decelerating)
+        would self-filter via the scoring step.
+
+  11. Structural lag bypass for minimum momentum gate
+        (config: "lag_momentum_override": true, "min_vs_ref_override": 0.15)
+
+        Structural divergence pattern: after a large validated spike, the
+        5m candle consolidates. m5 drops to near zero while btc_vs_reference
+        remains strongly positive (BTC is still well above priceToBeat) and
+        cex_poly_lag remains large (poly still hasn't fully repriced). The
+        momentum gate (min_momentum_pct) blocks the trade because m5 is flat,
+        but both the structural position and arb signals remain strongly active.
+
+        Implementation note: checking regime=="active" here would be circular.
+        The regime detector uses |momentum_5m| as its primary input — when m5
+        is flat the regime returns "slow" regardless of what caused the flat.
+        The correct discriminator is btc_vs_reference magnitude, which stays
+        elevated for the entire candle after a spike, independently of m5.
+
+        Override fires only when ALL four conditions are met:
+          • |btc_vs_reference| >= min_vs_ref_override (default 0.20)
+            — spike was real and substantial; excludes slow-market noise
+          • |cex_poly_lag|     >= min_lag_override    (default 0.12)
+            — arb gap still open; poly hasn't repriced
+          • cex_lag and btc_vs_reference agree in direction (no conflict)
+          • vol_ratio >= 0.5 and not the sentinel value (1.0)
+            — some volume present; pure zero-vol consolidation is unreliable
+
+        The 0.20 default for min_vs_ref_override is the key discriminator:
+          Slow-market small spike:   vs_ref ≈ 0.10–0.14%  → BLOCKED (< 0.20)
+          Post-spike consolidation:  vs_ref ≈ 0.20–0.35%  → ALLOWED (≥ 0.20)
+
+        Disabled by default (lag_momentum_override: false) — must be
+        explicitly enabled in config.
 
 ─────────────────────────────────────────────────────────────────────────────
   CHANGELOG v2.0  (calibrated from 10,090 resolved observations)
@@ -592,8 +653,53 @@ def apply_filters(cex, poly, config=None):
     min_mom     = cfg.get("min_momentum_pct", MIN_MOMENTUM_ABS)
 
     # ── Minimum momentum gate ────────────────────────────────────────────────
+    # Bypass condition: "lag_momentum_override" (default: false)
+    #
+    # Structural divergence pattern: after a large validated spike, the 5m
+    # candle consolidates — m5 drops to near zero while btc_vs_reference
+    # remains strongly elevated and cex_poly_lag remains large.  The regime
+    # detector (which uses m5 as its primary input) will itself return "slow"
+    # at this point, so checking regime=="active" here would be circular and
+    # would never fire. The correct discriminator is vs_ref magnitude: a large
+    # vs_ref means a significant spike DID happen regardless of current m5.
+    #
+    # Override fires only when ALL four conditions are met:
+    #   1. |btc_vs_reference| >= min_vs_ref_override (0.20)
+    #      — large structural gap: spike was real and substantial
+    #   2. |cex_poly_lag| >= min_lag_override (0.12)
+    #      — arb gap still open: poly hasn't repriced yet
+    #   3. cex_lag and btc_vs_reference agree in direction (no conflict)
+    #      — both signals point the same way, no mixed evidence
+    #   4. vol_ratio != 1.0 (not the sentinel) AND vol_ratio >= 0.5
+    #      — some volume confirmation: pure zero-volume consolidation
+    #        with strong vs_ref is unreliable; require at least 50% avg vol
+    #
+    # Default min_vs_ref_override = 0.20 differentiates the two patterns:
+    #   Slow-market small spike:  vs_ref ≈ 0.10-0.14%  → BLOCKED (< 0.20)
+    #   Post-active consolidation: vs_ref ≈ 0.20-0.35% → ALLOWED (>= 0.20)
+    #
+    # Does NOT require regime=="active" for the reason above. The vs_ref +
+    # lag magnitude guards are sufficient to exclude slow-market noise.
     if m5 is not None and abs(m5) < min_mom:
-        return False, f"momentum too weak ({m5:+.3f}% < ±{min_mom}%)"
+        lag_mom_override = cfg.get("lag_momentum_override", False)
+        _allowed = False
+        if lag_mom_override:
+            _lag      = _calc_cex_poly_lag(cex, poly) or 0.0
+            _ref      = cex.get("btc_vs_reference") or 0.0
+            _vr       = cex.get("volume_ratio") or 1.0
+            _min_lag  = cfg.get("min_lag_override",    0.12)
+            _min_ref  = cfg.get("min_vs_ref_override", 0.20)
+            _same_dir = (_lag > 0) == (_ref > 0)
+            _vol_ok   = _vr != 1.0 and _vr >= 0.5
+            _allowed  = (
+                abs(_ref) >= _min_ref
+                and abs(_lag) >= _min_lag
+                and _same_dir
+                and _vol_ok
+            )
+        if not _allowed:
+            return False, f"momentum too weak ({m5:+.3f}% < ±{min_mom}%)"
+        # else: structural arb confirmed — vs_ref large, lag open, vol present
 
     # ── Volatility gate ──────────────────────────────────────────────────────
     max_vol_5m = cfg.get("max_volatility_5m", MAX_VOLATILITY_5M)
@@ -604,13 +710,58 @@ def apply_filters(cex, poly, config=None):
     # Thresholds loosened vs v1 (overbought 75→80, oversold 35→22).
     # The graded normalize_rsi weight self-penalises before this fires.
     # Hard blocks now target genuine exhaustion / capitulation only.
+    #
+    # Bypass condition: "active_rsi_override" (default: false)
+    #
+    # RSI correlates +0.103 with outcomes — high RSI in a genuine trend
+    # is bullish confirmation, not an exhaustion signal. In an active regime
+    # with confirmed arb lag during peak liquidity, the hard block inverts
+    # the signal's own meaning. The three-condition guard ensures the bypass
+    # only fires during validated trends; it never fires in slow/normal
+    # markets, off/asia sessions, or when lag is below the override threshold.
+    #
+    # Override fires only when ALL three conditions are met:
+    #   1. regime == "active"                    — confirmed strong trend
+    #   2. |cex_poly_lag| >= min_lag_override    — genuine arb gap open
+    #   3. session in ("overlap", "london")      — peak institutional liquidity
+    #      (RSI exhaustion near open or in Asia is a real reversal warning
+    #       even in active conditions — session restriction keeps the guard tight)
     rsi_ob = cfg.get("rsi_overbought", RSI_OVERBOUGHT)
     rsi_os = cfg.get("rsi_oversold",   RSI_OVERSOLD)
     if rsi is not None:
+        rsi_override = cfg.get("active_rsi_override", False)
+
         if m5 is not None and m5 > 0 and rsi > rsi_ob:
-            return False, f"RSI overbought ({rsi:.0f} > {rsi_ob}), skip long"
+            _bypassed = False
+            if rsi_override:
+                _regime  = detect_market_regime(cex, cfg)
+                _lag     = _calc_cex_poly_lag(cex, poly) or 0.0
+                _min_lag = cfg.get("min_lag_override", 0.12)
+                _session = get_market_session(datetime.now(timezone.utc).hour, cfg)
+                _bypassed = (
+                    _regime == "active"
+                    and abs(_lag) >= _min_lag
+                    and _session in ("overlap", "london")
+                )
+            if not _bypassed:
+                return False, f"RSI overbought ({rsi:.0f} > {rsi_ob}), skip long"
+            # else: active trend + confirmed lag + peak session — bypass RSI block
+
         if m5 is not None and m5 < 0 and rsi < rsi_os:
-            return False, f"RSI oversold ({rsi:.0f} < {rsi_os}), skip short"
+            _bypassed = False
+            if rsi_override:
+                _regime  = detect_market_regime(cex, cfg)
+                _lag     = _calc_cex_poly_lag(cex, poly) or 0.0
+                _min_lag = cfg.get("min_lag_override", 0.12)
+                _session = get_market_session(datetime.now(timezone.utc).hour, cfg)
+                _bypassed = (
+                    _regime == "active"
+                    and abs(_lag) >= _min_lag
+                    and _session in ("overlap", "london")
+                )
+            if not _bypassed:
+                return False, f"RSI oversold ({rsi:.0f} < {rsi_os}), skip short"
+            # else: active trend + confirmed lag + peak session — bypass RSI block
 
     # ── Poly spread gate ─────────────────────────────────────────────────────
     # Blocks illiquid windows where execution risk exceeds arb opportunity.
@@ -935,7 +1086,7 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
 # =============================================================================
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Composite signal engine v2.0")
+    parser = argparse.ArgumentParser(description="Composite signal engine v2.1")
     parser.add_argument("--symbol",       default="BTCUSDT")
     parser.add_argument("--condition-id", default=None)
     parser.add_argument("--config",       default=None,
@@ -971,7 +1122,7 @@ if __name__ == "__main__":
 
     W = 64
     print(f"\n{'─'*W}")
-    print(f"  COMPOSITE SIGNAL  v2.0")
+    print(f"  COMPOSITE SIGNAL  v2.1")
     print(f"{'─'*W}")
     print(f"  Score:          {signal['score']:.4f}   (0.5 = neutral)")
     if signal["threshold_used"] is not None:
@@ -985,6 +1136,10 @@ if __name__ == "__main__":
           f"({signal['hour_utc']}h UTC, accuracy={signal['hour_accuracy']:.1%})")
     if signal["lag_value"] is not None:
         print(f"  CEX-Poly lag:   {signal['lag_value']:+.4f}%")
+    rsi_ov  = cfg.get("active_rsi_override",   False)
+    lag_ov  = cfg.get("lag_momentum_override",  False)
+    print(f"  Overrides:      RSI={'ON' if rsi_ov else 'off'}  "
+          f"LagMomentum={'ON' if lag_ov else 'off'}")
     if signal["filter_reason"]:
         print(f"  Blocked by:     {signal['filter_reason']}")
 
