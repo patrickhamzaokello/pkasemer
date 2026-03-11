@@ -33,7 +33,7 @@ Signal candidates tracked:
 
   Derived / Combo Signals:
     - btc_vs_reference                            (price_now - ref) / ref * 100
-    - cex_poly_lag                                momentum direction vs poly pricing
+    - cex_poly_lag                                btc_vs_reference - poly_divergence
     - momentum_consistency                        # of recent candles agreeing on direction
     - vol_adjusted_momentum                       momentum / recent volatility
 
@@ -728,21 +728,20 @@ def extract_poly_signals(market_data):
 
     return signals
 
-
 def derive_combo_signals(cex, poly, price_to_beat=None):
     """Derive cross-signal features."""
     derived = {}
 
-    if cex.get("momentum_5m") is not None and poly.get("poly_divergence") is not None:
-        poly_div = poly["poly_divergence"]
-        derived["cex_poly_lag"] = cex["momentum_5m"] * (0.15 - max(-0.15, min(0.15, poly_div))) / 0.15
-
-    if price_to_beat and cex.get("price_now"):
+    if price_to_beat and cex.get("price_now") is not None:
         derived["btc_vs_reference"] = (
             (cex["price_now"] - price_to_beat) / price_to_beat * 100
         )
 
+    if derived.get("btc_vs_reference") is not None and poly.get("poly_divergence") is not None:
+        derived["cex_poly_lag"] = derived["btc_vs_reference"] - poly["poly_divergence"]
+
     return derived
+
 
 
 # =============================================================================
@@ -1274,7 +1273,7 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
                 filter_reason = (f"score {sig['score']:.3f} > "
                                  f"max_no_score {_max_no:.3f}")
 
-        if would_trade and _regime == "slow":
+        if would_trade and _regime == "slow" and not _raw_cfg.get("use_dynamic_price_bands", True):
             # 5. Slow-market entry price tightening
             _slow_max_yes = _raw_cfg.get("slow_max_entry_yes", 0.465)
             _slow_min_no  = _raw_cfg.get("slow_min_entry_no",  0.535)
