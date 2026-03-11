@@ -111,6 +111,15 @@ CONFIG_SCHEMA = {
     "webhook_url":             {"default": "",        "env": "SIMMER_WEBHOOK_URL",         "type": str},
     "telegram_bot_token":      {"default": "",        "env": "TELEGRAM_BOT_TOKEN",         "type": str},
     "telegram_chat_id":        {"default": "",        "env": "TELEGRAM_CHAT_ID",           "type": str},
+        "use_dynamic_price_bands":       {"default": True,  "env": None, "type": bool},
+    "dynamic_lag_weight":            {"default": 0.40,  "env": None, "type": float},
+    "dynamic_vol_k":                 {"default": 0.01,  "env": None, "type": float},
+    "global_max_yes":                {"default": 0.49,  "env": None, "type": float},
+    "global_min_no":                 {"default": 0.51,  "env": None, "type": float},
+    "use_dynamic_momentum_threshold":{"default": True,  "env": None, "type": bool},
+    "dynamic_momentum_multiplier":   {"default": 1.0,   "env": None, "type": float},
+    "min_dynamic_momentum":          {"default": 0.01,  "env": None, "type": float},
+    "max_dynamic_momentum":          {"default": 0.12,  "env": None, "type": float},
 }
 
 
@@ -163,8 +172,9 @@ def _get_config_path(skill_file, config_filename="config.json"):
     return _resolve_config_path(skill_file, config_filename)
 
 
+
 def _update_config(updates, skill_file, config_filename="config.json"):
-    config_path = Path(skill_file).parent / config_filename
+    config_path = _resolve_config_path(skill_file, config_filename)
     existing = {}
     if config_path.exists():
         try:
