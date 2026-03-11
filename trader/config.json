@@ -5,7 +5,7 @@
   "max_no_score": 0.3,
   "min_time_remaining": 90,
   "max_time_remaining": 360,
-  "scheduler_interval": 20,
+  "scheduler_interval": 10,
   "asset": "BTC",
   "window": "5m",
   "signal_source": "binance",
