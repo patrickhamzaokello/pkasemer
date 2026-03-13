@@ -1143,12 +1143,15 @@ def run_fast_market_strategy(
     hour_acc_str = f"{hour_acc:.0%}"
     session      = signal.get("session", "?")
 
-    # ── Signal flip early exit ────────────────────────────────────────────────
-    # Fires on either condition:
+    # ── Signal flip early exit + take-profit ─────────────────────────────────
+    # Fires on any of:
     #   1. Opposite-side signal: composite signal actively recommends the other
     #      side (should_trade=True, side != held). Sell immediately.
     #   2. Score threshold: score crosses the flip threshold even without an
     #      active opposing signal (protective cut on weakening conviction).
+    #   3. Take-profit: Poly price has moved far enough in our favour that the
+    #      arb spread is captured — lock in profit rather than hold to binary
+    #      resolution. (take_profit_enabled in trading config)
     # Note: one_trade_per_window does NOT affect this path — the check below
     # runs before the window lock and returns before reaching it.
     if not dry_run and trading_cfg.get("signal_flip_exit_enabled", True):
@@ -1165,14 +1168,29 @@ def run_fast_market_strategy(
                 (_held == "yes" and score < _flip_thr) or
                 (_held == "no"  and score > 1.0 - _flip_thr)
             )
-            _flipped = _opposite_signal or _score_flipped
+
+            # Take-profit: sell when Poly price has repriced to capture the arb.
+            # YES: bought low (≈0.505), sell when market_yes_price ≥ tp_yes (≈0.78)
+            # NO:  bought low (≈0.495), sell when market_yes_price ≤ tp_no  (≈0.22)
+            _tp_enabled  = trading_cfg.get("take_profit_enabled", False)
+            _tp_yes      = trading_cfg.get("take_profit_yes_price", 0.78)
+            _tp_no       = trading_cfg.get("take_profit_no_price",  0.22)
+            _take_profit = (
+                _tp_enabled and (
+                    (_held == "yes" and market_yes_price >= _tp_yes) or
+                    (_held == "no"  and market_yes_price <= _tp_no)
+                )
+            )
+
+            _flipped = _opposite_signal or _score_flipped or _take_profit
 
             if _flipped:
-                _reason = (
-                    f"opposite signal ({signal.get('side','?').upper()})"
-                    if _opposite_signal
-                    else f"score {score:.3f} crossed threshold {_flip_thr}"
-                )
+                if _take_profit:
+                    _reason = f"take-profit poly={market_yes_price:.3f}"
+                elif _opposite_signal:
+                    _reason = f"opposite signal ({signal.get('side','?').upper()})"
+                else:
+                    _reason = f"score {score:.3f} crossed threshold {_flip_thr}"
                 _shares = _open.get("shares", 0)
                 log(
                     f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
