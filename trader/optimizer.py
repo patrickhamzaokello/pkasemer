@@ -57,12 +57,6 @@ _PARAM_SECTION = {
     "blocked_hours":              "signal",
     "boosted_hours":              "signal",
     # trading section
-    "max_entry_yes":              "trading",
-    "min_entry_yes":              "trading",
-    "min_entry_no":               "trading",
-    "max_entry_no":               "trading",
-    "slow_max_entry_yes":         "trading",
-    "slow_min_entry_no":          "trading",
     "min_payout_ratio":           "trading",
     "slow_min_payout_ratio":      "trading",
     "max_position":               "trading",
@@ -85,17 +79,6 @@ BOUNDS = {
     "composite_threshold":          (0.65, 0.90),
     "slow_composite_threshold":     (0.68, 0.92),
     "active_composite_threshold":   (0.60, 0.82),
-
-    # Entry price — payout ratio = (1-p)/p.
-    # At 0.476: payout=1.10x. At 0.42: payout=1.38x.
-    # Lower bound 0.40 ensures we're never buying with < 1.50x payout floor.
-    # Upper bound 0.490 ensures every YES entry has ≥ 1.04x payout.
-    "max_entry_yes":                (0.40, 0.490),
-    "min_entry_yes":                (0.25, 0.50),
-    "min_entry_no":                 (0.20, 0.50),
-    "max_entry_no":                 (0.50, 0.75),
-    "slow_max_entry_yes":           (0.38, 0.485),
-    "slow_min_entry_no":            (0.515, 0.62),
 
     # Payout ratio — NEVER below 1.05 (wins must cover losses structurally).
     "min_payout_ratio":             (1.05, 1.60),
@@ -129,7 +112,6 @@ MAX_STEP = {
     "composite_threshold":          0.02,
     "slow_composite_threshold":     0.02,
     "active_composite_threshold":   0.02,
-    "max_entry_yes":                0.01,
     "min_payout_ratio":             0.05,
     "slow_min_payout_ratio":        0.05,
     "min_momentum_pct":             0.02,
@@ -345,36 +327,16 @@ def compute_adjustments(overall, score_buckets, price_buckets, hour_analysis,
     cur_thr  = _sig.get("composite_threshold", 0.70)
     cur_mpr  = _trd.get("min_payout_ratio", 1.10)
     cur_smpr = _trd.get("slow_min_payout_ratio", 1.15)
-    cur_mey  = _trd.get("max_entry_yes", 0.476)
 
     # ── 1. Payout structure (runs regardless of trade count if we have wins/losses)
     # This is the most critical check: avg win must cover avg loss.
     if overall["wins"] >= 3 and overall["losses"] >= 3:
         if pr < MIN_PNL_RATIO:
-            # Wins not covering losses → tighten entry price (lower max_entry_yes)
-            # At lower entry price, payout ratio improves structurally.
-            new_mey = _step(cur_mey, -0.01, "max_entry_yes")
-            if new_mey < cur_mey:
-                changes.append((
-                    "max_entry_yes", new_mey,
-                    f"pnl_ratio={pr:.3f} < {MIN_PNL_RATIO} — tighten entry price "
-                    f"to improve payout (wins not covering losses)"
-                ))
-            # Also raise min_payout_ratio target
             new_mpr = _step(cur_mpr, 0.05, "min_payout_ratio")
             if new_mpr > cur_mpr:
                 changes.append((
                     "min_payout_ratio", new_mpr,
                     f"pnl_ratio={pr:.3f} below target — raise payout floor"
-                ))
-
-        elif pr > TARGET_PNL_RATIO * 1.5 and wr > TARGET_WIN_RATE:
-            # Very high payout + high win rate → slightly relax entry price cap
-            new_mey = _step(cur_mey, +0.005, "max_entry_yes")
-            if new_mey > cur_mey:
-                changes.append((
-                    "max_entry_yes", new_mey,
-                    f"pnl_ratio={pr:.3f} healthy, wr={wr:.1%} — minor relaxation"
                 ))
 
     # ── 2. Win rate calibration (needs MIN_TRADES_OVERALL)
@@ -418,30 +380,7 @@ def compute_adjustments(overall, score_buckets, price_buckets, hour_analysis,
                     ))
                 break  # only act on the weakest bucket once per run
 
-    # ── 4. Entry price analysis — check if high entry prices are losing more
-    if n >= MIN_TRADES_OVERALL:
-        # Find the highest entry price bucket with enough trades and bad win rate
-        for pb in reversed(price_buckets):
-            if pb["n"] < MIN_TRADES_BUCKET:
-                continue
-            pwr = pb["win_rate"]
-            # Parse bucket upper bound
-            try:
-                p_upper = float(pb["bucket"].split("-")[1])
-            except Exception:
-                continue
-            # High entry price with bad win rate → tighten max_entry_yes
-            if pwr is not None and pwr < 0.55 and p_upper > cur_mey - 0.03:
-                new_mey = _step(cur_mey, -0.01, "max_entry_yes")
-                if new_mey < cur_mey:
-                    changes.append((
-                        "max_entry_yes", new_mey,
-                        f"entry price bucket {pb['bucket']} has wr={pwr:.1%} "
-                        f"(N={pb['n']}) — tighten entry price cap"
-                    ))
-                break  # one change per run
-
-    # ── 5. Hour analysis — block bad hours, boost good ones
+    # ── 4. Hour analysis — block bad hours, boost good ones
     if n >= MIN_TRADES_OVERALL:
         blocked = list(_sig.get("blocked_hours", [6, 8, 16]))
         boosted = {int(k): v for k, v in
@@ -633,11 +572,12 @@ def run_optimizer(apply=False, verbose=True):
                     print(f"    {pb['bucket']}  wr={pb['win_rate']:.1%}  N={pb['n']}  avg_pnl={avg_s}")
 
         if hour_analysis:
+            _sig_disp_hr = config.get("signal", config)
             print(f"\n  Hour win rates (UTC, min {MIN_TRADES_HOUR} trades):")
             for h in sorted(hour_analysis.keys()):
                 hd = hour_analysis[h]
                 if hd["n"] >= MIN_TRADES_HOUR:
-                    blocked = h in _sig.get("blocked_hours", config.get("blocked_hours", []))
+                    blocked = h in _sig_disp_hr.get("blocked_hours", config.get("blocked_hours", []))
                     tag = " [BLOCKED]" if blocked else ""
                     print(f"    {h:02d}h  wr={hd['win_rate']:.1%}  N={hd['n']}{tag}")
 
