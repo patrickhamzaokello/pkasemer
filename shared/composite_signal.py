@@ -207,10 +207,6 @@ DYNAMIC_MOMENTUM_MULTIPLIER    = 1.0
 MIN_DYNAMIC_MOMENTUM           = 0.010
 MAX_DYNAMIC_MOMENTUM           = 0.120
 
-RSI_OVERBOUGHT = 80
-RSI_OVERSOLD   = 22
-
-
 USE_DYNAMIC_RSI_THRESHOLDS = True
 
 DYNAMIC_RSI_OB_BASE = 80
@@ -535,11 +531,15 @@ def apply_filters(cex, poly, config=None):
                 regime = detect_market_regime(cex, cfg)
                 lag = _calc_cex_poly_lag(cex, poly) or 0.0
                 min_lag = cfg.get("min_lag_override", 0.12)
+                very_strong_lag = cfg.get("very_strong_lag_override", 0.20)
                 session = get_market_session(datetime.now(timezone.utc).hour, cfg)
                 bypassed = (
-                    regime == "active"
-                    and abs(lag) >= min_lag
+                    abs(lag) >= min_lag
                     and session in ("overlap", "london")
+                    and (
+                        regime == "active"
+                        or (regime == "normal" and abs(lag) >= very_strong_lag)
+                    )
                 )
             if not bypassed:
                 return False, f"RSI overbought ({rsi:.0f} > {rsi_ob}), skip long"
@@ -550,11 +550,15 @@ def apply_filters(cex, poly, config=None):
                 regime = detect_market_regime(cex, cfg)
                 lag = _calc_cex_poly_lag(cex, poly) or 0.0
                 min_lag = cfg.get("min_lag_override", 0.12)
+                very_strong_lag = cfg.get("very_strong_lag_override", 0.20)
                 session = get_market_session(datetime.now(timezone.utc).hour, cfg)
                 bypassed = (
-                    regime == "active"
-                    and abs(lag) >= min_lag
+                    abs(lag) >= min_lag
                     and session in ("overlap", "london")
+                    and (
+                        regime == "active"
+                        or (regime == "normal" and abs(lag) >= very_strong_lag)
+                    )
                 )
             if not bypassed:
                 return False, f"RSI oversold ({rsi:.0f} < {rsi_os}), skip short"

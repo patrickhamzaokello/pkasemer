@@ -83,8 +83,8 @@
     "use_dynamic_price_bands": true,
     "dynamic_lag_weight": 0.4,
     "dynamic_vol_k": 0.01,
-    "global_max_yes": 0.488,
-    "global_min_no": 0.512,
+    "global_max_yes": 0.510,
+    "global_min_no": 0.505,
     "signal_flip_exit_threshold": 0.40,
 
     "volume_confidence": false,
@@ -93,7 +93,7 @@
     "momentum_15m_agreement_filter": true,
     "momentum_agreement_min_15m": 0.035,
 
-    "blocked_hours": [15],
+    "blocked_hours": [6, 8, 16],
     "boosted_hours": {
       "0": -0.01,
       "2": -0.03,
@@ -101,7 +101,6 @@
       "4": -0.03,
       "5": -0.03,
       "7": -0.03,
-      "8": -0.03,
       "9": -0.03,
       "10": -0.02,
       "14": -0.03,
@@ -131,7 +130,8 @@
     "active_rsi_override": true,
     "lag_momentum_override": true,
     "min_lag_override": 0.12,
-    "min_vs_ref_override": 0.20
+    "min_vs_ref_override": 0.20,
+    "very_strong_lag_override": 0.20
   },
 
   "trading": {
@@ -143,14 +143,14 @@
     "min_entry_price": 0.35,
     "min_liquidity_ratio": 0.2,
     "min_score_to_import": 0.65,
-    "one_trade_per_window": false,
+    "one_trade_per_window": true,
     "signal_flip_exit_enabled": true,
     "loss_cooldown_enabled": true,
     "loss_cooldown_streak": 3,
     "loss_cooldown_skip_cycles": 6,
     "loss_cooldown_resume_threshold_boost": 0.07,
-    "min_payout_ratio": 1.05,
-    "slow_min_payout_ratio": 1.08,
+    "min_payout_ratio": 0.90,
+    "slow_min_payout_ratio": 1.05,
     "fee_ev_min_edge": 0.03,
     "fee_ev_min_edge_slow": 0.05,
     "min_position_size_usd": 0.50,
