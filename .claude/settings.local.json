@@ -37,7 +37,13 @@
       "Bash(PYTHONUTF8=1 py:*)",
       "Bash(python3.exe:*)",
       "Bash(find \"C:\\\\Users\\\\pkase\\\\Desktop\\\\CANIMAKEADOLLAR\\\\polymarket-trader-1.0.12\" -maxdepth 2 -name \"Dockerfile*\" -o -name \"docker-compose*\" -o -name \"*.sh\" -o -name \"*.bat\" -o -name \"*.ps1\" 2>/dev/null | head -30)",
-      "Bash(chmod +x \"C:\\\\Users\\\\pkase\\\\Desktop\\\\CANIMAKEADOLLAR\\\\polymarket-trader-1.0.12\\\\deploy.sh\" 2>/dev/null; echo \"done\")"
+      "Bash(chmod +x \"C:\\\\Users\\\\pkase\\\\Desktop\\\\CANIMAKEADOLLAR\\\\polymarket-trader-1.0.12\\\\deploy.sh\" 2>/dev/null; echo \"done\")",
+      "Bash(tasklist 2>/dev/null | grep -i python || echo \"no python processes found\")",
+      "Bash(Start-Process \"C:/Program Files/Docker/Docker/Docker Desktop.exe\" 2>/dev/null; echo \"Starting Docker Desktop...\")",
+      "Bash(wsl -l -v 2>&1 | cat)",
+      "Bash(tasklist 2>/dev/null | grep -i \"docker\\\\|Desktop\" | head -10)",
+      "Bash(powershell -Command \"Get-Process | Where-Object {$_.Name -like '*docker*' -or $_.Name -like '*Desktop*'} | Select-Object Name,Id,CPU\" 2>&1)",
+      "Bash(cmd /c \"tasklist | findstr /i docker\")"
     ]
   }
 }

@@ -377,6 +377,38 @@ def _send_telegram(token: str, chat_id: str, slug: str, side: str, score: float,
         return None
 
 
+def _send_telegram_sell(token: str, chat_id: str, slug: str, side: str, score: float,
+                        shares: float, reason: str, remaining: float) -> None:
+    """Send an early-exit (sell) alert via Telegram Bot API."""
+    if not token or not token.strip():
+        print("[telegram] SKIP sell alert: TELEGRAM_BOT_TOKEN not set", flush=True)
+        return
+    if not chat_id or not chat_id.strip():
+        print("[telegram] SKIP sell alert: TELEGRAM_CHAT_ID not set", flush=True)
+        return
+    arrow  = "\u26aa"  # ⚪ exit
+    bar    = "\u2501" * 20
+    market = slug if len(slug) <= 40 else slug[:37] + "..."
+    text   = (
+        f"{arrow} <b>EXIT TRADE \u2014 sold {side.upper()}</b>\n"
+        f"<code>{bar}</code>\n"
+        f"Market: <code>{market}</code>\n"
+        f"Reason: <b>{reason}</b>\n"
+        f"Score:  <b>{score:.3f}</b>  |  {remaining:.0f}s left\n"
+        f"Shares: {shares:.1f}"
+    )
+    payload = json.dumps({"chat_id": chat_id.strip(), "text": text,
+                          "parse_mode": "HTML"}).encode()
+    try:
+        url = f"https://api.telegram.org/bot{token.strip()}/sendMessage"
+        req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        with urlopen(req, timeout=8) as resp:
+            json.loads(resp.read().decode())
+        print(f"[telegram] sell alert sent → EXIT {side.upper()} {shares:.1f} shares", flush=True)
+    except Exception as _tg_err:
+        print(f"[telegram] sell alert FAILED: {_tg_err}", flush=True)
+
+
 def _send_telegram_outcome(token: str, chat_id: str, trade: dict,
                            reply_to_message_id=None) -> None:
     """Send a trade resolution alert via Telegram Bot API."""
@@ -518,21 +550,36 @@ def _find_open_position(slug):
 
 def _mark_position_exited(trade_id):
     """
-    Mark a trade in trade_log.json as 'exited' (early sell before resolution).
+    Mark a trade as 'exited' (early sell before resolution).
+    Updates trade_log.json and the SQLite trades table.
     PnL is left as None — backfill will update it when the sell settles.
     """
-    if not _TRADE_LOG_FILE.exists():
-        return
+    # Update trade_log.json
+    if _TRADE_LOG_FILE.exists():
+        try:
+            trades = json.loads(_TRADE_LOG_FILE.read_text())
+            for trade in trades:
+                if trade.get("trade_id") == trade_id:
+                    trade["outcome"]  = "exited"
+                    trade["resolved"] = 1
+                    break
+            _TRADE_LOG_FILE.write_text(json.dumps(trades, indent=2))
+        except Exception:
+            pass
+
+    # Update SQLite trades table
     try:
-        trades = json.loads(_TRADE_LOG_FILE.read_text())
-        for trade in trades:
-            if trade.get("trade_id") == trade_id:
-                trade["outcome"]  = "exited"
-                trade["resolved"] = 1
-                break
-        _TRADE_LOG_FILE.write_text(json.dumps(trades, indent=2))
-    except Exception:
-        pass
+        from signal_research import init_db
+        db_path = os.environ.get("DB_PATH", "/data/signal_research.db")
+        _db_conn = init_db(db_path)
+        _db_conn.execute(
+            "UPDATE trades SET trade_outcome='exited', resolved=1, resolve_ts=? WHERE trade_id=?",
+            (datetime.now(timezone.utc).isoformat(), trade_id),
+        )
+        _db_conn.commit()
+        _db_conn.close()
+    except Exception as _db_err:
+        print(f"[exit] DB update failed (non-fatal): {_db_err}", flush=True)
 
 
 def warm_import_cache(asset="BTC"):
@@ -1097,25 +1144,40 @@ def run_fast_market_strategy(
     session      = signal.get("session", "?")
 
     # ── Signal flip early exit ────────────────────────────────────────────────
-    # If we hold an open position in this window and the signal has crossed hard
-    # to the opposite side, sell immediately rather than wait for resolution.
-    # Fires even when should_trade=False — a flipped signal with no new entry is
-    # still a valid reason to cut the existing position.
+    # Fires on either condition:
+    #   1. Opposite-side signal: composite signal actively recommends the other
+    #      side (should_trade=True, side != held). Sell immediately.
+    #   2. Score threshold: score crosses the flip threshold even without an
+    #      active opposing signal (protective cut on weakening conviction).
+    # Note: one_trade_per_window does NOT affect this path — the check below
+    # runs before the window lock and returns before reaching it.
     if not dry_run and trading_cfg.get("signal_flip_exit_enabled", True):
         _open = _find_open_position(market_slug)
         if _open:
             _flip_thr = signal_cfg.get("signal_flip_exit_threshold", 0.40)
             _held     = _open["side"]
-            _flipped  = (
+
+            _opposite_signal = (
+                signal.get("should_trade") is True
+                and signal.get("side") not in (None, _held)
+            )
+            _score_flipped = (
                 (_held == "yes" and score < _flip_thr) or
                 (_held == "no"  and score > 1.0 - _flip_thr)
             )
+            _flipped = _opposite_signal or _score_flipped
+
             if _flipped:
+                _reason = (
+                    f"opposite signal ({signal.get('side','?').upper()})"
+                    if _opposite_signal
+                    else f"score {score:.3f} crossed threshold {_flip_thr}"
+                )
                 _shares = _open.get("shares", 0)
                 log(
                     f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
-                    f"SIGNAL FLIP: held {_held.upper()}, score now {score:.3f} "
-                    f"(threshold {_flip_thr}) — selling {_shares:.1f} shares",
+                    f"SIGNAL FLIP: held {_held.upper()}, {_reason} "
+                    f"— selling {_shares:.1f} shares",
                     force=True,
                 )
                 _exit_mid = _market_id_cache.get(market_slug)
@@ -1126,6 +1188,16 @@ def run_fast_market_strategy(
                     if _sell.get("success"):
                         log(f"  EXITED {_held.upper()} {_shares:.1f} shares", force=True)
                         _mark_position_exited(_open["trade_id"])
+                        _send_telegram_sell(
+                            token=cfg.get("telegram_bot_token", ""),
+                            chat_id=cfg.get("telegram_chat_id", ""),
+                            slug=market_slug,
+                            side=_held,
+                            score=score,
+                            shares=_shares,
+                            reason=_reason,
+                            remaining=remaining,
+                        )
                     else:
                         log(f"  EXIT FAILED: {_sell.get('error')}", force=True)
                 return

@@ -6,14 +6,12 @@
     "signal_source": "binance",
     "daily_budget": 1000,
     "daily_import_limit": 1000,
-    "webhook_url": "",
-    "telegram_bot_token": "",
-    "telegram_chat_id": ""
+    "webhook_url": ""
   },
 
   "market": {
     "min_time_remaining": 90,
-    "max_time_remaining": 300
+    "max_time_remaining": 360
   },
 
   "signal": {
