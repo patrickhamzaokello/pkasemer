@@ -284,6 +284,12 @@ _market_id_cache = _load_market_cache()
 _TRADE_LOG_FILE   = Path(_DATA_DIR) / "trade_log.json"
 _KILL_SWITCH_FILE = Path(_DATA_DIR) / "kill_switch.json"
 
+# ── Cooldown state (in-process; resets on container restart) ──────────────────
+# _cooldown_cycles_left: how many cycles remain before trading resumes.
+# _post_cooldown_high_bar: True after cooldown expires until first trade placed.
+_cooldown_cycles_left:    int  = 0
+_post_cooldown_high_bar:  bool = False
+
 
 def _is_kill_switch_active() -> bool:
     """Return True if the UI emergency-stop has been triggered."""
@@ -810,6 +816,7 @@ def run_fast_market_strategy(
     global WINDOW, VOLUME_CONFIDENCE, DAILY_BUDGET
     global MIN_SCORE_TO_IMPORT, IMPORT_DAILY_LIMIT, MIN_ENTRY_PRICE, MIN_LIQUIDITY_RATIO
     global SMART_SIZING_PCT, MIN_SHARES_PER_ORDER, MIN_POSITION_SIZE_USD
+    global _cooldown_cycles_left, _post_cooldown_high_bar
     cfg = _load_config(CONFIG_SCHEMA, __file__)
     try:
         with open(_get_config_path(__file__)) as _f:
@@ -852,10 +859,25 @@ def run_fast_market_strategy(
         return
 
     # ── Consecutive loss cooldown ─────────────────────────────────────────────
-    # After N resolved losses in a row, skip trading for one cycle to avoid
-    # feeding losses during an adverse or noisy market environment.
+    # After N resolved losses in a row, pause for loss_cooldown_skip_cycles cycles
+    # then resume unconditionally. The first trade after cooldown must clear a
+    # higher composite threshold (loss_cooldown_resume_threshold_boost) to ensure
+    # only a strong signal re-enters the market.
     if trading_cfg.get("loss_cooldown_enabled", True):
         _streak = int(trading_cfg.get("loss_cooldown_streak", 3))
+        _skip   = int(trading_cfg.get("loss_cooldown_skip_cycles", 6))
+
+        # Currently serving out a cooldown — count down and skip
+        if _cooldown_cycles_left > 0:
+            _cooldown_cycles_left -= 1
+            log(
+                f"{mode_tag} {now_str} | COOLDOWN: {_cooldown_cycles_left} cycles remaining "
+                f"— skipping to protect capital",
+                force=True,
+            )
+            return
+
+        # Not in cooldown — check if the last N resolved trades are all losses
         if _TRADE_LOG_FILE.exists():
             try:
                 _all_trades = json.loads(_TRADE_LOG_FILE.read_text())
@@ -863,9 +885,11 @@ def run_fast_market_strategy(
                 if len(_resolved) >= _streak:
                     _recent = [t["outcome"] for t in _resolved[-_streak:]]
                     if all(o == "loss" for o in _recent):
+                        _cooldown_cycles_left = _skip - 1  # -1: also skipping this cycle
+                        _post_cooldown_high_bar = True
                         log(
-                            f"{mode_tag} {now_str} | COOLDOWN: last {_streak} resolved trades "
-                            f"all losses — skipping cycle to protect capital",
+                            f"{mode_tag} {now_str} | COOLDOWN: {_streak} consecutive losses "
+                            f"— pausing {_skip} cycles, then resuming with elevated threshold",
                             force=True,
                         )
                         return
@@ -1031,6 +1055,29 @@ def run_fast_market_strategy(
 
     side         = signal["side"]
     position_pct = signal["position_pct"]
+
+    # ── Post-cooldown high bar ────────────────────────────────────────────────
+    # First trade after a cooldown must clear threshold + boost. This ensures
+    # only a high-conviction signal re-enters the market after a loss streak.
+    # The flag is cleared when the trade is actually committed (window locked).
+    if _post_cooldown_high_bar:
+        _boost    = trading_cfg.get("loss_cooldown_resume_threshold_boost", 0.07)
+        _base_thr = signal_cfg.get("composite_threshold", 0.65)
+        _high_bar = _base_thr + _boost
+        _fails = (side == "yes" and score < _high_bar) or \
+                 (side == "no"  and score > (1 - _high_bar))
+        if _fails:
+            log(
+                f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+                f"score={score:.3f} → {side.upper()} BLOCK: post-cooldown high bar "
+                f"(need {_high_bar:.3f}, boost={_boost:.2f})"
+            )
+            return
+        log(
+            f"{mode_tag} {now_str} | POST-COOLDOWN: score={score:.3f} clears "
+            f"{_high_bar:.3f} high bar — recovery trade proceeding",
+            force=True,
+        )
 
     # ── YES confidence gate ───────────────────────────────────────────────────
     # min_yes_conf: minimum confidence required to enter a YES trade.
@@ -1270,6 +1317,7 @@ def run_fast_market_strategy(
     # ── Mark window as traded (locks out subsequent cycles for this market) ──
     daily_spend[f"window_{slug}_traded"] = True
     _save_daily_spend(daily_spend)
+    _post_cooldown_high_bar = False  # recovery trade committed — resume normal threshold
 
     # ── Trade execution ───────────────────────────────────────────────────────
     if dry_run:

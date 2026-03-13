@@ -144,6 +144,8 @@
     "one_trade_per_window": false,
     "loss_cooldown_enabled": true,
     "loss_cooldown_streak": 3,
+    "loss_cooldown_skip_cycles": 6,
+    "loss_cooldown_resume_threshold_boost": 0.07,
     "min_payout_ratio": 0.96,
     "slow_min_payout_ratio": 0.96,
     "fee_ev_min_edge": 0.03,
