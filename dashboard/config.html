@@ -506,6 +506,8 @@ async function saveConfig() {
 
   // Deep-clone the full config then update each section in-place
   const payload = JSON.parse(JSON.stringify(_cfg || {}));
+  // Strip internal metadata injected by GET endpoint — must not be saved to disk
+  delete payload._config_source;
   const sig = payload.signal    || (payload.signal    = {});
   const trd = payload.trading   || (payload.trading   = {});
   const mkt = payload.market    || (payload.market    = {});

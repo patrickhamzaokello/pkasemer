@@ -1648,8 +1648,16 @@ def save_config():
             except FileNotFoundError:
                 continue
 
-        # Merge: existing keys preserved, sent keys overwritten
-        current.update(updates)
+        # Strip internal metadata injected by GET endpoint
+        updates.pop("_config_source", None)
+
+        # Deep-merge: for nested sections merge key-by-key so optimizer-tuned
+        # keys the dashboard didn't touch are preserved
+        for key, value in updates.items():
+            if isinstance(value, dict) and isinstance(current.get(key), dict):
+                current[key].update(value)
+            else:
+                current[key] = value
 
         # Always write to the persistent volume
         with open(_DATA_CONFIG, "w") as f:
