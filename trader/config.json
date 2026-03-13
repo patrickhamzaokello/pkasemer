@@ -62,10 +62,13 @@
 
   "slow_composite_threshold": 0.68,
   "active_composite_threshold": 0.68,
+  "composite_threshold_floor": 0.55,
 
   "slow_position_pct_cap": 0.7,
   "normal_position_pct_cap": 0.9,
   "active_position_pct_cap": 1.0,
+  "min_position_pct": 0.55,
+  "max_volatility_position_penalty": 0.5,
 
   "min_payout_ratio": 0.96,
   "slow_min_payout_ratio": 0.96,
@@ -109,5 +112,44 @@
   "london_position_cap": 0.95,
   "new_york_position_cap": 0.9,
   "asia_position_cap": 0.85,
-  "off_position_cap": 0.7
+  "off_position_cap": 0.7,
+
+  "use_dynamic_rsi_thresholds": true,
+  "slow_rsi_overbought_delta": 2,
+  "slow_rsi_oversold_delta": -4,
+  "active_rsi_overbought_delta": -2,
+  "active_rsi_oversold_delta": 2,
+  "off_rsi_overbought_delta": -2,
+  "off_rsi_oversold_delta": -2,
+  "asia_rsi_overbought_delta": -1,
+  "asia_rsi_oversold_delta": -1,
+  "london_rsi_overbought_delta": 0,
+  "london_rsi_oversold_delta": 0,
+  "new_york_rsi_overbought_delta": 0,
+  "new_york_rsi_oversold_delta": 0,
+  "overlap_rsi_overbought_delta": -2,
+  "overlap_rsi_oversold_delta": 1,
+  "strong_lag_rsi_overbought_delta": 3,
+  "strong_lag_rsi_oversold_delta": -3,
+  "low_volume_rsi_overbought_delta": -1,
+  "low_volume_rsi_oversold_delta": -2,
+  "low_volume_rsi_threshold": 0.5,
+  "rsi_ob_clamp_min": 65,
+  "rsi_ob_clamp_max": 92,
+  "rsi_os_clamp_min": 8,
+  "rsi_os_clamp_max": 40,
+
+  "max_entry_yes": 0.476,
+  "min_entry_no": 0.53,
+  "min_poly_spread": 0.04,
+  "slow_max_entry_yes": 0.465,
+  "slow_min_entry_no": 0.535,
+
+  "volume_confidence_threshold": 0.3,
+  "fee_ev_min_edge": 0.03,
+  "fee_ev_min_edge_slow": 0.05,
+
+  "min_position_size_usd": 0.50,
+  "min_shares_per_order": 6.0,
+  "smart_sizing_pct": 0.05
 }

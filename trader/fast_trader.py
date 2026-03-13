@@ -63,13 +63,14 @@ except ImportError:
 # =============================================================================
 
 TRADE_SOURCE = "sdk:pknwitq"
-SMART_SIZING_PCT = 0.05
-MIN_SHARES_PER_ORDER = 6.0
 # These are defaults; overridden each cycle from config.json
-MIN_SCORE_TO_IMPORT = 0.65
-IMPORT_DAILY_LIMIT  = 1000
-MIN_ENTRY_PRICE     = 0.35
-MIN_LIQUIDITY_RATIO = 0.20
+SMART_SIZING_PCT     = 0.05
+MIN_SHARES_PER_ORDER = 6.0
+MIN_POSITION_SIZE_USD = 0.50
+MIN_SCORE_TO_IMPORT  = 0.65
+IMPORT_DAILY_LIMIT   = 1000
+MIN_ENTRY_PRICE      = 0.35
+MIN_LIQUIDITY_RATIO  = 0.20
 
 
 ASSET_SYMBOLS = {
@@ -801,6 +802,7 @@ def run_fast_market_strategy(
     global MIN_TIME_REMAINING, MAX_TIME_REMAINING, ASSET
     global WINDOW, VOLUME_CONFIDENCE, DAILY_BUDGET
     global MIN_SCORE_TO_IMPORT, IMPORT_DAILY_LIMIT, MIN_ENTRY_PRICE, MIN_LIQUIDITY_RATIO
+    global SMART_SIZING_PCT, MIN_SHARES_PER_ORDER, MIN_POSITION_SIZE_USD
     cfg = _load_config(CONFIG_SCHEMA, __file__)
     try:
         with open(_get_config_path(__file__)) as _f:
@@ -816,10 +818,13 @@ def run_fast_market_strategy(
     WINDOW              = cfg["window"]
     VOLUME_CONFIDENCE   = cfg["volume_confidence"]
     DAILY_BUDGET        = cfg["daily_budget"]
-    MIN_SCORE_TO_IMPORT = raw_cfg.get("min_score_to_import", 0.65)
-    IMPORT_DAILY_LIMIT  = raw_cfg.get("daily_import_limit", 1000)
-    MIN_ENTRY_PRICE     = raw_cfg.get("min_entry_price", 0.35)
-    MIN_LIQUIDITY_RATIO = raw_cfg.get("min_liquidity_ratio", 0.20)
+    MIN_SCORE_TO_IMPORT   = raw_cfg.get("min_score_to_import", 0.65)
+    IMPORT_DAILY_LIMIT    = raw_cfg.get("daily_import_limit", 1000)
+    MIN_ENTRY_PRICE       = raw_cfg.get("min_entry_price", 0.35)
+    MIN_LIQUIDITY_RATIO   = raw_cfg.get("min_liquidity_ratio", 0.20)
+    SMART_SIZING_PCT      = raw_cfg.get("smart_sizing_pct", 0.05)
+    MIN_SHARES_PER_ORDER  = raw_cfg.get("min_shares_per_order", 6.0)
+    MIN_POSITION_SIZE_USD = raw_cfg.get("min_position_size_usd", 0.50)
 
     now_str  = datetime.now(timezone.utc).strftime("%H:%M:%S")
     mode_tag = "[DRY]" if dry_run else "[LIVE]"
@@ -1161,10 +1166,10 @@ def run_fast_market_strategy(
 
     position_size = min(position_size, remaining_budget)
 
-    if position_size < 0.50:
+    if position_size < MIN_POSITION_SIZE_USD:
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
-            f"score={score:.3f} → {side.upper()} BLOCK: size ${position_size:.2f} < $0.50 min"
+            f"score={score:.3f} → {side.upper()} BLOCK: size ${position_size:.2f} < ${MIN_POSITION_SIZE_USD:.2f} min"
         )
         return
 

@@ -436,24 +436,33 @@ def get_dynamic_rsi_thresholds(cex, poly, config=None):
         os_ += cfg.get("active_rsi_oversold_delta", +2)
 
     # ── Session adjustment ────────────────────────────────────────────
-    ob += cfg.get(f"{session}_rsi_overbought_delta", 0)
-    os_ += cfg.get(f"{session}_rsi_oversold_delta", 0)
+    _session_ob_defaults = {
+        "overlap": OVERLAP_RSI_OB_DELTA, "london": LONDON_RSI_OB_DELTA,
+        "new_york": 0, "asia": ASIA_RSI_OB_DELTA, "off": OFF_RSI_OB_DELTA,
+    }
+    _session_os_defaults = {
+        "overlap": OVERLAP_RSI_OS_DELTA, "london": LONDON_RSI_OS_DELTA,
+        "new_york": 0, "asia": ASIA_RSI_OS_DELTA, "off": OFF_RSI_OS_DELTA,
+    }
+    ob += cfg.get(f"{session}_rsi_overbought_delta", _session_ob_defaults.get(session, 0))
+    os_ += cfg.get(f"{session}_rsi_oversold_delta", _session_os_defaults.get(session, 0))
 
     # ── Strong lag adjustment ─────────────────────────────────────────
     strong_lag = cfg.get("min_lag_override", 0.12)
     if lag >= strong_lag:
-        ob += cfg.get("strong_lag_rsi_overbought_delta", +3)
-        os_ += cfg.get("strong_lag_rsi_oversold_delta", -3)
+        ob += cfg.get("strong_lag_rsi_overbought_delta", STRONG_LAG_RSI_OB_DELTA)
+        os_ += cfg.get("strong_lag_rsi_oversold_delta", STRONG_LAG_RSI_OS_DELTA)
 
     # ── Volume adjustment ─────────────────────────────────────────────
     # Low volume -> less trust in RSI extremes, allow deeper oversold/overbought
-    if vol_r != 1.0 and vol_r < 0.5:
+    low_vol_threshold = cfg.get("low_volume_rsi_threshold", 0.5)
+    if vol_r != 1.0 and vol_r < low_vol_threshold:
         ob += cfg.get("low_volume_rsi_overbought_delta", -1)
         os_ += cfg.get("low_volume_rsi_oversold_delta", -2)
 
     # Safety clamps
-    ob = max(65, min(92, ob))
-    os_ = max(8, min(40, os_))
+    ob = max(cfg.get("rsi_ob_clamp_min", 65), min(cfg.get("rsi_ob_clamp_max", 92), ob))
+    os_ = max(cfg.get("rsi_os_clamp_min", 8), min(cfg.get("rsi_os_clamp_max", 40), os_))
 
     return ob, os_
 
@@ -586,7 +595,7 @@ def apply_filters(cex, poly, config=None):
         volume_confidence
         and vol_ratio is not None
         and vol_ratio != 1.0
-        and vol_ratio < 0.3
+        and vol_ratio < cfg.get("volume_confidence_threshold", 0.3)
     ):
         return False, f"Volume too low ({vol_ratio:.2f}x avg)"
 
@@ -751,7 +760,7 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
         threshold = base_threshold
 
     session_delta = get_session_threshold_delta(session, cfg)
-    threshold = max(0.55, threshold + hour_delta + session_delta)
+    threshold = max(cfg.get("composite_threshold_floor", 0.55), threshold + hour_delta + session_delta)
     result["threshold_used"] = threshold
 
     if score > threshold:
@@ -767,7 +776,7 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
         )
         return result
 
-    MIN_POSITION_PCT = 0.55
+    min_pos_pct = cfg.get("min_position_pct", 0.55)
 
     if regime == "slow":
         size_cap = cfg.get("slow_position_pct_cap", 0.70)
@@ -777,7 +786,7 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
         size_cap = cfg.get("normal_position_pct_cap", 1.0)
 
     result["position_pct"] = min(
-        max(result["confidence"], MIN_POSITION_PCT),
+        max(result["confidence"], min_pos_pct),
         size_cap,
     )
 
@@ -786,9 +795,10 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
     if vol5 is not None and vol5 > vp_thresh:
         v_max = cfg.get("max_volatility_5m", MAX_VOLATILITY_5M)
         v_range = max(v_max - vp_thresh, 0.1)
-        penalty = min(0.50, (vol5 - vp_thresh) / v_range)
+        max_penalty = cfg.get("max_volatility_position_penalty", 0.50)
+        penalty = min(max_penalty, (vol5 - vp_thresh) / v_range)
         result["position_pct"] = max(
-            MIN_POSITION_PCT,
+            min_pos_pct,
             result["position_pct"] * (1.0 - penalty),
         )
 
