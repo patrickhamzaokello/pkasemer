@@ -11,7 +11,7 @@ services:
     restart: unless-stopped
     environment:
       PKNWITQ_MODE: both          # collect | trade | both | dry
-      PKNWITQ_INTERVAL: "10"       # seconds between cycles
+      PKNWITQ_INTERVAL: "5"       # seconds between cycles
       PKNWITQ_ASSET: BTC
       PKNWITQ_WINDOW: 5m
       DB_PATH: /data/signal_research.db
