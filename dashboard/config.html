@@ -23,7 +23,6 @@
   .logo span { color: var(--green); }
   .header-right { display: flex; align-items: center; gap: 14px; }
 
-  /* Kill switch */
   .kill-btn { background: none; border: 1px solid var(--red); color: var(--red); padding: 4px 12px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px; cursor: pointer; transition: all 0.15s; }
   .kill-btn:hover { background: rgba(255,61,87,0.12); }
   .kill-btn.armed { background: var(--red); color: #080b0f; font-weight: 700; }
@@ -35,16 +34,24 @@
   .nav-logout { margin-left: auto; background: none; border: none; font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px; color: var(--text-dim); cursor: pointer; padding: 8px 4px; transition: color 0.15s; }
   .nav-logout:hover { color: var(--red); }
 
+  .deploy-bar { display: flex; align-items: center; gap: 6px; padding: 4px 20px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 10px; color: var(--text-dim); letter-spacing: 0.08em; font-family: var(--mono); position: sticky; top: 88px; z-index: 80; }
+  .deploy-label { color: var(--text-dim); font-size: 9px; letter-spacing: 0.12em; font-weight: 500; }
+  .deploy-sep { color: var(--border-bright); }
+  #deploy-count { color: var(--blue); font-weight: 600; }
+  #deploy-ts { color: var(--text); }
+
   .page { max-width: 860px; margin: 0 auto; padding: 24px 20px; display: flex; flex-direction: column; gap: 20px; }
 
   .panel { background: var(--surface); border: 1px solid var(--border); overflow: hidden; }
   .panel-header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
   .panel-title { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+  .section-tag { font-size: 9px; letter-spacing: 1px; padding: 2px 6px; background: rgba(6,182,212,0.1); color: var(--cyan); border: 1px solid rgba(6,182,212,0.2); }
 
   .field-group { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
-  .field-row { display: grid; grid-template-columns: 200px 1fr; align-items: center; gap: 16px; }
+  .field-row { display: grid; grid-template-columns: 220px 1fr; align-items: center; gap: 16px; }
   .field-label { font-size: 11px; color: var(--text-dim); }
   .field-label span { display: block; font-size: 9px; color: var(--text-dim); opacity: 0.6; margin-top: 2px; }
+  .field-section { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--cyan); opacity: 0.6; margin-top: 1px; display: block; }
   input[type="number"], input[type="text"], input[type="url"] {
     background: var(--bg); border: 1px solid var(--border); color: var(--text-bright);
     font-family: var(--mono); font-size: 12px; padding: 6px 10px; width: 100%; outline: none;
@@ -52,9 +59,21 @@
   }
   input:focus { border-color: var(--green-dim); }
 
+  /* Toggle switch */
+  .toggle-row { display: grid; grid-template-columns: 220px 1fr; align-items: center; gap: 16px; }
+  .toggle-wrap { display: flex; align-items: center; gap: 10px; }
+  .toggle { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; cursor: pointer; inset: 0; background: var(--border-bright); transition: .2s; border-radius: 20px; }
+  .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background: var(--text-dim); transition: .2s; border-radius: 50%; }
+  input:checked + .slider { background: var(--green-dim); }
+  input:checked + .slider:before { transform: translateX(16px); background: #fff; }
+  .toggle-label { font-size: 11px; color: var(--text-dim); }
+  .toggle-label.on { color: var(--green); }
+
   /* Weight sliders */
   .weight-grid { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
-  .weight-row { display: grid; grid-template-columns: 180px 1fr 52px; align-items: center; gap: 12px; }
+  .weight-row { display: grid; grid-template-columns: 200px 1fr 52px; align-items: center; gap: 12px; }
   .weight-name { font-size: 11px; color: var(--text); }
   input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; background: var(--border); border-radius: 2px; outline: none; cursor: pointer; }
   input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--amber); border-radius: 50%; cursor: pointer; }
@@ -62,6 +81,8 @@
   .weight-val { font-size: 11px; color: var(--amber); text-align: right; font-weight: 700; }
   .weight-sum { padding: 8px 16px 14px; font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); }
   .weight-sum span { font-weight: 700; }
+
+  .field-divider { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
 
   .save-bar { padding: 14px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
   .btn-save { background: var(--green); color: #080b0f; border: none; font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; padding: 8px 20px; cursor: pointer; transition: background 0.15s; }
@@ -71,7 +92,6 @@
   .save-msg.ok  { color: var(--green); }
   .save-msg.err { color: var(--red); }
 
-  /* Kill switch card */
   .ks-card { padding: 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
   .ks-info h3 { font-family: var(--display); font-size: 16px; font-weight: 700; color: var(--text-bright); margin-bottom: 4px; }
   .ks-info p { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
@@ -84,32 +104,6 @@
   .dig-sub { font-size: 9px; color: var(--text-dim); margin-top: 2px; }
 
   ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: var(--bg); } ::-webkit-scrollbar-thumb { background: var(--border-bright); }
-
-  /* ── Deploy tracker bar ──────────────────────────────────── */
-  .deploy-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 20px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    font-size: 10px;
-    color: var(--text-dim);
-    letter-spacing: 0.08em;
-    font-family: var(--mono);
-    position: sticky;
-    top: 88px;
-    z-index: 80;
-  }
-  .deploy-label {
-    color: var(--text-dim);
-    font-size: 9px;
-    letter-spacing: 0.12em;
-    font-weight: 500;
-  }
-  .deploy-sep { color: var(--border-bright); }
-  #deploy-count { color: var(--blue); font-weight: 600; }
-  #deploy-ts { color: var(--text); }
 </style>
 </head>
 <body>
@@ -131,7 +125,7 @@
   <button class="nav-logout" onclick="logout()">↪ logout</button>
 </nav>
 
-<div class="deploy-bar" id="deploy-bar">
+<div class="deploy-bar">
   <span class="deploy-label">BUILD</span>
   <span id="deploy-count">#—</span>
   <span class="deploy-sep">·</span>
@@ -147,7 +141,7 @@
       <div class="panel-title">Today's Digest</div>
       <div style="font-size:10px;color:var(--text-dim)" id="digest-date">—</div>
     </div>
-    <div class="digest-grid" id="digest-grid">
+    <div class="digest-grid">
       <div class="dig-cell"><div class="dig-label">Cycles</div><div class="dig-val" id="d-cycles">—</div></div>
       <div class="dig-cell"><div class="dig-label">Trades Today</div><div class="dig-val" id="d-trades">—</div></div>
       <div class="dig-cell"><div class="dig-label">Today P&amp;L</div><div class="dig-val" id="d-pnl">—</div></div>
@@ -169,41 +163,141 @@
     </div>
   </div>
 
-  <!-- Core parameters -->
+  <!-- Scheduler / Budget -->
   <div class="panel">
-    <div class="panel-header"><div class="panel-title">Core Parameters</div></div>
+    <div class="panel-header">
+      <div class="panel-title">Scheduler &amp; Budget</div>
+      <span class="section-tag">scheduler</span>
+    </div>
     <div class="field-group">
       <div class="field-row">
-        <label class="field-label">Composite Threshold<span>Score above which BUY YES triggers (0.50–0.80)</span></label>
-        <input type="number" id="f-composite" min="0.50" max="0.80" step="0.01">
-      </div>
-      <div class="field-row">
-        <label class="field-label">Entry Threshold<span>Min momentum filter (raw, e.g. 0.03)</span></label>
-        <input type="number" id="f-entry" min="0" max="0.5" step="0.005">
-      </div>
-      <div class="field-row">
-        <label class="field-label">Daily Budget (USDC)<span>Max spend per calendar day</span></label>
-        <input type="number" id="f-budget" min="1" max="1000" step="1">
-      </div>
-      <div class="field-row">
-        <label class="field-label">Max Position (USDC)<span>Max size per single trade</span></label>
-        <input type="number" id="f-maxpos" min="1" max="500" step="0.5">
-      </div>
-      <div class="field-row">
-        <label class="field-label">Min Momentum %<span>Minimum momentum threshold</span></label>
-        <input type="number" id="f-minmom" min="0" max="0.5" step="0.005">
-      </div>
-      <div class="field-row">
-        <label class="field-label">Min Time Remaining (s)<span>Skip markets below this window</span></label>
-        <input type="number" id="f-mintime" min="0" max="900" step="10">
-      </div>
-      <div class="field-row">
-        <label class="field-label">Max Time Remaining (s)<span>Skip markets above this window</span></label>
-        <input type="number" id="f-maxtime" min="60" max="3600" step="30">
+        <label class="field-label">Daily Budget (USDC)<span>Max spend per calendar day UTC</span></label>
+        <input type="number" id="f-budget" min="1" max="10000" step="1">
       </div>
       <div class="field-row">
         <label class="field-label">Webhook URL<span>Telegram/Discord webhook for trade alerts (optional)</span></label>
         <input type="url" id="f-webhook" placeholder="https://discord.com/api/webhooks/...">
+      </div>
+    </div>
+  </div>
+
+  <!-- Market timing -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Market Timing</div>
+      <span class="section-tag">market</span>
+    </div>
+    <div class="field-group">
+      <div class="field-row">
+        <label class="field-label">Min Time Remaining (s)<span>Skip markets with less time left than this</span></label>
+        <input type="number" id="f-mintime" min="0" max="300" step="5">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Max Time Remaining (s)<span>Skip markets with more time left than this (enter too early)</span></label>
+        <input type="number" id="f-maxtime" min="60" max="300" step="5">
+      </div>
+    </div>
+  </div>
+
+  <!-- Signal thresholds -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Signal Thresholds</div>
+      <span class="section-tag">signal</span>
+    </div>
+    <div class="field-group">
+      <div class="field-row">
+        <label class="field-label">Composite Threshold<span>Min score for YES trade (0.50–0.90); NO fires at 1 − this</span></label>
+        <input type="number" id="f-composite" min="0.50" max="0.90" step="0.01">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Slow Composite Threshold<span>Threshold used in slow/low-vol regime</span></label>
+        <input type="number" id="f-slow-composite" min="0.55" max="0.95" step="0.01">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Active Composite Threshold<span>Threshold used in active/high-vol regime</span></label>
+        <input type="number" id="f-active-composite" min="0.50" max="0.90" step="0.01">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Min Momentum %<span>Minimum raw momentum required to enter</span></label>
+        <input type="number" id="f-minmom" min="0" max="0.5" step="0.005">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Signal Flip Exit Threshold<span>Exit open position if score crosses this (e.g. 0.40 = exit YES when score &lt; 0.40)</span></label>
+        <input type="number" id="f-flipthresh" min="0.20" max="0.49" step="0.01">
+      </div>
+      <div class="toggle-row">
+        <label class="field-label">Signal Flip Exit<span>Sell position early if signal reverses hard</span></label>
+        <div class="toggle-wrap">
+          <label class="toggle"><input type="checkbox" id="f-flipexit" onchange="updateToggleLabel('f-flipexit','tl-flipexit')"><span class="slider"></span></label>
+          <span class="toggle-label" id="tl-flipexit">off</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trading controls -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Trading Controls</div>
+      <span class="section-tag">trading</span>
+    </div>
+    <div class="field-group">
+      <div class="field-row">
+        <label class="field-label">Max Position (USDC)<span>Max size per single trade</span></label>
+        <input type="number" id="f-maxpos" min="0.5" max="500" step="0.5">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Max Position Per Window<span>Total cap across all trades in one 5m window</span></label>
+        <input type="number" id="f-maxposwin" min="0.5" max="500" step="0.5">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Max NO Score<span>NO trade blocked if score exceeds this (lower = stricter)</span></label>
+        <input type="number" id="f-maxnoscore" min="0.10" max="0.49" step="0.01">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Min Payout Ratio<span>Wins must cover losses by this multiple (1.05 = 1.05×)</span></label>
+        <input type="number" id="f-minpayout" min="1.00" max="1.60" step="0.01">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Slow Min Payout Ratio<span>Stricter payout floor in slow/quiet regime</span></label>
+        <input type="number" id="f-slowpayout" min="1.00" max="1.80" step="0.01">
+      </div>
+      <div class="toggle-row">
+        <label class="field-label">One Trade Per Window<span>Block re-entry after first trade in same 5m window</span></label>
+        <div class="toggle-wrap">
+          <label class="toggle"><input type="checkbox" id="f-onetrade" onchange="updateToggleLabel('f-onetrade','tl-onetrade')"><span class="slider"></span></label>
+          <span class="toggle-label" id="tl-onetrade">off</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loss cooldown -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Loss Cooldown</div>
+      <span class="section-tag">trading</span>
+    </div>
+    <div class="field-group">
+      <div class="toggle-row">
+        <label class="field-label">Cooldown Enabled<span>Pause trading after a consecutive loss streak</span></label>
+        <div class="toggle-wrap">
+          <label class="toggle"><input type="checkbox" id="f-cooldown" onchange="updateToggleLabel('f-cooldown','tl-cooldown')"><span class="slider"></span></label>
+          <span class="toggle-label" id="tl-cooldown">off</span>
+        </div>
+      </div>
+      <div class="field-row">
+        <label class="field-label">Loss Streak Trigger<span>Number of consecutive resolved losses before cooldown fires</span></label>
+        <input type="number" id="f-streak" min="1" max="20" step="1">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Cooldown Skip Cycles<span>Cycles to skip after streak (1 cycle ≈ scheduler_interval seconds)</span></label>
+        <input type="number" id="f-skipcycles" min="1" max="100" step="1">
+      </div>
+      <div class="field-row">
+        <label class="field-label">Resume Threshold Boost<span>Extra score required for first trade after cooldown (e.g. 0.07)</span></label>
+        <input type="number" id="f-highbar" min="0.00" max="0.20" step="0.01">
       </div>
     </div>
   </div>
@@ -214,7 +308,7 @@
       <div class="panel-title">Signal Weights</div>
       <div style="font-size:10px;color:var(--text-dim)">must sum to 1.00</div>
     </div>
-    <div class="weight-grid" id="weight-grid"><!-- populated by JS --></div>
+    <div class="weight-grid" id="weight-grid"></div>
     <div class="weight-sum">Total: <span id="weight-total">0.000</span></div>
     <div class="save-bar">
       <button class="btn-save" id="save-btn" onclick="saveConfig()">Save Config</button>
@@ -229,20 +323,42 @@ const API = window.location.origin;
 let _cfg = null;
 let _ksActive = false;
 
+// Signal weights that exist in config.json
+const SIGNAL_KEYS = [
+  'vol_adjusted_momentum', 'momentum_5m', 'cex_poly_lag', 'btc_vs_reference',
+  'momentum_1m', 'momentum_15m', 'price_acceleration', 'rsi_14',
+  'poly_spread', 'volume_ratio', 'momentum_consistency', 'order_imbalance', 'trade_flow_ratio'
+];
+
+function fv(id) { return document.getElementById(id); }
+function val(id) { return fv(id) ? fv(id).value : ''; }
+
 async function logout() {
   await fetch('/auth/logout', { method: 'POST' });
   window.location.href = '/login';
 }
 
-// Clock
 setInterval(() => {
   const n = new Date();
-  document.getElementById('hdr-time').textContent =
+  fv('hdr-time').textContent =
     [n.getUTCHours(), n.getUTCMinutes(), n.getUTCSeconds()]
       .map(x => String(x).padStart(2,'0')).join(':') + ' UTC';
 }, 1000);
 
-// ── Kill switch ────────────────────────────────────────────
+// ── Toggle helpers ──────────────────────────────────────────
+function updateToggleLabel(checkId, labelId) {
+  const checked = fv(checkId).checked;
+  const el = fv(labelId);
+  el.textContent = checked ? 'on' : 'off';
+  el.className = 'toggle-label' + (checked ? ' on' : '');
+}
+
+function setToggle(checkId, labelId, value) {
+  const el = fv(checkId);
+  if (el) { el.checked = !!value; updateToggleLabel(checkId, labelId); }
+}
+
+// ── Kill switch ─────────────────────────────────────────────
 async function fetchKillSwitch() {
   try {
     const d = await fetch(`${API}/api/kill-switch`).then(r => r.json());
@@ -252,17 +368,12 @@ async function fetchKillSwitch() {
 }
 
 function updateKsUI() {
-  const btns = [document.getElementById('kill-btn'), document.getElementById('kill-btn-2')];
-  const ks = document.getElementById('ks-status');
+  const btns = [fv('kill-btn'), fv('kill-btn-2')];
+  const ks = fv('ks-status');
   btns.forEach(b => {
     if (!b) return;
-    if (_ksActive) {
-      b.textContent = '▶ RESUME TRADING';
-      b.classList.add('armed');
-    } else {
-      b.textContent = '⏹ HALT TRADING';
-      b.classList.remove('armed');
-    }
+    if (_ksActive) { b.textContent = '▶ RESUME TRADING'; b.classList.add('armed'); }
+    else { b.textContent = '⏹ HALT TRADING'; b.classList.remove('armed'); }
   });
   if (ks) {
     ks.textContent = _ksActive
@@ -284,33 +395,27 @@ async function toggleKillSwitch() {
   } catch(e) {}
 }
 
-// ── Daily digest ───────────────────────────────────────────
+// ── Daily digest ────────────────────────────────────────────
 async function fetchDigest() {
   try {
     const d = await fetch(`${API}/api/daily-digest`).then(r => r.json());
-    document.getElementById('digest-date').textContent = d.date;
-    document.getElementById('d-cycles').textContent = d.cycles_today ?? '—';
-    document.getElementById('d-trades').textContent = d.trades_today ?? '—';
+    fv('digest-date').textContent = d.date;
+    fv('d-cycles').textContent = d.cycles_today ?? '—';
+    fv('d-trades').textContent = d.trades_today ?? '—';
     const pnl = d.pnl_today;
-    const pnlEl = document.getElementById('d-pnl');
+    const pnlEl = fv('d-pnl');
     pnlEl.textContent = pnl != null ? (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2) : '—';
     pnlEl.style.color = pnl == null ? 'var(--text-bright)' : pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text-bright)';
     const wr = d.win_rate_today;
-    const wrEl = document.getElementById('d-wr');
+    const wrEl = fv('d-wr');
     wrEl.textContent = wr != null ? Math.round(wr * 100) + '%' : '—';
     wrEl.style.color = wr == null ? 'var(--text-bright)' : wr > 0.55 ? 'var(--green)' : wr < 0.45 ? 'var(--red)' : 'var(--amber)';
   } catch(e) {}
 }
 
-// ── Config load / save ─────────────────────────────────────
-const SIGNAL_KEYS = [
-  'btc_vs_reference', 'vol_adjusted_momentum', 'momentum_5m', 'cex_poly_lag',
-  'momentum_1m', 'price_acceleration', 'momentum_15m', 'trade_flow_ratio',
-  'volume_ratio', 'order_imbalance', 'momentum_consistency', 'poly_divergence', 'poly_yes_price'
-];
-
+// ── Weight grid ─────────────────────────────────────────────
 function buildWeightGrid(weights) {
-  const grid = document.getElementById('weight-grid');
+  const grid = fv('weight-grid');
   grid.innerHTML = SIGNAL_KEYS.map(k => `
     <div class="weight-row">
       <span class="weight-name">${k}</span>
@@ -323,62 +428,119 @@ function buildWeightGrid(weights) {
 
 function onWeightChange() {
   SIGNAL_KEYS.forEach(k => {
-    const v = parseFloat(document.getElementById('w-' + k).value);
-    document.getElementById('wv-' + k).textContent = (v * 100).toFixed(1) + '%';
+    const v = parseFloat(fv('w-' + k).value);
+    fv('wv-' + k).textContent = (v * 100).toFixed(1) + '%';
   });
   updateWeightTotal();
 }
 
 function updateWeightTotal() {
   const total = SIGNAL_KEYS.reduce((s, k) => {
-    const el = document.getElementById('w-' + k);
+    const el = fv('w-' + k);
     return s + (el ? parseFloat(el.value) : 0);
   }, 0);
-  const el = document.getElementById('weight-total');
+  const el = fv('weight-total');
   el.textContent = total.toFixed(3);
   el.style.color = Math.abs(total - 1) < 0.01 ? 'var(--green)' : 'var(--amber)';
 }
 
+// ── Config load ─────────────────────────────────────────────
 async function loadConfig() {
   try {
     _cfg = await fetch(`${API}/api/config`).then(r => r.json());
-    document.getElementById('f-composite').value = _cfg.composite_threshold ?? 0.62;
-    document.getElementById('f-entry').value     = _cfg.entry_threshold ?? 0.05;
-    document.getElementById('f-budget').value    = _cfg.daily_budget ?? 20;
-    document.getElementById('f-maxpos').value    = _cfg.max_position ?? 5;
-    document.getElementById('f-minmom').value    = _cfg.min_momentum_pct ?? 0.03;
-    document.getElementById('f-mintime').value   = _cfg.min_time_remaining ?? 60;
-    document.getElementById('f-maxtime').value   = _cfg.max_time_remaining ?? 900;
-    document.getElementById('f-webhook').value   = _cfg.webhook_url ?? '';
-    buildWeightGrid(_cfg.signal_weights ?? {});
+
+    // Extract domain sections — fall back to flat _cfg for backward compat
+    const sig = _cfg.signal    || _cfg;
+    const trd = _cfg.trading   || _cfg;
+    const mkt = _cfg.market    || _cfg;
+    const sch = _cfg.scheduler || _cfg;
+
+    // Scheduler
+    fv('f-budget').value  = sch.daily_budget  ?? 20;
+    fv('f-webhook').value = sch.webhook_url   ?? '';
+
+    // Market
+    fv('f-mintime').value = mkt.min_time_remaining ?? 90;
+    fv('f-maxtime').value = mkt.max_time_remaining ?? 300;
+
+    // Signal
+    fv('f-composite').value        = sig.composite_threshold        ?? 0.67;
+    fv('f-slow-composite').value   = sig.slow_composite_threshold   ?? 0.73;
+    fv('f-active-composite').value = sig.active_composite_threshold ?? 0.66;
+    fv('f-minmom').value           = sig.min_momentum_pct           ?? 0.05;
+    fv('f-flipthresh').value       = sig.signal_flip_exit_threshold ?? 0.40;
+    setToggle('f-flipexit', 'tl-flipexit', sig.signal_flip_exit_enabled !== false);
+
+    // Trading
+    fv('f-maxpos').value    = trd.max_position            ?? 3.5;
+    fv('f-maxposwin').value = trd.max_position_per_window ?? 4.3;
+    fv('f-maxnoscore').value = trd.max_no_score           ?? 0.30;
+    fv('f-minpayout').value  = trd.min_payout_ratio       ?? 1.05;
+    fv('f-slowpayout').value = trd.slow_min_payout_ratio  ?? 1.08;
+    setToggle('f-onetrade', 'tl-onetrade', trd.one_trade_per_window);
+
+    // Cooldown
+    setToggle('f-cooldown', 'tl-cooldown', trd.loss_cooldown_enabled !== false);
+    fv('f-streak').value    = trd.loss_cooldown_streak                 ?? 3;
+    fv('f-skipcycles').value = trd.loss_cooldown_skip_cycles           ?? 6;
+    fv('f-highbar').value   = trd.loss_cooldown_resume_threshold_boost ?? 0.07;
+
+    // Weights
+    buildWeightGrid(sig.signal_weights ?? {});
   } catch(e) {
     showMsg('Failed to load config: ' + e.message, 'err');
   }
 }
 
+// ── Config save ─────────────────────────────────────────────
 async function saveConfig() {
-  const btn = document.getElementById('save-btn');
+  const btn = fv('save-btn');
   btn.disabled = true;
   showMsg('Saving…', '');
 
   const weights = {};
   SIGNAL_KEYS.forEach(k => {
-    const el = document.getElementById('w-' + k);
+    const el = fv('w-' + k);
     weights[k] = el ? parseFloat(el.value) : 0;
   });
 
-  const payload = {
-    ..._cfg,
-    composite_threshold: parseFloat(document.getElementById('f-composite').value),
-    entry_threshold:     parseFloat(document.getElementById('f-entry').value),
-    daily_budget:        parseFloat(document.getElementById('f-budget').value),
-    max_position:        parseFloat(document.getElementById('f-maxpos').value),
-    min_momentum_pct:    parseFloat(document.getElementById('f-minmom').value),
-    min_time_remaining:  parseInt(document.getElementById('f-mintime').value),
-    max_time_remaining:  parseInt(document.getElementById('f-maxtime').value),
-    webhook_url:         document.getElementById('f-webhook').value.trim(),
-    signal_weights:      weights,
-  };
+  // Deep-clone the full config then update each section in-place
+  const payload = JSON.parse(JSON.stringify(_cfg || {}));
+  const sig = payload.signal    || (payload.signal    = {});
+  const trd = payload.trading   || (payload.trading   = {});
+  const mkt = payload.market    || (payload.market    = {});
+  const sch = payload.scheduler || (payload.scheduler = {});
+
+  // Scheduler
+  sch.daily_budget = parseFloat(val('f-budget'));
+  sch.webhook_url  = fv('f-webhook').value.trim();
+
+  // Market
+  mkt.min_time_remaining = parseInt(val('f-mintime'));
+  mkt.max_time_remaining = parseInt(val('f-maxtime'));
+
+  // Signal
+  sig.composite_threshold        = parseFloat(val('f-composite'));
+  sig.slow_composite_threshold   = parseFloat(val('f-slow-composite'));
+  sig.active_composite_threshold = parseFloat(val('f-active-composite'));
+  sig.min_momentum_pct           = parseFloat(val('f-minmom'));
+  sig.signal_flip_exit_threshold = parseFloat(val('f-flipthresh'));
+  sig.signal_flip_exit_enabled   = fv('f-flipexit').checked;
+  sig.signal_weights             = weights;
+
+  // Trading
+  trd.max_position            = parseFloat(val('f-maxpos'));
+  trd.max_position_per_window = parseFloat(val('f-maxposwin'));
+  trd.max_no_score            = parseFloat(val('f-maxnoscore'));
+  trd.min_payout_ratio        = parseFloat(val('f-minpayout'));
+  trd.slow_min_payout_ratio   = parseFloat(val('f-slowpayout'));
+  trd.one_trade_per_window    = fv('f-onetrade').checked;
+
+  // Cooldown
+  trd.loss_cooldown_enabled               = fv('f-cooldown').checked;
+  trd.loss_cooldown_streak                = parseInt(val('f-streak'));
+  trd.loss_cooldown_skip_cycles           = parseInt(val('f-skipcycles'));
+  trd.loss_cooldown_resume_threshold_boost = parseFloat(val('f-highbar'));
 
   try {
     const res = await fetch(`${API}/api/config`, {
@@ -387,8 +549,8 @@ async function saveConfig() {
       body: JSON.stringify(payload)
     });
     const d = await res.json();
-    if (res.ok) { showMsg('Saved ✓ — restart collector to apply weight changes', 'ok'); }
-    else         { showMsg('Error: ' + d.error, 'err'); }
+    if (res.ok) showMsg('Saved ✓ — changes take effect next cycle', 'ok');
+    else        showMsg('Error: ' + d.error, 'err');
   } catch(e) {
     showMsg('Network error: ' + e.message, 'err');
   }
@@ -396,32 +558,32 @@ async function saveConfig() {
 }
 
 function showMsg(text, cls) {
-  const el = document.getElementById('save-msg');
+  const el = fv('save-msg');
   el.textContent = text;
   el.className = 'save-msg' + (cls ? ' ' + cls : '');
 }
 
-// ── Init ───────────────────────────────────────────────────
-loadConfig();
-fetchKillSwitch();
-fetchDigest();
-
-// Deploy tracker
+// ── Deploy tracker ──────────────────────────────────────────
 (async () => {
   try {
     const d = await fetch(`${API}/api/deploy-info`).then(r => r.json());
     if (d && d.count) {
-      document.getElementById('deploy-count').textContent = `#${d.count}`;
+      fv('deploy-count').textContent = `#${d.count}`;
       if (d.last_deployed) {
         const dt = new Date(d.last_deployed);
         const pad = n => String(n).padStart(2, '0');
-        document.getElementById('deploy-ts').textContent =
+        fv('deploy-ts').textContent =
           `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth()+1)}-${pad(dt.getUTCDate())} ` +
           `${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())} UTC`;
       }
     }
   } catch(e) {}
 })();
+
+// ── Init ────────────────────────────────────────────────────
+loadConfig();
+fetchKillSwitch();
+fetchDigest();
 </script>
 </body>
 </html>

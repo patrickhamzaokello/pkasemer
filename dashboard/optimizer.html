@@ -286,6 +286,8 @@ async function loadHistory() {
 async function loadConfig() {
   try {
     _cfg = await fetch(`${API}/api/config`).then(r => r.json());
+    // Expose the signal section at top level for backward-compat helpers
+    _cfg._sig = _cfg.signal || _cfg;
     renderHeatmap();
   } catch(e) {}
 }
@@ -358,13 +360,20 @@ function toggleRun(idx) {
 // ── Heatmap ─────────────────────────────────────────────────
 function renderHeatmap() {
   const grid = document.getElementById('heatmap-grid');
-  const blocked = new Set(_cfg.blocked_hours || []);
-  const boosted = new Set(Object.keys(_cfg.boosted_hours || {}).map(Number));
+  const sig = _cfg._sig || _cfg;
+  const blocked = new Set(sig.blocked_hours || []);
+  const boosted = new Set(Object.keys(sig.boosted_hours || {}).map(Number));
 
+  const boostedMap = {};
+  Object.entries(sig.boosted_hours || {}).forEach(([k,v]) => { boostedMap[parseInt(k)] = v; });
   grid.innerHTML = Array.from({length: 24}, (_, h) => {
     let cls = 'normal', title = `Hour ${h}:00 UTC — normal`;
     if (blocked.has(h)) { cls = 'blocked'; title = `Hour ${h}:00 UTC — BLOCKED`; }
-    else if (boosted.has(h)) { cls = 'boosted'; title = `Hour ${h}:00 UTC — BOOSTED`; }
+    else if (boosted.has(h)) {
+      const delta = boostedMap[h];
+      const sign = delta >= 0 ? '+' : '';
+      cls = 'boosted'; title = `Hour ${h}:00 UTC — threshold delta ${sign}${delta}`;
+    }
     return `<div class="hour-cell ${cls}" title="${title}">${h}</div>`;
   }).join('');
 }
