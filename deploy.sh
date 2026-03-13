@@ -125,17 +125,17 @@ else
     info "  docker compose logs collector"
 fi
 
-# ── Step 6: Confirm config reset inside the running container ─────────────────
-# The image bakes config.json into /app/config.json.
-# scheduler.seed_config() only copies /app → /data on first boot (when /data/config.json
-# is absent). Since we already wrote data/config.json in step 2, seed_config() skips it.
-# We force a reset here to be certain the running container uses the project config.
+# ── Step 6: Verify config is live inside the container ───────────────────────
+# No copy needed — data/config.json was written from the project source in step 2
+# and the bind-mount makes it immediately visible to the container as /data/config.json.
+# Running cp /app/config.json here would overwrite it with the image-baked copy,
+# which may be stale if Docker reused a cached COPY layer during the build.
 if [ "$RESET_CONFIG" = true ]; then
-    step "Confirming config reset inside running container"
-    if docker exec pknwitq-collector cp /app/config.json /data/config.json 2>/dev/null; then
-        ok "/data/config.json confirmed reset to project defaults"
+    step "Verifying config is live inside container"
+    if docker exec pknwitq-collector test -f /data/config.json 2>/dev/null; then
+        ok "/data/config.json is present and live (sourced from trader/config.json)"
     else
-        warn "Could not exec into container — config was already reset on the host volume"
+        warn "/data/config.json not visible inside container — check volume mount"
     fi
 fi
 

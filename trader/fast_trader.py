@@ -926,8 +926,12 @@ def run_fast_market_strategy(
             )
             return
 
-        # Not in cooldown — check if the last N resolved trades are all losses
-        if _TRADE_LOG_FILE.exists():
+        # Not in cooldown — check if the last N resolved trades are all losses.
+        # Skip when _post_cooldown_high_bar is True: the cooldown was already served
+        # for this streak and we're waiting for the first recovery trade. Without this
+        # guard the trigger check fires every cycle (the loss streak is still there in
+        # the log) and immediately re-enters a new cooldown, looping forever.
+        if not _post_cooldown_high_bar and _TRADE_LOG_FILE.exists():
             try:
                 _all_trades = json.loads(_TRADE_LOG_FILE.read_text())
                 _resolved = [t for t in _all_trades if t.get("outcome") in ("win", "loss")]
