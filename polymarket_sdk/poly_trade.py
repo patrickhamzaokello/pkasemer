@@ -31,8 +31,9 @@ from .poly_auth import get_clob_client
 from .poly_market import get_token_id
 
 
-MIN_ORDER_USDC = 1.0   # Polymarket minimum order size in USDC
-PRICE_TOLERANCE = 0.03  # Accept ask prices up to 3% above best ask for liquidity calc
+MIN_ORDER_USDC   = 1.0   # Polymarket minimum order size in USDC
+PRICE_TOLERANCE  = 0.15  # Accept prices within 15% of best ask/bid for depth calculation
+FOK_RETRY_FACTOR = 0.60  # On FOK rejection, retry with 60% of original amount
 
 
 def execute_trade(
@@ -146,7 +147,26 @@ def execute_trade(
 
     # Get mid price for average_price in response (informational only)
     entry_price = _get_mid_price(client, token_id) or 0.0
-    return _parse_order_response(resp, entry_price)
+    result = _parse_order_response(resp, entry_price)
+
+    # ── FOK retry: if rejected due to insufficient liquidity, halve and retry ──
+    if not result["success"] and _is_fill_error(result.get("error", "")):
+        retry_amount = round(amount_usdc * FOK_RETRY_FACTOR, 2)
+        if retry_amount >= MIN_ORDER_USDC:
+            print(
+                f"[trade] FOK rejected — retrying with ${retry_amount:.2f} "
+                f"(was ${amount_usdc:.2f})",
+                flush=True,
+            )
+            order_args2 = MarketOrderArgs(token_id=token_id, amount=retry_amount, side=BUY)
+            try:
+                signed2 = client.create_market_order(order_args2)
+                resp2   = client.post_order(signed2, OrderType.FOK)
+                result  = _parse_order_response(resp2, entry_price)
+            except Exception as _retry_err:
+                result["error"] = f"Retry failed: {_retry_err}"
+
+    return result
 
 
 def _get_ask_liquidity_usdc(
@@ -186,6 +206,57 @@ def _get_ask_liquidity_usdc(
         return best_ask, round(total_usdc, 4)
     except Exception:
         return 0.0, 0.0
+
+
+def _get_bid_liquidity_shares(
+    client: Any, token_id: str
+) -> tuple[float, float]:
+    """
+    Return (best_bid_price, total_shares_available) across bid levels within
+    PRICE_TOLERANCE of the best bid.  Used to cap SELL FOK order size.
+    """
+    try:
+        book = client.get_order_book(token_id)
+        if not book:
+            return 0.0, 0.0
+        bids = getattr(book, "bids", None)
+        if bids is None:
+            bids = book.get("bids", []) if isinstance(book, dict) else []
+        if not bids:
+            return 0.0, 0.0
+
+        def _p(b: Any) -> float:
+            v = getattr(b, "price", None)
+            return float(v if v is not None else b.get("price", 0))
+
+        def _s(b: Any) -> float:
+            v = getattr(b, "size", None)
+            return float(v if v is not None else b.get("size", 0))
+
+        sorted_bids = sorted(bids, key=_p, reverse=True)
+        best_bid = _p(sorted_bids[0])
+        if best_bid <= 0:
+            return 0.0, 0.0
+
+        floor = best_bid * (1 - PRICE_TOLERANCE)
+        total_shares = sum(_s(b) for b in sorted_bids if _p(b) >= floor)
+        return best_bid, round(total_shares, 4)
+    except Exception:
+        return 0.0, 0.0
+
+
+def _is_fill_error(error_msg: str) -> bool:
+    """Return True if the error string indicates a FOK fill-size rejection."""
+    if not error_msg:
+        return False
+    msg = error_msg.lower()
+    return any(phrase in msg for phrase in (
+        "could not be fully filled",
+        "not fully filled",
+        "insufficient liquidity",
+        "fok",
+        "fill or kill",
+    ))
 
 
 def _get_mid_price(client: Any, token_id: str) -> float | None:
@@ -316,6 +387,23 @@ def sell_shares(
             "error": f"No token_id found for market_id={market_id} side={side}.",
         }
 
+    # ── Bid-side liquidity check: cap shares to available bid depth ──────────
+    best_bid, avail_shares = _get_bid_liquidity_shares(client, token_id)
+    if avail_shares <= 0:
+        return {
+            "success": False,
+            "trade_id": None,
+            "error": f"No bid-side liquidity (best_bid={best_bid:.4f}). Sell skipped.",
+        }
+    if shares > avail_shares:
+        capped = round(avail_shares * 0.95, 4)
+        print(
+            f"[sell] liquidity cap: {shares:.2f} → {capped:.2f} shares "
+            f"(avail={avail_shares:.2f} @ bid={best_bid:.4f})",
+            flush=True,
+        )
+        shares = capped
+
     order_args = MarketOrderArgs(
         token_id=token_id,
         amount=shares,
@@ -332,10 +420,28 @@ def sell_shares(
         return {"success": False, "trade_id": None, "error": f"Order post failed: {e}"}
 
     result = _parse_order_response(resp, 0.0)
+
+    # ── FOK retry: halve shares and retry once on fill rejection ─────────────
+    if not result["success"] and _is_fill_error(result.get("error", "")):
+        retry_shares = round(shares * FOK_RETRY_FACTOR, 4)
+        if retry_shares > 0:
+            print(
+                f"[sell] FOK rejected — retrying with {retry_shares:.2f} shares "
+                f"(was {shares:.2f})",
+                flush=True,
+            )
+            order_args2 = MarketOrderArgs(token_id=token_id, amount=retry_shares, side=SELL)
+            try:
+                signed2 = client.create_market_order(order_args2)
+                resp2   = client.post_order(signed2, OrderType.FOK)
+                result  = _parse_order_response(resp2, 0.0)
+            except Exception as _retry_err:
+                result["error"] = f"Retry failed: {_retry_err}"
+
     return {
-        "success":   result["success"],
-        "trade_id":  result["trade_id"],
-        "error":     result["error"],
+        "success":  result["success"],
+        "trade_id": result["trade_id"],
+        "error":    result["error"],
     }
 
 
