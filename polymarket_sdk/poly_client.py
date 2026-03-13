@@ -38,7 +38,7 @@ from typing import Any
 
 from .poly_auth    import get_clob_client, get_wallet_address
 from .poly_market  import resolve_market, get_token_id
-from .poly_trade   import execute_trade
+from .poly_trade   import execute_trade, sell_shares as _sell_shares
 from .poly_positions import get_positions as _get_positions
 from .poly_portfolio import get_portfolio as _get_portfolio
 from .poly_history   import build_trade_index
@@ -180,6 +180,24 @@ class PolyClient:
             }
         """
         return _get_portfolio(self._address)
+
+    # ------------------------------------------------------------------
+    # sell (early exit — sell existing shares before market resolves)
+    # ------------------------------------------------------------------
+
+    def sell(self, market_id: str, side: str, shares: float) -> dict:
+        """
+        Sell existing conditional token shares via a SELL market order.
+
+        Args:
+            market_id: condition_id of the open market
+            side:      "yes" or "no" — the side you hold
+            shares:    number of tokens to sell
+
+        Returns:
+            {"success": bool, "trade_id": str|None, "error": str|None}
+        """
+        return _sell_shares(market_id, side, shares)
 
     # ------------------------------------------------------------------
     # redeem (replaces SimmerClient.redeem)

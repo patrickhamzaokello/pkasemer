@@ -486,6 +486,55 @@ def _log_trade_local(trade_id, side, score, confidence, entry_price, position_si
     except Exception as _db_err:
         print(f"  [trade-db] write failed: {_db_err}", flush=True)
 
+def execute_sell(market_id, side, shares):
+    """Sell existing shares via a SELL market order (early exit on signal flip)."""
+    try:
+        result = get_client().sell(market_id=market_id, side=side, shares=shares)
+        return result
+    except Exception as e:
+        return {"success": False, "trade_id": None, "error": str(e)}
+
+
+def _find_open_position(slug):
+    """
+    Return the most recent unresolved local trade record for this slug, or None.
+    Used by the signal-flip early exit to find what position we currently hold.
+    """
+    if not _TRADE_LOG_FILE.exists():
+        return None
+    try:
+        trades = json.loads(_TRADE_LOG_FILE.read_text())
+        for trade in reversed(trades):
+            if (
+                trade.get("slug") == slug
+                and trade.get("outcome") is None
+                and trade.get("resolved") == 0
+            ):
+                return trade
+    except Exception:
+        pass
+    return None
+
+
+def _mark_position_exited(trade_id):
+    """
+    Mark a trade in trade_log.json as 'exited' (early sell before resolution).
+    PnL is left as None — backfill will update it when the sell settles.
+    """
+    if not _TRADE_LOG_FILE.exists():
+        return
+    try:
+        trades = json.loads(_TRADE_LOG_FILE.read_text())
+        for trade in trades:
+            if trade.get("trade_id") == trade_id:
+                trade["outcome"]  = "exited"
+                trade["resolved"] = 1
+                break
+        _TRADE_LOG_FILE.write_text(json.dumps(trades, indent=2))
+    except Exception:
+        pass
+
+
 def warm_import_cache(asset="BTC"):
     from market_utils import get_fast_market_slugs
     slugs = get_fast_market_slugs(asset, include_next=True)
@@ -1042,6 +1091,40 @@ def run_fast_market_strategy(
     hour_acc     = signal.get("hour_accuracy", 0.0)
     hour_acc_str = f"{hour_acc:.0%}"
     session      = signal.get("session", "?")
+
+    # ── Signal flip early exit ────────────────────────────────────────────────
+    # If we hold an open position in this window and the signal has crossed hard
+    # to the opposite side, sell immediately rather than wait for resolution.
+    # Fires even when should_trade=False — a flipped signal with no new entry is
+    # still a valid reason to cut the existing position.
+    if not dry_run and trading_cfg.get("signal_flip_exit_enabled", True):
+        _open = _find_open_position(market_slug)
+        if _open:
+            _flip_thr = signal_cfg.get("signal_flip_exit_threshold", 0.40)
+            _held     = _open["side"]
+            _flipped  = (
+                (_held == "yes" and score < _flip_thr) or
+                (_held == "no"  and score > 1.0 - _flip_thr)
+            )
+            if _flipped:
+                _shares = _open.get("shares", 0)
+                log(
+                    f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
+                    f"SIGNAL FLIP: held {_held.upper()}, score now {score:.3f} "
+                    f"(threshold {_flip_thr}) — selling {_shares:.1f} shares",
+                    force=True,
+                )
+                _exit_mid = _market_id_cache.get(market_slug)
+                if not _exit_mid:
+                    _exit_mid, _ = import_fast_market_market(market_slug, max_retries=1)
+                if _exit_mid and _shares > 0:
+                    _sell = execute_sell(_exit_mid, _held, _shares)
+                    if _sell.get("success"):
+                        log(f"  EXITED {_held.upper()} {_shares:.1f} shares", force=True)
+                        _mark_position_exited(_open["trade_id"])
+                    else:
+                        log(f"  EXIT FAILED: {_sell.get('error')}", force=True)
+                return
 
     if not signal["should_trade"]:
         reason = signal.get("filter_reason", "neutral band")

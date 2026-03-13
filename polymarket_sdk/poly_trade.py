@@ -25,7 +25,7 @@ if __package__ is None:
 from typing import Any
 
 from py_clob_client.clob_types import MarketOrderArgs, OrderType
-from py_clob_client.order_builder.constants import BUY
+from py_clob_client.order_builder.constants import BUY, SELL
 
 from .poly_auth import get_clob_client
 from .poly_market import get_token_id
@@ -282,6 +282,60 @@ def _parse_order_response(resp: Any, entry_price: float) -> dict:
         "shares":        round(shares_bought, 4),
         "average_price": round(avg_price, 4),
         "error":         error_msg or None,
+    }
+
+
+def sell_shares(
+    market_id: str,
+    side: str,
+    shares: float,
+) -> dict:
+    """
+    Sell existing conditional token shares via SELL market order.
+
+    Unlike execute_trade() where amount is USDC, here amount is shares (tokens).
+    Used for early exit when the signal flips direction mid-window.
+
+    Args:
+        market_id: condition_id (returned by resolve_market)
+        side:      "yes" or "no" — the side you hold and want to sell
+        shares:    number of tokens to sell
+
+    Returns:
+        {"success": bool, "trade_id": str|None, "error": str|None}
+    """
+    if shares <= 0:
+        return {"success": False, "trade_id": None, "error": f"shares must be > 0, got {shares}"}
+
+    client = get_clob_client()
+    token_id = get_token_id(market_id, side)
+    if not token_id:
+        return {
+            "success": False,
+            "trade_id": None,
+            "error": f"No token_id found for market_id={market_id} side={side}.",
+        }
+
+    order_args = MarketOrderArgs(
+        token_id=token_id,
+        amount=shares,
+        side=SELL,
+    )
+    try:
+        signed_order = client.create_market_order(order_args)
+    except Exception as e:
+        return {"success": False, "trade_id": None, "error": f"Order signing failed: {e}"}
+
+    try:
+        resp = client.post_order(signed_order, OrderType.FOK)
+    except Exception as e:
+        return {"success": False, "trade_id": None, "error": f"Order post failed: {e}"}
+
+    result = _parse_order_response(resp, 0.0)
+    return {
+        "success":   result["success"],
+        "trade_id":  result["trade_id"],
+        "error":     result["error"],
     }
 
 
