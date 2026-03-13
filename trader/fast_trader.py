@@ -146,7 +146,14 @@ def _load_config(schema, skill_file, config_filename="config.json"):
     if config_path.exists():
         try:
             with open(config_path) as f:
-                file_cfg = json.load(f)
+                raw = json.load(f)
+            # Flatten nested sections so the schema can find any key regardless of nesting
+            file_cfg = {}
+            for k, v in raw.items():
+                if isinstance(v, dict) and k in ("scheduler", "signal", "trading", "market"):
+                    file_cfg.update(v)
+                else:
+                    file_cfg[k] = v
         except (json.JSONDecodeError, IOError):
             pass
     result = {}
@@ -818,13 +825,19 @@ def run_fast_market_strategy(
     WINDOW              = cfg["window"]
     VOLUME_CONFIDENCE   = cfg["volume_confidence"]
     DAILY_BUDGET        = cfg["daily_budget"]
-    MIN_SCORE_TO_IMPORT   = raw_cfg.get("min_score_to_import", 0.65)
-    IMPORT_DAILY_LIMIT    = raw_cfg.get("daily_import_limit", 1000)
-    MIN_ENTRY_PRICE       = raw_cfg.get("min_entry_price", 0.35)
-    MIN_LIQUIDITY_RATIO   = raw_cfg.get("min_liquidity_ratio", 0.20)
-    SMART_SIZING_PCT      = raw_cfg.get("smart_sizing_pct", 0.05)
-    MIN_SHARES_PER_ORDER  = raw_cfg.get("min_shares_per_order", 6.0)
-    MIN_POSITION_SIZE_USD = raw_cfg.get("min_position_size_usd", 0.50)
+    # Extract domain sections — each module reads only its own config
+    signal_cfg  = raw_cfg.get("signal",    raw_cfg)
+    trading_cfg = raw_cfg.get("trading",   raw_cfg)
+    market_cfg  = raw_cfg.get("market",    raw_cfg)
+    sched_cfg   = raw_cfg.get("scheduler", raw_cfg)
+
+    MIN_SCORE_TO_IMPORT   = trading_cfg.get("min_score_to_import", 0.65)
+    IMPORT_DAILY_LIMIT    = sched_cfg.get("daily_import_limit", 1000)
+    MIN_ENTRY_PRICE       = trading_cfg.get("min_entry_price", 0.35)
+    MIN_LIQUIDITY_RATIO   = trading_cfg.get("min_liquidity_ratio", 0.20)
+    SMART_SIZING_PCT      = trading_cfg.get("smart_sizing_pct", 0.05)
+    MIN_SHARES_PER_ORDER  = trading_cfg.get("min_shares_per_order", 6.0)
+    MIN_POSITION_SIZE_USD = trading_cfg.get("min_position_size_usd", 0.50)
 
     now_str  = datetime.now(timezone.utc).strftime("%H:%M:%S")
     mode_tag = "[DRY]" if dry_run else "[LIVE]"
@@ -841,8 +854,8 @@ def run_fast_market_strategy(
     # ── Consecutive loss cooldown ─────────────────────────────────────────────
     # After N resolved losses in a row, skip trading for one cycle to avoid
     # feeding losses during an adverse or noisy market environment.
-    if raw_cfg.get("loss_cooldown_enabled", True):
-        _streak = int(raw_cfg.get("loss_cooldown_streak", 3))
+    if trading_cfg.get("loss_cooldown_enabled", True):
+        _streak = int(trading_cfg.get("loss_cooldown_streak", 3))
         if _TRADE_LOG_FILE.exists():
             try:
                 _all_trades = json.loads(_TRADE_LOG_FILE.read_text())
@@ -1023,7 +1036,7 @@ def run_fast_market_strategy(
     # min_yes_conf: minimum confidence required to enter a YES trade.
     # Confidence = how far score is from 0.5 (0 = coin-flip, 1 = max certainty).
     # Protects against low-conviction YES trades in noisy markets.
-    min_yes_conf = raw_cfg.get("min_yes_conf", 0.0)
+    min_yes_conf = trading_cfg.get("min_yes_conf", 0.0)
     if side == "yes" and min_yes_conf > 0 and confidence < min_yes_conf:
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
@@ -1035,7 +1048,7 @@ def run_fast_market_strategy(
     # ── NO side score cap ─────────────────────────────────────────────────────
     # FIX: use raw_cfg (full config.json). cfg is schema-filtered and does NOT
     # include max_no_score, so cfg.get(...) always returned the hardcoded 0.284.
-    MAX_NO_SCORE = raw_cfg.get("max_no_score", 0.30)
+    MAX_NO_SCORE = trading_cfg.get("max_no_score", 0.30)
     if side == "no" and score > MAX_NO_SCORE:
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
@@ -1048,9 +1061,9 @@ def run_fast_market_strategy(
     # ratios (you earn more per dollar if the rare move materialises). Block
     # entries where the market has already drifted far from 0.50 in a slow
     # regime — the edge is gone and the payout is poor.
-    if regime == "slow" and not raw_cfg.get("use_dynamic_price_bands", True):
-        slow_max_entry_yes = raw_cfg.get("slow_max_entry_yes", 0.54)
-        slow_min_entry_no  = raw_cfg.get("slow_min_entry_no",  0.46)
+    if regime == "slow" and not signal_cfg.get("use_dynamic_price_bands", True):
+        slow_max_entry_yes = trading_cfg.get("slow_max_entry_yes", 0.54)
+        slow_min_entry_no  = trading_cfg.get("slow_min_entry_no",  0.46)
         if side == "yes" and market_yes_price > slow_max_entry_yes:
             log(
                 f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
@@ -1085,8 +1098,8 @@ def run_fast_market_strategy(
         breakeven_wr = entry_price / (win_profit + entry_price)
         implied_wr   = score if side == "yes" else (1 - score)
         # Tighter edge requirement in slow markets. Config-overridable.
-        min_edge = raw_cfg.get("fee_ev_min_edge_slow", 0.05) if regime == "slow" \
-                   else raw_cfg.get("fee_ev_min_edge", 0.03)
+        min_edge = trading_cfg.get("fee_ev_min_edge_slow", 0.05) if regime == "slow" \
+                   else trading_cfg.get("fee_ev_min_edge", 0.03)
         if implied_wr < breakeven_wr + min_edge:
             log(
                 f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
@@ -1107,9 +1120,9 @@ def run_fast_market_strategy(
     # Slow markets get a stricter requirement: need payout to cover more losses
     # since lower signal reliability means fewer wins per loss.
     if regime == "slow":
-        min_payout = raw_cfg.get("slow_min_payout_ratio", 1.10)
+        min_payout = trading_cfg.get("slow_min_payout_ratio", 1.10)
     else:
-        min_payout = raw_cfg.get("min_payout_ratio", 0.90)
+        min_payout = trading_cfg.get("min_payout_ratio", 0.90)
     if payout_ratio < min_payout:
         log(
             f"{mode_tag} {now_str} | {slug_short} {remaining:4.0f}s | "
@@ -1123,7 +1136,7 @@ def run_fast_market_strategy(
     position_size    = calculate_position_size(MAX_POSITION_USD * position_pct, smart_sizing)
     # max_no_size: hard cap on NO-side trade size to limit downside on contrarian bets
     if side == "no":
-        max_no_size = raw_cfg.get("max_no_size", MAX_POSITION_USD)
+        max_no_size = trading_cfg.get("max_no_size", MAX_POSITION_USD)
         position_size = min(position_size, max_no_size)
     remaining_budget = DAILY_BUDGET - daily_spend["spent"]
 
@@ -1154,7 +1167,7 @@ def run_fast_market_strategy(
     # from flip-flopping (e.g. buying YES early, then NO mid-window when the
     # composite score reverses). The lock is stored in daily_spend.json and
     # resets automatically with the daily spend record at midnight UTC.
-    if raw_cfg.get("one_trade_per_window", True):
+    if trading_cfg.get("one_trade_per_window", True):
         window_traded_key = f"window_{slug}_traded"
         if daily_spend.get(window_traded_key):
             log(

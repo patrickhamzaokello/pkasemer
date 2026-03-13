@@ -57,14 +57,20 @@ _DEFAULT_BOOSTED_HOURS = {
 }
 
 
-def get_hour_accuracy(hour_utc, config=None):
+def _resolve_cfg(config):
+    """Return the signal section if config is nested, otherwise return config as-is."""
     cfg = config or {}
+    return cfg.get("signal", cfg)
+
+
+def get_hour_accuracy(hour_utc, config=None):
+    cfg = _resolve_cfg(config)
     table = {**_DEFAULT_HOUR_ACCURACY, **cfg.get("hour_accuracy", {})}
     return table.get(hour_utc, 0.60)
 
 
 def check_hour_gate(hour_utc, config=None):
-    cfg = config or {}
+    cfg = _resolve_cfg(config)
     blocked = cfg.get("blocked_hours", _DEFAULT_BLOCKED_HOURS)
     raw_boosted = cfg.get("boosted_hours", _DEFAULT_BOOSTED_HOURS)
     boosted = {int(k): v for k, v in raw_boosted.items()}
@@ -106,7 +112,7 @@ _DEFAULT_SESSION_CAPS = {
 
 
 def get_market_session(hour_utc, config=None):
-    cfg = config or {}
+    cfg = _resolve_cfg(config)
     sess_hours = {**_SESSION_HOURS, **cfg.get("session_hours", {})}
     for session in ("overlap", "london", "new_york", "asia", "off"):
         if hour_utc in sess_hours.get(session, []):
@@ -115,12 +121,12 @@ def get_market_session(hour_utc, config=None):
 
 
 def get_session_threshold_delta(session, config=None):
-    cfg = config or {}
+    cfg = _resolve_cfg(config)
     return cfg.get(f"{session}_threshold_delta", _DEFAULT_SESSION_DELTAS.get(session, 0.0))
 
 
 def get_session_position_cap(session, config=None):
-    cfg = config or {}
+    cfg = _resolve_cfg(config)
     return cfg.get(f"{session}_position_cap", _DEFAULT_SESSION_CAPS.get(session, 0.85))
 
 
@@ -234,7 +240,7 @@ STRONG_LAG_RSI_OB_DELTA = +3
 # =============================================================================
 
 def detect_market_regime(cex_signals, config=None):
-    cfg = config or {}
+    cfg = _resolve_cfg(config)
     m5 = abs(cex_signals.get("momentum_5m") or 0)
     vr = cex_signals.get("volume_ratio") or 1.0
     vr_valid = vr != 1.0
@@ -367,7 +373,7 @@ def _calc_cex_poly_lag(cex, poly):
 # =============================================================================
 
 def compute_dynamic_bounds(poly_price, lag, volatility, config=None):
-    cfg = config or {}
+    cfg = _resolve_cfg(config)
 
     lag_weight = cfg.get("dynamic_lag_weight", DYNAMIC_LAG_WEIGHT)
     vol_k = cfg.get("dynamic_vol_k", DYNAMIC_VOL_K)
@@ -388,7 +394,7 @@ def compute_dynamic_bounds(poly_price, lag, volatility, config=None):
 
 
 def compute_dynamic_momentum_threshold(volatility, config=None):
-    cfg = config or {}
+    cfg = _resolve_cfg(config)
 
     base = cfg.get("min_momentum_pct", MIN_MOMENTUM_ABS)
     multiplier = cfg.get("dynamic_momentum_multiplier", DYNAMIC_MOMENTUM_MULTIPLIER)
@@ -410,7 +416,7 @@ def get_dynamic_rsi_thresholds(cex, poly, config=None):
     Higher overbought threshold = allow stronger upside trend before blocking long.
     Lower oversold threshold    = allow deeper downside trend before blocking short.
     """
-    cfg = config or {}
+    cfg = _resolve_cfg(config)
 
     use_dynamic = cfg.get("use_dynamic_rsi_thresholds", USE_DYNAMIC_RSI_THRESHOLDS)
     if not use_dynamic:
@@ -472,7 +478,7 @@ def get_dynamic_rsi_thresholds(cex, poly, config=None):
 # =============================================================================
 
 def apply_filters(cex, poly, config=None):
-    cfg = config or {}
+    cfg = _resolve_cfg(config)
     m5 = cex.get("momentum_5m")
     vol5 = cex.get("volatility_5m")
     rsi = cex.get("rsi_14")
@@ -698,7 +704,7 @@ def compute_composite_score(cex, poly, weights=None):
 # =============================================================================
 
 def get_composite_signal(cex_signals, poly_signals, config=None):
-    cfg = config or {}
+    cfg = _resolve_cfg(config)
     regime = detect_market_regime(cex_signals, cfg)
 
     if "signal_weights" in cfg:

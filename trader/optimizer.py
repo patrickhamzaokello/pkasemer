@@ -43,6 +43,38 @@ _DATA_CONFIG  = _DATA_DIR / "config.json"
 _OPT_LOG      = Path(__file__).parent / "optimizer.log"
 
 # ---------------------------------------------------------------------------
+# Section routing — maps optimizer-tunable parameters to their config section.
+# Used when writing changes back to the nested config structure.
+# ---------------------------------------------------------------------------
+
+_PARAM_SECTION = {
+    # signal section
+    "composite_threshold":        "signal",
+    "slow_composite_threshold":   "signal",
+    "active_composite_threshold": "signal",
+    "min_momentum_pct":           "signal",
+    "max_volatility_5m":          "signal",
+    "blocked_hours":              "signal",
+    "boosted_hours":              "signal",
+    # trading section
+    "max_entry_yes":              "trading",
+    "min_entry_yes":              "trading",
+    "min_entry_no":               "trading",
+    "max_entry_no":               "trading",
+    "slow_max_entry_yes":         "trading",
+    "slow_min_entry_no":          "trading",
+    "min_payout_ratio":           "trading",
+    "slow_min_payout_ratio":      "trading",
+    "max_position":               "trading",
+    "slow_position_pct_cap":      "signal",
+    "normal_position_pct_cap":    "signal",
+    "active_position_pct_cap":    "signal",
+    "rsi_overbought":             "signal",
+    "rsi_oversold":               "signal",
+    "max_no_score":               "trading",
+}
+
+# ---------------------------------------------------------------------------
 # Safety bounds — optimizer can never push a parameter outside these limits.
 # The payout-related bounds are deliberately tight to protect profitability.
 # "wins must cover losses" requires min_payout_ratio >= 1.05 always.
@@ -307,10 +339,13 @@ def compute_adjustments(overall, score_buckets, price_buckets, hour_analysis,
     n        = overall["n"]
     wr       = overall["win_rate"]
     pr       = overall["pnl_ratio"]
-    cur_thr  = config.get("composite_threshold", 0.70)
-    cur_mpr  = config.get("min_payout_ratio", 1.10)
-    cur_smpr = config.get("slow_min_payout_ratio", 1.15)
-    cur_mey  = config.get("max_entry_yes", 0.476)
+    # Read from domain sections where available, fall back to flat config
+    _sig     = config.get("signal",  config)
+    _trd     = config.get("trading", config)
+    cur_thr  = _sig.get("composite_threshold", 0.70)
+    cur_mpr  = _trd.get("min_payout_ratio", 1.10)
+    cur_smpr = _trd.get("slow_min_payout_ratio", 1.15)
+    cur_mey  = _trd.get("max_entry_yes", 0.476)
 
     # ── 1. Payout structure (runs regardless of trade count if we have wins/losses)
     # This is the most critical check: avg win must cover avg loss.
@@ -408,9 +443,9 @@ def compute_adjustments(overall, score_buckets, price_buckets, hour_analysis,
 
     # ── 5. Hour analysis — block bad hours, boost good ones
     if n >= MIN_TRADES_OVERALL:
-        blocked = list(config.get("blocked_hours", [6, 8, 16]))
+        blocked = list(_sig.get("blocked_hours", [6, 8, 16]))
         boosted = {int(k): v for k, v in
-                   config.get("boosted_hours", {}).items()}
+                   _sig.get("boosted_hours", {}).items()}
         hour_changes = False
 
         for h, hdata in hour_analysis.items():
@@ -459,7 +494,7 @@ def compute_adjustments(overall, score_buckets, price_buckets, hour_analysis,
     no_stats = side_analysis.get("no")
     if no_stats and no_stats["n"] >= MIN_TRADES_BUCKET:
         no_wr = no_stats["win_rate"]
-        cur_mns = config.get("max_no_score", 0.30)
+        cur_mns = _trd.get("max_no_score", 0.30)
         if no_wr < 0.50:
             new_mns = _step(cur_mns, -0.02, "max_no_score")
             if new_mns < cur_mns:
@@ -501,6 +536,15 @@ def _load_config():
             return json.load(f), path
     except Exception as e:
         return {}, None
+
+
+def _set_config_key(config, key, value):
+    """Set a config key in the correct section (nested) or at top-level (flat)."""
+    section = _PARAM_SECTION.get(key)
+    if section and section in config and isinstance(config[section], dict):
+        config[section][key] = value
+    else:
+        config[key] = value
 
 
 def _save_config(config):
@@ -593,7 +637,7 @@ def run_optimizer(apply=False, verbose=True):
             for h in sorted(hour_analysis.keys()):
                 hd = hour_analysis[h]
                 if hd["n"] >= MIN_TRADES_HOUR:
-                    blocked = h in config.get("blocked_hours", [])
+                    blocked = h in _sig.get("blocked_hours", config.get("blocked_hours", []))
                     tag = " [BLOCKED]" if blocked else ""
                     print(f"    {h:02d}h  wr={hd['win_rate']:.1%}  N={hd['n']}{tag}")
 
@@ -617,14 +661,22 @@ def run_optimizer(apply=False, verbose=True):
 
     if verbose:
         print(f"\n[optimizer] Proposed changes ({len(changes)}):")
+        _sig_disp = config.get("signal",  config)
+        _trd_disp = config.get("trading", config)
         for param, value, reason in changes:
-            cur = config.get(param, "—")
+            section = _PARAM_SECTION.get(param)
+            if section == "signal":
+                cur = _sig_disp.get(param, "—")
+            elif section == "trading":
+                cur = _trd_disp.get(param, "—")
+            else:
+                cur = config.get(param, "—")
             print(f"  {param}: {cur!r} → {value!r}")
             print(f"    reason: {reason}")
 
     if apply:
         for param, value, _ in changes:
-            config[param] = value
+            _set_config_key(config, param, value)
         _save_config(config)
         _log_changes(changes, overall)
         if verbose:

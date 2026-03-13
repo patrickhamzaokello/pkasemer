@@ -1209,6 +1209,11 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
             except Exception:
                 pass
 
+    # Extract domain sections — each module reads only its own config
+    _signal_cfg  = _raw_cfg.get("signal",  _raw_cfg)
+    _trading_cfg = _raw_cfg.get("trading", _raw_cfg)
+    _market_cfg  = _raw_cfg.get("market",  _raw_cfg)
+
     # Compute composite signal and store prediction alongside observation
     sig          = None
     would_trade  = False
@@ -1226,7 +1231,7 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
             "poly_divergence": all_signals.get("poly_divergence"),
             "poly_spread":     all_signals.get("poly_spread"),
         }
-        # Pass config so collector uses the same thresholds/weights as live trader
+        # Pass full config — composite_signal extracts its own signal section
         sig = get_composite_signal(cex_for_sig, poly_for_sig, config=_raw_cfg)
 
         # ── Secondary quality gates (mirror fast_trader.py post-composite checks) ──
@@ -1243,8 +1248,8 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
             _entry_price = _market_yes if _side == "yes" else (1.0 - _market_yes)
 
             # 1. Time window gate (only enter at 120-200s remaining)
-            _min_t = _raw_cfg.get("min_time_remaining", 120)
-            _max_t = _raw_cfg.get("max_time_remaining", 420)
+            _min_t = _market_cfg.get("min_time_remaining", 120)
+            _max_t = _market_cfg.get("max_time_remaining", 420)
             if seconds_remaining > _max_t:
                 would_trade   = False
                 filter_reason = f"too early ({seconds_remaining:.0f}s > {_max_t}s max)"
@@ -1259,7 +1264,7 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
 
             # 3. min_yes_conf gate
             elif _side == "yes":
-                _min_conf = _raw_cfg.get("min_yes_conf", 0.0)
+                _min_conf = _trading_cfg.get("min_yes_conf", 0.0)
                 if _min_conf > 0 and sig["confidence"] < _min_conf:
                     would_trade   = False
                     filter_reason = (f"YES conf {sig['confidence']:.3f} "
@@ -1267,16 +1272,16 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
 
         if would_trade and sig["side"] == "no":
             # 4. max_no_score cap
-            _max_no = _raw_cfg.get("max_no_score", 0.30)
+            _max_no = _trading_cfg.get("max_no_score", 0.30)
             if sig["score"] > _max_no:
                 would_trade   = False
                 filter_reason = (f"score {sig['score']:.3f} > "
                                  f"max_no_score {_max_no:.3f}")
 
-        if would_trade and _regime == "slow" and not _raw_cfg.get("use_dynamic_price_bands", True):
+        if would_trade and _regime == "slow" and not _signal_cfg.get("use_dynamic_price_bands", True):
             # 5. Slow-market entry price tightening
-            _slow_max_yes = _raw_cfg.get("slow_max_entry_yes", 0.465)
-            _slow_min_no  = _raw_cfg.get("slow_min_entry_no",  0.535)
+            _slow_max_yes = _trading_cfg.get("slow_max_entry_yes", 0.465)
+            _slow_min_no  = _trading_cfg.get("slow_min_entry_no",  0.535)
             if _side == "yes" and _market_yes > _slow_max_yes:
                 would_trade   = False
                 filter_reason = (f"[slow] YES at {_market_yes:.3f} "
@@ -1289,19 +1294,19 @@ def collect_one(conn, asset="BTC", window="5m", symbol="BTCUSDT"):
         if would_trade and _entry_price > 0:
             # 6. Payout ratio gate
             _payout = (1.0 - _entry_price) / _entry_price
-            _min_pay = (_raw_cfg.get("slow_min_payout_ratio", 1.15)
+            _min_pay = (_trading_cfg.get("slow_min_payout_ratio", 1.15)
                         if _regime == "slow"
-                        else _raw_cfg.get("min_payout_ratio", 1.10))
+                        else _trading_cfg.get("min_payout_ratio", 1.10))
             if _payout < _min_pay:
                 would_trade   = False
                 filter_reason = (f"payout {_payout:.2f}x < {_min_pay:.2f}x min "
                                  f"(entry={_entry_price:.3f})")
 
             # 7. Min entry price
-            elif _entry_price < _raw_cfg.get("min_entry_price", 0.35):
+            elif _entry_price < _trading_cfg.get("min_entry_price", 0.35):
                 would_trade   = False
                 filter_reason = (f"entry {_entry_price:.3f} < "
-                                 f"min {_raw_cfg.get('min_entry_price', 0.35):.3f}")
+                                 f"min {_trading_cfg.get('min_entry_price', 0.35):.3f}")
 
         conn.execute("""
             UPDATE signal_observations

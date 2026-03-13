@@ -50,7 +50,9 @@ def _read_interval_from_config(default=20):
     try:
         import json
         cfg_path = os.path.join(os.path.dirname(__file__), "config.json")
-        return int(json.load(open(cfg_path)).get("scheduler_interval", default))
+        raw = json.load(open(cfg_path))
+        sched = raw.get("scheduler", raw)  # support nested and flat config
+        return int(sched.get("scheduler_interval", default))
     except Exception:
         return default
 INTERVAL = int(os.environ.get("PKNWITQ_INTERVAL", _read_interval_from_config()))
