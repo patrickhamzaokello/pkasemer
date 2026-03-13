@@ -13,7 +13,7 @@
 
   "market": {
     "min_time_remaining": 90,
-    "max_time_remaining": 360
+    "max_time_remaining": 260
   },
 
   "signal": {

@@ -35,7 +35,9 @@
       "Bash(python3:*)",
       "Bash(py:*)",
       "Bash(PYTHONUTF8=1 py:*)",
-      "Bash(python3.exe:*)"
+      "Bash(python3.exe:*)",
+      "Bash(find \"C:\\\\Users\\\\pkase\\\\Desktop\\\\CANIMAKEADOLLAR\\\\polymarket-trader-1.0.12\" -maxdepth 2 -name \"Dockerfile*\" -o -name \"docker-compose*\" -o -name \"*.sh\" -o -name \"*.bat\" -o -name \"*.ps1\" 2>/dev/null | head -30)",
+      "Bash(chmod +x \"C:\\\\Users\\\\pkase\\\\Desktop\\\\CANIMAKEADOLLAR\\\\polymarket-trader-1.0.12\\\\deploy.sh\" 2>/dev/null; echo \"done\")"
     ]
   }
 }
