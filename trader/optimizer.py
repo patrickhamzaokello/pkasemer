@@ -325,8 +325,8 @@ def compute_adjustments(overall, score_buckets, price_buckets, hour_analysis,
     _sig     = config.get("signal",  config)
     _trd     = config.get("trading", config)
     cur_thr  = _sig.get("composite_threshold", 0.70)
-    cur_mpr  = _trd.get("min_payout_ratio", 1.10)
-    cur_smpr = _trd.get("slow_min_payout_ratio", 1.15)
+    cur_mpr  = _trd.get("min_payout_ratio", 1.05)
+    cur_smpr = _trd.get("slow_min_payout_ratio", 1.08)
 
     # ── 1. Payout structure (runs regardless of trade count if we have wins/losses)
     # This is the most critical check: avg win must cover avg loss.
