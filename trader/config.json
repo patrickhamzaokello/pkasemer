@@ -11,7 +11,7 @@
 
   "market": {
     "min_time_remaining": 90,
-    "max_time_remaining": 380
+    "max_time_remaining": 240
   },
 
   "signal": {
@@ -52,7 +52,7 @@
 
     "global_max_yes": 0.52,
     "global_min_no":  0.48,
-    "signal_flip_exit_threshold": 0.50,
+    "signal_flip_exit_threshold": 0.60,
 
     "volume_confidence": false,
     "momentum_agreement_filter": false,
@@ -60,7 +60,7 @@
     "momentum_15m_agreement_filter": false,
     "momentum_agreement_min_15m": 0.03,
 
-    "blocked_hours": [6, 8, 16],
+    "blocked_hours": [0, 11, 15, 20, 22, 23],
     "boosted_hours": {
       "2": -0.03,
       "4": -0.02
@@ -99,6 +99,9 @@
     "min_score_to_import":     0.50,
     "one_trade_per_window":    true,
     "signal_flip_exit_enabled": true,
+    "time_decay_exit_enabled":  true,
+    "time_decay_exit_seconds":  120,
+    "time_decay_exit_score_drop": 0.05,
     "take_profit_enabled":      true,
     "take_profit_yes_price":    0.70,
     "take_profit_no_price":     0.30,

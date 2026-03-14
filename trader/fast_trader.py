@@ -63,6 +63,7 @@ except ImportError:
 # =============================================================================
 
 TRADE_SOURCE = "sdk:pknwitq"
+CLOB_API     = "https://clob.polymarket.com"
 # These are defaults; overridden each cycle from config.json
 SMART_SIZING_PCT     = 0.05
 MIN_SHARES_PER_ORDER = 6.0
@@ -895,6 +896,33 @@ def calculate_position_size(max_size, smart_sizing=False):
 
 
 # =============================================================================
+# CLOB Real-Time Price Helper
+# =============================================================================
+
+def _get_clob_ask(yes_token_id: str, side: str) -> "float | None":
+    """
+    Fetch the live ask price for an outcome from the CLOB (no auth required).
+
+    side='yes' → GET /price?token_id=YES_TOKEN&side=BUY   → best YES ask
+    side='no'  → GET /price?token_id=YES_TOKEN&side=SELL  → best YES bid
+                  NO ask = 1 - YES bid (complementary market)
+
+    Returns float on success, None on any failure (caller falls back to Gamma).
+    Uses a 3s timeout so a slow CLOB never blocks the entry window.
+    """
+    try:
+        clob_side = "BUY" if side == "yes" else "SELL"
+        url = f"{CLOB_API}/price?token_id={yes_token_id}&side={clob_side}"
+        result = _api_request(url, timeout=3)
+        if result and "price" in result:
+            raw = float(result["price"])
+            return raw if side == "yes" else (1.0 - raw)
+    except Exception:
+        pass
+    return None
+
+
+# =============================================================================
 # Main Strategy Logic
 # =============================================================================
 
@@ -1182,11 +1210,34 @@ def run_fast_market_strategy(
                 )
             )
 
-            _flipped = _opposite_signal or _score_flipped or _take_profit
+            # Time-decay exit: at ≤N seconds remaining, sell if score has softened
+            # from entry by at least score_drop. Poly price is still near 0.50 at
+            # this point, so we recover ~100% of capital rather than holding to a
+            # binary 0 outcome. Catches losses where score weakens slowly without
+            # ever crossing the signal_flip threshold.
+            _td_enabled   = trading_cfg.get("time_decay_exit_enabled", False)
+            _td_seconds   = trading_cfg.get("time_decay_exit_seconds", 120)
+            _td_drop      = trading_cfg.get("time_decay_exit_score_drop", 0.05)
+            _entry_score  = float(_open.get("score", score))
+            _time_decay   = (
+                _td_enabled
+                and remaining <= _td_seconds
+                and (
+                    (_held == "yes" and score < _entry_score - _td_drop) or
+                    (_held == "no"  and score > _entry_score + _td_drop)
+                )
+            )
+
+            _flipped = _opposite_signal or _score_flipped or _take_profit or _time_decay
 
             if _flipped:
                 if _take_profit:
                     _reason = f"take-profit poly={market_yes_price:.3f}"
+                elif _time_decay:
+                    _reason = (
+                        f"time-decay @{remaining:.0f}s: score {score:.3f} "
+                        f"vs entry {_entry_score:.3f} (drop={_entry_score - score:.3f})"
+                    )
                 elif _opposite_signal:
                     _reason = f"opposite signal ({signal.get('side','?').upper()})"
                 else:
@@ -1427,19 +1478,34 @@ def run_fast_market_strategy(
         )
         return
 
-    best_ask_raw = best.get("bestAsk")
-    best_bid_raw = best.get("bestBid")
-    if best_ask_raw and best_bid_raw:
-        try:
-            yes_ask = float(best_ask_raw)
-            yes_bid = float(best_bid_raw)
-            # NO ask = 1 - YES bid (complementary market)
-            ask_price = yes_ask if side == "yes" else (1 - yes_bid)
+    # Try real-time CLOB price first; Gamma's bestBid/bestAsk can be 5–30s stale,
+    # which causes min_shares calculations to be wrong when the market has repriced.
+    ask_price = None
+    try:
+        clob_token_ids = json.loads(best.get("clob_token_ids", "[]") or "[]")
+        yes_token_id = clob_token_ids[0] if clob_token_ids else None
+    except (json.JSONDecodeError, IndexError, TypeError):
+        yes_token_id = None
+
+    if yes_token_id:
+        ask_price = _get_clob_ask(yes_token_id, side)
+        if ask_price is not None:
             ask_price = max(ask_price, entry_price)  # ask always >= mid
-        except (ValueError, TypeError):
-            ask_price = entry_price / 0.90
-    else:
-        ask_price = entry_price / 0.90  # fallback: assume 10% spread
+
+    if ask_price is None:
+        # Fallback: Gamma cached bid/ask (may be stale but better than nothing)
+        best_ask_raw = best.get("bestAsk")
+        best_bid_raw = best.get("bestBid")
+        if best_ask_raw and best_bid_raw:
+            try:
+                yes_ask = float(best_ask_raw)
+                yes_bid = float(best_bid_raw)
+                ask_price = yes_ask if side == "yes" else (1 - yes_bid)
+                ask_price = max(ask_price, entry_price)
+            except (ValueError, TypeError):
+                ask_price = entry_price / 0.90
+        else:
+            ask_price = entry_price / 0.90  # last resort: assume 10% spread
 
     min_order_usdc = MIN_SHARES_PER_ORDER * ask_price  # 5 shares at ask price
 

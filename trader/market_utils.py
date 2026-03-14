@@ -156,6 +156,7 @@ def discover_fast_market_markets(asset="BTC", window="5m"):
                 "volumeClob":     m.get("volumeClob"),
                 "volume24hr":     m.get("volume24hr"),
                 "price_to_beat":  (event.get("eventMetadata") or {}).get("priceToBeat"),
+                "clob_token_ids": m.get("clobTokenIds", "[]"),
             })
 
     return markets
