@@ -650,8 +650,9 @@ def trades():
             side = t.get("side")
             out  = t.get("market_outcome") or t.get("outcome")
             to   = t.get("trade_outcome") or (
-                "win"  if (side == "yes" and out == "up") or (side == "no" and out == "down") else
-                "loss" if out in ("up", "down") else None
+                "exited" if out == "exited" else
+                "win"    if (side == "yes" and out == "up") or (side == "no" and out == "down") else
+                "loss"   if out in ("up", "down") else None
             )
             result.append({
                 "ts":                    t.get("timestamp"),
@@ -708,17 +709,20 @@ def pnl_summary():
 
         wins     = sum(1 for r in resolved_rows if r[1] == "win")
         losses   = sum(1 for r in resolved_rows if r[1] == "loss")
+        exits    = sum(1 for r in resolved_rows if r[1] == "exited")
         total_pnl = sum(r[0] for r in resolved_rows if r[0] is not None)
         n_resolved = len(resolved_rows)
+        n_wl = wins + losses  # win rate only over win/loss, not exits
         return jsonify({
             "total_trades":    total_trades,
             "total_pnl":       round(total_pnl, 4),
             "today_trades":    today_trades,
             "today_pnl":       round(today_pnl_row or 0, 4),
-            "win_rate":        round(wins / n_resolved, 4) if n_resolved else None,
+            "win_rate":        round(wins / n_wl, 4) if n_wl else None,
             "resolved_trades": n_resolved,
             "wins":            wins,
             "losses":          losses,
+            "exits":           exits,
         })
     except Exception as e:
         # Fallback to JSON if trades table doesn't exist yet
@@ -908,11 +912,13 @@ def poly_metrics():
         n_resolved = len(resolved_rows)
         wins       = [r for r in resolved_rows if r[1] == "win"]
         losses     = [r for r in resolved_rows if r[1] == "loss"]
+        exits      = [r for r in resolved_rows if r[1] == "exited"]
         total_pnl  = sum(r[0] for r in resolved_rows if r[0] is not None)
         yes_trades = [r for r in resolved_rows if (r[2] or "").lower() == "yes"]
         no_trades  = [r for r in resolved_rows if (r[2] or "").lower() == "no"]
         yes_wins   = [r for r in yes_trades if r[1] == "win"]
         no_wins    = [r for r in no_trades  if r[1] == "win"]
+        n_wl = len(wins) + len(losses)  # win rate only over win/loss
 
         # Supplement with Polymarket API for unrealized P&L and live open positions
         unrealized     = 0.0
@@ -945,7 +951,8 @@ def poly_metrics():
             "unrealized_pnl":  round(unrealized, 4),
             "win_count":       len(wins),
             "loss_count":      len(losses),
-            "win_rate":        round(len(wins) / n_resolved, 4) if n_resolved else None,
+            "exit_count":      len(exits),
+            "win_rate":        round(len(wins) / n_wl, 4) if n_wl else None,
             "avg_pnl":         round(total_pnl / n_resolved, 4) if n_resolved else None,
             "best_trade_pnl":  round(best_pnl,  4) if best_pnl  is not None else None,
             "worst_trade_pnl": round(worst_pnl, 4) if worst_pnl is not None else None,
@@ -1065,6 +1072,8 @@ def logs():
             kind = "error"
         elif "rate limited" in lo or "429" in lo:
             kind = "ratelimit"
+        elif "signal flip" in lo or "exited" in lo or "take-profit" in lo or "exit failed" in lo:
+            kind = "sell"
         elif ("→ yes" in lo or "→ no" in lo) and "score=" in lo:
             kind = "trade"   # [LIVE] would-trade line: "score=X → NO $Y"
         elif "traded" in lo or "would trade" in lo or "would_trade" in lo:
@@ -1181,11 +1190,11 @@ def import_status():
         "current_cached":  False,
         "next_cached":     False,
         "imports_today":   0,
-        "import_limit":    "Infinite" if CONFIG.get("daily_import_limit") is None else CONFIG.get("daily_import_limit"),
+        "import_limit":    "Infinite" if CONFIG.get("scheduler", {}).get("daily_import_limit") is None else CONFIG.get("scheduler", {}).get("daily_import_limit"),
         "spend_exists":    False,
         "spent_today":     0.0,
         "trades_today":    0,
-        "daily_budget":    CONFIG.get("daily_budget", 20.0),
+        "daily_budget":    CONFIG.get("scheduler", {}).get("daily_budget", 20.0),
     }
 
     # Cache file
@@ -1534,9 +1543,11 @@ def daily_digest():
         today_trades = [t for t in all_trades if (t.get("timestamp") or "")[:10] == today]
         resolved = [t for t in today_trades
                     if t.get("outcome") in ("up", "down") and t.get("pnl") is not None]
-        pnl = sum(t["pnl"] for t in resolved)
-        wins = sum(1 for t in resolved if t["pnl"] > 0)
-        resolved_count = len(resolved)
+        exited_today = [t for t in today_trades
+                        if t.get("outcome") == "exited" or t.get("trade_outcome") == "exited"]
+        pnl = sum(t["pnl"] for t in resolved) + sum(t.get("pnl") or 0 for t in exited_today)
+        wins = sum(1 for t in resolved if t["pnl"] > 0) + sum(1 for t in exited_today if (t.get("pnl") or 0) > 0)
+        resolved_count = len(resolved) + len(exited_today)
     except Exception:
         pass
 
@@ -1548,6 +1559,7 @@ def daily_digest():
         "last_cycle":     stats["last_cycle"] if stats else None,
         "top_block":      top_block["filter_reason"] if top_block else None,
         "trades_today":   len(today_trades),
+        "exits_today":    len(exited_today),
         "pnl_today":      round(pnl, 4),
         "resolved_today": resolved_count,
         "win_rate_today": round(wins / resolved_count, 4) if resolved_count > 0 else None,

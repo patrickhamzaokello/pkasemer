@@ -60,7 +60,7 @@
     "dynamic_vol_k": 0.005,
     "global_max_yes": 0.62,
     "global_min_no": 0.38,
-    "signal_flip_exit_threshold": 0.40,
+    "signal_flip_exit_threshold": 0.50,
 
     "volume_confidence": false,
     "momentum_agreement_filter": false,
@@ -114,10 +114,10 @@
     "loss_cooldown_streak": 4,
     "loss_cooldown_skip_cycles": 4,
     "loss_cooldown_resume_threshold_boost": 0.05,
-    "min_payout_ratio": 0.0,
-    "slow_min_payout_ratio": 0.0,
-    "fee_ev_min_edge": 0.0,
-    "fee_ev_min_edge_slow": 0.0,
+    "min_payout_ratio": 1.05,
+    "slow_min_payout_ratio": 1.10,
+    "fee_ev_min_edge": 0.03,
+    "fee_ev_min_edge_slow": 0.05,
     "min_position_size_usd": 0.50,
     "min_shares_per_order": 5.3,
     "smart_sizing_pct": 0.05

@@ -326,12 +326,14 @@
   table.tbl tr.win  td  { background: rgba(0,230,118,0.025); }
   table.tbl tr.loss td  { background: rgba(255,61,87,0.025); }
   table.tbl tr.open td  { background: rgba(33,150,243,0.02); }
+  table.tbl tr.exit td  { background: rgba(245,158,11,0.02); }
   table.tbl tr:last-child td { border-bottom: none; }
 
   .rd { display: inline-block; width: 7px; height: 7px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
   .rd.win  { background: var(--green); box-shadow: 0 0 5px rgba(0,230,118,0.5); }
   .rd.loss { background: var(--red); }
   .rd.open { background: var(--blue); animation: pulse 2s infinite; }
+  .rd.exit { background: var(--amber); box-shadow: 0 0 5px rgba(245,158,11,0.4); }
   .rd.unk  { background: var(--text-dim); }
 
   .trade-pill { display: inline-block; padding: 1px 7px; border-radius: 2px; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; }
@@ -341,6 +343,7 @@
   .out-pill { display: inline-block; padding: 2px 7px; border-radius: 2px; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
   .out-pill.up   { background: rgba(0,230,118,0.12); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
   .out-pill.down { background: rgba(255,61,87,0.12);  color: var(--red);   border: 1px solid rgba(255,61,87,0.3); }
+  .out-pill.exit { background: rgba(245,158,11,0.12); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
 
   /* Cycle feed */
   .feed-hdr {
@@ -378,6 +381,7 @@
   .log-scroll { overflow-y: auto; max-height: 252px; font-size: 10px; line-height: 1.6; }
   .log-line   { padding: 2px 14px; border-bottom: 1px solid rgba(26,35,50,0.3); white-space: pre-wrap; word-break: break-all; color: var(--text-dim); }
   .log-line.trade     { color: var(--green); background: rgba(0,230,118,0.03); }
+  .log-line.sell      { color: var(--amber); background: rgba(245,158,11,0.04); }
   .log-line.error     { color: var(--red);   background: rgba(255,61,87,0.07); }
   .log-line.ratelimit { color: var(--red);   background: rgba(255,61,87,0.05); }
   .log-line.import    { color: var(--cyan); }
@@ -673,11 +677,12 @@
       <div class="panel-header">
         <div class="panel-title">Placed Trades</div>
         <div class="tab-bar">
-          <button class="tab active" id="tab-all"   onclick="setTab('all')">All Time</button>
-          <button class="tab"        id="tab-today" onclick="setTab('today')">Today</button>
-          <button class="tab"        id="tab-open"  onclick="setTab('open')">Open</button>
-          <button class="tab"        id="tab-won"   onclick="setTab('won')">Won</button>
-          <button class="tab"        id="tab-lost"  onclick="setTab('lost')">Lost</button>
+          <button class="tab active" id="tab-all"    onclick="setTab('all')">All Time</button>
+          <button class="tab"        id="tab-today"  onclick="setTab('today')">Today</button>
+          <button class="tab"        id="tab-open"   onclick="setTab('open')">Open</button>
+          <button class="tab"        id="tab-won"    onclick="setTab('won')">Won</button>
+          <button class="tab"        id="tab-lost"   onclick="setTab('lost')">Lost</button>
+          <button class="tab"        id="tab-exited" onclick="setTab('exited')" style="color:var(--amber)">Exited</button>
         </div>
       </div>
 
@@ -972,7 +977,7 @@ let _trades = [], _tab = 'all';
 
 function setTab(tab) {
   _tab = tab;
-  ['all','today','open','won','lost'].forEach(t => $('tab-' + t).classList.toggle('active', t === tab));
+  ['all','today','open','won','lost','exited'].forEach(t => $('tab-' + t).classList.toggle('active', t === tab));
   renderTrades();
 }
 
@@ -980,6 +985,7 @@ async function fetchTrades() {
   try {
     const tData = await fetch(`${API}/api/trades`).then(r => r.json());
     _trades = Array.isArray(tData) ? tData : [];
+    // Include exited trades in PnL chart only when they have a recorded pnl
     drawPnl(_trades.filter(t => t.trade_result != null).slice().reverse());
     renderTrades();
   } catch(e) { console.error('fetchTrades', e); }
@@ -1037,7 +1043,8 @@ async function fetchPolyMetrics() {
       const w = d.win_rate;
       wrE.textContent = Math.round(w * 100) + '%';
       wrE.style.color = w >= 0.56 ? 'var(--green)' : w < 0.45 ? 'var(--red)' : 'var(--amber)';
-      $('b-wr-sub').textContent = `${d.win_count}W / ${d.loss_count}L · ${d.resolved_trades} resolved`;
+      const exitNote = d.exit_count ? ` · ${d.exit_count} exited` : '';
+      $('b-wr-sub').textContent = `${d.win_count}W / ${d.loss_count}L${exitNote} · ${d.resolved_trades} resolved`;
     } else { wrE.textContent = '—'; $('b-wr-sub').textContent = 'no resolved trades'; }
 
     const oe = $('b-open');
@@ -1076,7 +1083,8 @@ async function fetchPolyMetrics() {
       $('pm-acc-no').style.width     = (n / tot * 100).toFixed(1) + '%';
       $('pm-acc-yes-lbl').textContent = 'YES ' + (d.yes_win_rate != null ? Math.round(d.yes_win_rate * 100) + '% WR' : '—') + ' (' + y + ')';
       $('pm-acc-no-lbl').textContent  = 'NO '  + (d.no_win_rate  != null ? Math.round(d.no_win_rate  * 100) + '% WR' : '—') + ' (' + n + ')';
-      $('pm-acc-note').textContent    = `${d.resolved_trades} resolved · overall ${d.win_rate != null ? Math.round(d.win_rate * 100) : '—'}%`;
+      const exitStr = d.exit_count ? ` · ${d.exit_count} sold early` : '';
+      $('pm-acc-note').textContent    = `${d.resolved_trades} resolved${exitStr} · overall ${d.win_rate != null ? Math.round(d.win_rate * 100) : '—'}%`;
     }
   } catch(e) { console.error('fetchPolyMetrics', e); }
 }
@@ -1156,27 +1164,31 @@ function renderTrades() {
   let rows = _trades;
   if      (_tab === 'today') rows = _trades.filter(t => t.ts && t.ts.startsWith(today));
   else if (_tab === 'open')  rows = _trades.filter(t => !t.resolved || !t.outcome);
-  else if (_tab === 'won')   rows = _trades.filter(t => t.trade_outcome === 'win');
-  else if (_tab === 'lost')  rows = _trades.filter(t => t.trade_outcome === 'loss');
+  else if (_tab === 'won')    rows = _trades.filter(t => t.trade_outcome === 'win');
+  else if (_tab === 'lost')   rows = _trades.filter(t => t.trade_outcome === 'loss');
+  else if (_tab === 'exited') rows = _trades.filter(t => t.trade_outcome === 'exited');
 
   const tbody = $('tbl-body');
   if (!rows.length) {
-    const msgs = {all:'No trades recorded yet — set PKNWITQ_MODE=trade or both.',today:'No trades today.',open:'No open positions.',won:'No winning trades yet.',lost:'No losing trades yet.'};
+    const msgs = {all:'No trades recorded yet — set PKNWITQ_MODE=trade or both.',today:'No trades today.',open:'No open positions.',won:'No winning trades yet.',lost:'No losing trades yet.',exited:'No early-exit (sell) trades yet.'};
     tbody.innerHTML = `<tr><td colspan="15" class="empty">${msgs[_tab] || 'No data.'}</td></tr>`;
     return;
   }
 
   tbody.innerHTML = rows.map(t => {
-    const side = t.trade_side || '—', out = t.outcome, res = t.resolved;
-    const won  = t.trade_outcome === 'win';
-    const lost = t.trade_outcome === 'loss';
-    let dc = res ? (won ? 'win' : lost ? 'loss' : 'unk') : 'open';
-    let rc = res ? (won ? 'win' : lost ? 'loss' : '') : 'open';
-    let outH = res
-      ? (out === 'up'   ? `<span class="out-pill up">▲ UP</span>`
-       : out === 'down' ? `<span class="out-pill down">▼ DN</span>`
-       :                  `<span style="color:var(--text-dim)">unclear</span>`)
-      : '<span style="color:var(--blue)">pending</span>';
+    const side   = t.trade_side || '—', out = t.outcome, res = t.resolved;
+    const won    = t.trade_outcome === 'win';
+    const lost   = t.trade_outcome === 'loss';
+    const exited = t.trade_outcome === 'exited';
+    let dc = res ? (won ? 'win' : lost ? 'loss' : exited ? 'exit' : 'unk') : 'open';
+    let rc = res ? (won ? 'win' : lost ? 'loss' : exited ? 'exit' : '') : 'open';
+    let outH = exited
+      ? `<span class="out-pill exit">↩ SOLD</span>`
+      : res
+        ? (out === 'up'   ? `<span class="out-pill up">▲ UP</span>`
+         : out === 'down' ? `<span class="out-pill down">▼ DN</span>`
+         :                  `<span style="color:var(--text-dim)">unclear</span>`)
+        : '<span style="color:var(--blue)">pending</span>';
 
     const pnl   = t.trade_result;
     const score = t.signal_score != null ? t.signal_score.toFixed(3) : '—';
@@ -1229,8 +1241,10 @@ function drawPnl(trades) {
   area += ` L${tx(n-1)},${zY} Z`;
   const line = pts.map((p,i) => `${i===0?'M':'L'}${tx(i)},${ty(p.y)}`).join(' ');
   const dots = pts.map((p,i) => {
-    const won = p.t.trade_outcome === 'win';
-    return `<circle cx="${tx(i)}" cy="${ty(p.y)}" r="2.5" fill="${won?'#22c55e':'#ef4444'}" opacity="0.85"/>`;
+    const won    = p.t.trade_outcome === 'win';
+    const isExit = p.t.trade_outcome === 'exited';
+    const dotColor = isExit ? '#f59e0b' : won ? '#22c55e' : '#ef4444';
+    return `<circle cx="${tx(i)}" cy="${ty(p.y)}" r="2.5" fill="${dotColor}" opacity="0.85"/>`;
   }).join('');
 
   svg.innerHTML = `
@@ -1244,7 +1258,7 @@ function drawPnl(trades) {
     ${dots}
     <circle cx="${tx(n-1)}" cy="${ty(fin)}" r="4" fill="${lc}"/>
     <text x="${W-PAD-4}" y="${ty(fin)+(fin>=0?-7:16)}" text-anchor="end" fill="${lc}" font-size="10" font-family="monospace">${dollar(fin)}</text>
-    <text x="${PAD+4}" y="${H-4}" fill="rgba(255,255,255,0.1)" font-size="9" font-family="monospace">${n} resolved · green=win · red=loss</text>`;
+    <text x="${PAD+4}" y="${H-4}" fill="rgba(255,255,255,0.1)" font-size="9" font-family="monospace">${n} resolved · green=win · red=loss · amber=exit</text>`;
 }
 
 // ── Import status ──────────────────────────────────────────
