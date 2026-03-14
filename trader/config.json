@@ -16,14 +16,14 @@
 
   "signal": {
     "signal_weights": {
-      "vol_adjusted_momentum": 0.26,
-      "momentum_5m":           0.23,
+      "vol_adjusted_momentum": 0.28,
+      "momentum_5m":           0.24,
       "cex_poly_lag":          0.13,
       "btc_vs_reference":      0.13,
       "momentum_1m":           0.08,
       "price_acceleration":    0.09,
       "momentum_15m":          0.05,
-      "rsi_14":                0.03,
+      "rsi_14":                0.00,
       "poly_spread":           0.00,
       "volume_ratio":          0.00,
       "momentum_consistency":  0.00,
@@ -50,9 +50,6 @@
     "vol_penalty_threshold": 1.2,
     "min_poly_spread": 0.04,
 
-    "use_dynamic_price_bands": true,
-    "dynamic_lag_weight": 0.5,
-    "dynamic_vol_k": 0.005,
     "global_max_yes": 0.52,
     "global_min_no":  0.48,
     "signal_flip_exit_threshold": 0.50,
@@ -88,10 +85,7 @@
     "max_volatility_position_penalty": 0.3,
 
     "active_rsi_override": false,
-    "lag_momentum_override": true,
-    "min_lag_override":       0.08,
-    "min_vs_ref_override":    0.10,
-    "very_strong_lag_override": 0.15
+    "lag_momentum_override": false
   },
 
   "trading": {
@@ -108,14 +102,14 @@
     "take_profit_enabled":      true,
     "take_profit_yes_price":    0.70,
     "take_profit_no_price":     0.30,
-    "loss_cooldown_enabled":    true,
+    "loss_cooldown_enabled":    false,
     "loss_cooldown_streak":     4,
     "loss_cooldown_skip_cycles": 4,
     "loss_cooldown_resume_threshold_boost": 0.05,
     "min_payout_ratio":       1.05,
     "slow_min_payout_ratio":  1.05,
-    "fee_ev_min_edge":        0.03,
-    "fee_ev_min_edge_slow":   0.03,
+    "fee_ev_min_edge":        0.00,
+    "fee_ev_min_edge_slow":   0.00,
     "min_position_size_usd":  0.50,
     "min_shares_per_order":   5.3,
     "smart_sizing_pct":       0.05

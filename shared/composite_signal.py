@@ -194,12 +194,9 @@ MIN_POLY_SPREAD           = 0.04
 RSI_OVERBOUGHT            = 80
 RSI_OVERSOLD              = 22
 
-# Dynamic price-band defaults
-USE_DYNAMIC_PRICE_BANDS = True
-DYNAMIC_LAG_WEIGHT      = 0.40
-DYNAMIC_VOL_K           = 0.01
-GLOBAL_MAX_YES          = 0.49
-GLOBAL_MIN_NO           = 0.51
+# Price band defaults (static — Polymarket BTC 5m binary)
+GLOBAL_MAX_YES = 0.52
+GLOBAL_MIN_NO  = 0.48
 
 # Dynamic momentum-threshold defaults
 USE_DYNAMIC_MOMENTUM_THRESHOLD = True
@@ -474,172 +471,37 @@ def get_dynamic_rsi_thresholds(cex, poly, config=None):
 # =============================================================================
 
 def apply_filters(cex, poly, config=None):
+    """
+    Pre-trade hard gates for Polymarket 5-minute binary markets.
+
+    This is a binary prediction market, not a spot platform:
+    - RSI, volatility, and spread filters are wrong tools here
+    - High volatility = opportunity (BTC moving = edge vs stale Poly price)
+    - RSI overbought during strong momentum is WHEN to trade YES, not block it
+    - Each window is independent — no streak logic applies
+
+    Only two hard gates make sense:
+    1. Minimum momentum — need a clear directional BTC move to have any edge
+    2. Price band — only enter if Polymarket hasn't fully repriced the move yet
+    """
     cfg = _resolve_cfg(config)
     m5 = cex.get("momentum_5m")
-    vol5 = cex.get("volatility_5m")
-    rsi = cex.get("rsi_14")
-    vol_ratio = cex.get("volume_ratio", 1.0)
-    poly_spread = poly.get("poly_spread")
 
-    use_dynamic_mom = cfg.get(
-        "use_dynamic_momentum_threshold",
-        USE_DYNAMIC_MOMENTUM_THRESHOLD,
-    )
-    if use_dynamic_mom:
-        min_mom = compute_dynamic_momentum_threshold(vol5, cfg)
-    else:
-        min_mom = cfg.get("min_momentum_pct", MIN_MOMENTUM_ABS)
-
-    # Minimum momentum gate
+    # Minimum momentum gate — need clear BTC direction to have edge
+    min_mom = cfg.get("min_momentum_pct", MIN_MOMENTUM_ABS)
     if m5 is not None and abs(m5) < min_mom:
-        lag_mom_override = cfg.get("lag_momentum_override", False)
-        allowed = False
+        return False, f"momentum too weak ({m5:+.3f}% < ±{min_mom:.3f}%)"
 
-        if lag_mom_override:
-            lag = _calc_cex_poly_lag(cex, poly) or 0.0
-            ref = cex.get("btc_vs_reference") or 0.0
-            vr = cex.get("volume_ratio") or 1.0
-            min_lag = cfg.get("min_lag_override", 0.12)
-            min_ref = cfg.get("min_vs_ref_override", 0.20)
-            same_dir = (lag > 0) == (ref > 0)
-            vol_ok = vr != 1.0 and vr >= 0.5
-
-            allowed = (
-                abs(ref) >= min_ref
-                and abs(lag) >= min_lag
-                and same_dir
-                and vol_ok
-            )
-
-        if not allowed:
-            return False, f"momentum too weak ({m5:+.3f}% < ±{min_mom:.3f}%)"
-
-    # Volatility gate
-    max_vol_5m = cfg.get("max_volatility_5m", MAX_VOLATILITY_5M)
-    if vol5 is not None and vol5 > max_vol_5m:
-        return False, f"volatility too high ({vol5:.3f} > {max_vol_5m})"
-
-    # RSI hard blocks
-    rsi_ob, rsi_os = get_dynamic_rsi_thresholds(cex, poly, cfg)
-
-    if rsi is not None:
-        rsi_override = cfg.get("active_rsi_override", False)
-
-        if m5 is not None and m5 > 0 and rsi > rsi_ob:
-            bypassed = False
-            if rsi_override:
-                regime = detect_market_regime(cex, cfg)
-                lag = _calc_cex_poly_lag(cex, poly) or 0.0
-                min_lag = cfg.get("min_lag_override", 0.12)
-                very_strong_lag = cfg.get("very_strong_lag_override", 0.20)
-                session = get_market_session(datetime.now(timezone.utc).hour, cfg)
-                bypassed = (
-                    abs(lag) >= min_lag
-                    and session in ("overlap", "london")
-                    and (
-                        regime == "active"
-                        or (regime == "normal" and abs(lag) >= very_strong_lag)
-                    )
-                )
-            if not bypassed:
-                return False, f"RSI overbought ({rsi:.0f} > {rsi_ob}), skip long"
-
-        if m5 is not None and m5 < 0 and rsi < rsi_os:
-            bypassed = False
-            if rsi_override:
-                regime = detect_market_regime(cex, cfg)
-                lag = _calc_cex_poly_lag(cex, poly) or 0.0
-                min_lag = cfg.get("min_lag_override", 0.12)
-                very_strong_lag = cfg.get("very_strong_lag_override", 0.20)
-                session = get_market_session(datetime.now(timezone.utc).hour, cfg)
-                bypassed = (
-                    abs(lag) >= min_lag
-                    and session in ("overlap", "london")
-                    and (
-                        regime == "active"
-                        or (regime == "normal" and abs(lag) >= very_strong_lag)
-                    )
-                )
-            if not bypassed:
-                return False, f"RSI oversold ({rsi:.0f} < {rsi_os}), skip short"
-
-    # Poly spread gate
-    min_spread_block = cfg.get("min_poly_spread", MIN_POLY_SPREAD)
-    if poly_spread is not None and poly_spread > min_spread_block:
-        return False, f"Poly spread too wide ({poly_spread:.3f} > {min_spread_block})"
-
-    # Dynamic / fixed price gates
+    # Price band gate — only enter when Polymarket hasn't repriced the move yet
     poly_price = poly.get("poly_yes_price", 0.5) or 0.5
-    cex_lag = _calc_cex_poly_lag(cex, poly) or 0.0
+    max_yes = cfg.get("global_max_yes", GLOBAL_MAX_YES)
+    min_no  = cfg.get("global_min_no",  GLOBAL_MIN_NO)
 
-    use_dynamic_price = cfg.get("use_dynamic_price_bands", USE_DYNAMIC_PRICE_BANDS)
+    if m5 is not None and m5 > 0 and poly_price > max_yes:
+        return False, f"YES overpriced ({poly_price:.3f} > {max_yes:.3f})"
 
-    if use_dynamic_price:
-        max_yes, min_no, fair_price, edge = compute_dynamic_bounds(
-            poly_price,
-            cex_lag,
-            vol5,
-            cfg,
-        )
-        yes_label = "dynamic"
-        no_label = "dynamic"
-    else:
-        max_yes = cfg.get("max_entry_yes", 0.476)
-        min_no = cfg.get("min_entry_no", 0.53)
-        fair_price = None
-        edge = None
-        yes_label = "fixed"
-        no_label = "fixed"
-
-    if m5 is not None and m5 > 0:
-        if poly_price > max_yes:
-            return False, f"YES overpriced ({poly_price:.3f} > {yes_label} {max_yes:.3f})"
-
-    if m5 is not None and m5 < 0:
-        if poly_price < min_no:
-            return False, f"NO overpriced ({poly_price:.3f} < {no_label} {min_no:.3f})"
-
-    # Optional volume confidence gate
-    volume_confidence = cfg.get("volume_confidence", False)
-    if (
-        volume_confidence
-        and vol_ratio is not None
-        and vol_ratio != 1.0
-        and vol_ratio < cfg.get("volume_confidence_threshold", 0.3)
-    ):
-        return False, f"Volume too low ({vol_ratio:.2f}x avg)"
-
-    # 1m vs 5m agreement
-    if cfg.get("momentum_agreement_filter", True):
-        m1 = cex.get("momentum_1m")
-        min_m1 = cfg.get("momentum_agreement_min_1m", 0.05)
-        if (
-            m1 is not None
-            and m5 is not None
-            and abs(m1) >= min_m1
-            and abs(m5) >= min_mom
-            and (m1 > 0) != (m5 > 0)
-        ):
-            return False, (
-                f"timeframe disagreement: 1m={m1:+.3f}% opposes 5m={m5:+.3f}%"
-                f" — reversal risk, skipping"
-            )
-
-    # 15m vs 5m agreement
-    if cfg.get("momentum_15m_agreement_filter", True):
-        m15 = cex.get("momentum_15m")
-        min_m15 = cfg.get("momentum_agreement_min_15m", 0.05)
-        if (
-            m15 is not None
-            and m5 is not None
-            and abs(m15) >= min_m15
-            and abs(m5) >= min_mom
-            and (m15 > 0) != (m5 > 0)
-        ):
-            return False, (
-                f"timeframe disagreement: 15m={m15:+.3f}% opposes 5m={m5:+.3f}%"
-                f" — counter-trend spike, skipping"
-            )
+    if m5 is not None and m5 < 0 and poly_price < min_no:
+        return False, f"NO overpriced ({poly_price:.3f} < {min_no:.3f})"
 
     return True, "ok"
 
@@ -799,18 +661,6 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
         max(result["confidence"], min_pos_pct),
         size_cap,
     )
-
-    vol5 = cex_signals.get("volatility_5m")
-    vp_thresh = cfg.get("vol_penalty_threshold", 1.2)
-    if vol5 is not None and vol5 > vp_thresh:
-        v_max = cfg.get("max_volatility_5m", MAX_VOLATILITY_5M)
-        v_range = max(v_max - vp_thresh, 0.1)
-        max_penalty = cfg.get("max_volatility_position_penalty", 0.50)
-        penalty = min(max_penalty, (vol5 - vp_thresh) / v_range)
-        result["position_pct"] = max(
-            min_pos_pct,
-            result["position_pct"] * (1.0 - penalty),
-        )
 
     if cfg.get("session_gating_enabled", True):
         sess_cap = get_session_position_cap(session, cfg)
