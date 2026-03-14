@@ -16,19 +16,19 @@
 
   "signal": {
     "signal_weights": {
-      "btc_vs_reference":      0.45,
-      "cex_poly_lag":          0.35,
-      "momentum_5m":           0.15,
-      "price_acceleration":    0.05,
-      "vol_adjusted_momentum": 0.0,
-      "momentum_1m":           0.0,
-      "momentum_15m":          0.0,
-      "rsi_14":                0.0,
-      "poly_spread":           0.0,
-      "volume_ratio":          0.0,
-      "momentum_consistency":  0.0,
-      "order_imbalance":       0.0,
-      "trade_flow_ratio":      0.0
+      "vol_adjusted_momentum": 0.26,
+      "momentum_5m":           0.23,
+      "cex_poly_lag":          0.13,
+      "btc_vs_reference":      0.13,
+      "momentum_1m":           0.08,
+      "price_acceleration":    0.09,
+      "momentum_15m":          0.05,
+      "rsi_14":                0.03,
+      "poly_spread":           0.00,
+      "volume_ratio":          0.00,
+      "momentum_consistency":  0.00,
+      "order_imbalance":       0.00,
+      "trade_flow_ratio":      0.00
     },
 
     "composite_threshold":        0.68,
@@ -81,9 +81,9 @@
     "asia_position_cap":     1.0,
     "off_position_cap":      1.0,
 
-    "slow_position_pct_cap":    1.0,
-    "normal_position_pct_cap":  1.0,
-    "active_position_pct_cap":  1.0,
+    "slow_position_pct_cap":   1.0,
+    "normal_position_pct_cap": 1.0,
+    "active_position_pct_cap": 1.0,
     "min_position_pct": 0.55,
     "max_volatility_position_penalty": 0.3,
 
