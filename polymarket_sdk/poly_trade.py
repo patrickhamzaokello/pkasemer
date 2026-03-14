@@ -133,10 +133,14 @@ def execute_trade(
             "error": f"Order signing failed: {e}",
         }
 
+    # Get mid price for average_price in response (informational only)
+    entry_price = _get_mid_price(client, token_id) or 0.0
+
     try:
-        resp = client.post_order(signed_order, OrderType.FOK)
+        resp   = client.post_order(signed_order, OrderType.FOK)
+        result = _parse_order_response(resp, entry_price)
     except Exception as e:
-        return {
+        result = {
             "success": False,
             "trade_id": None,
             "shares_bought": 0.0,
@@ -144,10 +148,6 @@ def execute_trade(
             "average_price": 0.0,
             "error": f"Order post failed: {e}",
         }
-
-    # Get mid price for average_price in response (informational only)
-    entry_price = _get_mid_price(client, token_id) or 0.0
-    result = _parse_order_response(resp, entry_price)
 
     # ── FOK retry: if rejected due to insufficient liquidity, halve and retry ──
     if not result["success"] and _is_fill_error(result.get("error", "")):
@@ -415,11 +415,10 @@ def sell_shares(
         return {"success": False, "trade_id": None, "error": f"Order signing failed: {e}"}
 
     try:
-        resp = client.post_order(signed_order, OrderType.FOK)
+        resp   = client.post_order(signed_order, OrderType.FOK)
+        result = _parse_order_response(resp, 0.0)
     except Exception as e:
-        return {"success": False, "trade_id": None, "error": f"Order post failed: {e}"}
-
-    result = _parse_order_response(resp, 0.0)
+        result = {"success": False, "trade_id": None, "shares_bought": 0.0, "shares": 0.0, "average_price": 0.0, "error": f"Order post failed: {e}"}
 
     # ── FOK retry: halve shares and retry once on fill rejection ─────────────
     if not result["success"] and _is_fill_error(result.get("error", "")):
