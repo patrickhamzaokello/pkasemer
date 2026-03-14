@@ -75,9 +75,9 @@ def check_hour_gate(hour_utc, config=None):
     raw_boosted = cfg.get("boosted_hours", _DEFAULT_BOOSTED_HOURS)
     boosted = {int(k): v for k, v in raw_boosted.items()}
 
-    if hour_utc in blocked:
-        acc = get_hour_accuracy(hour_utc, cfg)
-        return False, 0.0, f"hour {hour_utc}h blocked (signal accuracy={acc:.1%})"
+    # if hour_utc in blocked:
+    #     acc = get_hour_accuracy(hour_utc, cfg)
+    #     return False, 0.0, f"hour {hour_utc}h blocked (signal accuracy={acc:.1%})"
 
     return True, boosted.get(hour_utc, 0.0), "ok"
 
