@@ -31,16 +31,16 @@
       "trade_flow_ratio":      0.00
     },
 
-    "composite_threshold":        0.68,
-    "slow_composite_threshold":   0.68,
-    "active_composite_threshold": 0.68,
+    "composite_threshold":        0.64,
+    "slow_composite_threshold":   0.64,
+    "active_composite_threshold": 0.64,
     "composite_threshold_floor":  0.55,
 
     "use_dynamic_rsi_thresholds": false,
     "rsi_overbought": 92,
     "rsi_oversold":   8,
 
-    "min_momentum_pct": 0.02,
+    "min_momentum_pct": 0.010,
     "use_dynamic_momentum_threshold": false,
     "dynamic_momentum_multiplier":    1.0,
     "min_dynamic_momentum": 0.005,
