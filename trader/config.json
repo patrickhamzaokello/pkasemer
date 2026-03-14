@@ -51,7 +51,7 @@
     "min_poly_spread": 0.04,
 
     "global_max_yes": 0.52,
-    "global_min_no":  0.48,
+    "global_min_no":  0.47,
     "signal_flip_exit_threshold": 0.60,
 
     "volume_confidence": false,
