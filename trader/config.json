@@ -60,7 +60,7 @@
     "momentum_15m_agreement_filter": false,
     "momentum_agreement_min_15m": 0.03,
 
-    "blocked_hours": [0, 11, 15, 20, 22, 23],
+    "blocked_hours": [],
     "boosted_hours": {
       "2": -0.03,
       "4": -0.02
@@ -109,8 +109,8 @@
     "loss_cooldown_streak":     4,
     "loss_cooldown_skip_cycles": 4,
     "loss_cooldown_resume_threshold_boost": 0.05,
-    "min_payout_ratio":       1.05,
-    "slow_min_payout_ratio":  1.05,
+    "min_payout_ratio":       0.80,
+    "slow_min_payout_ratio":  0.90,
     "fee_ev_min_edge":        0.00,
     "fee_ev_min_edge_slow":   0.00,
     "min_position_size_usd":  0.50,
