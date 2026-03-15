@@ -24,36 +24,41 @@ from datetime import datetime, timezone
 # =============================================================================
 
 _DEFAULT_HOUR_ACCURACY = {
-    0:  0.719,
-    2:  0.857,
-    4:  0.773,
-    5:  0.667,
-    6:  0.446,
-    7:  0.662,
-    8:  0.459,
-    9:  0.525,
-    10: 0.738,
-    11: 0.629,
-    12: 0.672,
-    13: 0.656,
-    14: 0.649,
-    15: 0.688,
-    16: 0.258,
-    17: 0.733,
-    18: 0.679,
-    19: 0.688,
-    21: 0.636,
-    22: 0.667,
+    0:  0.290,  # live UTC: 29% win rate (was 0.719 — timezone artifact corrected)
+    1:  0.670,  # live UTC: ~67%
+    2:  0.857,  # retained (historically strong; small live sample)
+    3:  0.500,  # live UTC: ~50%
+    4:  0.710,  # live UTC: ~71%
+    5:  0.600,  # live UTC: ~60%
+    6:  0.830,  # live UTC: 83% (was 0.446 — timezone artifact corrected)
+    7:  0.620,  # retained estimate
+    8:  0.459,  # retained
+    9:  0.525,  # retained
+    10: 0.738,  # retained
+    11: 0.629,  # retained
+    12: 0.672,  # retained
+    13: 0.656,  # retained
+    14: 0.649,  # retained
+    15: 0.688,  # retained
+    16: 0.258,  # confirmed bad (25.8%)
+    17: 0.733,  # retained
+    18: 0.679,  # retained
+    19: 0.688,  # retained
+    20: 0.620,  # estimate (no live data yet)
+    21: 0.670,  # live UTC: ~67% (was 0.636)
+    22: 0.800,  # live UTC: 80% (was 0.667)
+    23: 0.830,  # live UTC: 83% (was missing, defaulted to 0.60)
 }
 
-_DEFAULT_BLOCKED_HOURS = [6, 8, 16]
+_DEFAULT_BLOCKED_HOURS = [16]  # UTC 16 confirmed 25.8%; 6 and 8 were timezone artifacts
 
 _DEFAULT_BOOSTED_HOURS = {
     2:  -0.03,
     4:  -0.02,
     10: -0.02,
     17: -0.02,
-    0:  -0.01,
+    22: -0.02,  # live UTC: 80% win rate
+    23: -0.03,  # live UTC: 83% win rate
 }
 
 
@@ -75,9 +80,9 @@ def check_hour_gate(hour_utc, config=None):
     raw_boosted = cfg.get("boosted_hours", _DEFAULT_BOOSTED_HOURS)
     boosted = {int(k): v for k, v in raw_boosted.items()}
 
-    # if hour_utc in blocked:
-    #     acc = get_hour_accuracy(hour_utc, cfg)
-    #     return False, 0.0, f"hour {hour_utc}h blocked (signal accuracy={acc:.1%})"
+    if hour_utc in blocked:
+        acc = get_hour_accuracy(hour_utc, cfg)
+        return False, 0.0, f"hour {hour_utc}h blocked (signal accuracy={acc:.1%})"
 
     return True, boosted.get(hour_utc, 0.0), "ok"
 
@@ -358,7 +363,11 @@ def _calc_cex_poly_lag(cex, poly):
     poly_div = poly.get("poly_divergence", 0) or 0
     if btc_ref is None:
         return None
-    return btc_ref - poly_div
+    # Normalize both to comparable units: poly_divergence is a price fraction (e.g. 0.02)
+    # while btc_vs_reference is a % change (e.g. 0.05). Multiplying poly_div by 5.0 converts
+    # it to an approximate % BTC equivalent (empirical: 0.01 poly move ≈ 0.05% BTC move).
+    # Positive lag = Poly is lagging the CEX move (edge exists); negative = Poly overpriced.
+    return btc_ref - (poly_div * 5.0)
 
 
 # =============================================================================
@@ -573,17 +582,22 @@ def get_composite_signal(cex_signals, poly_signals, config=None):
     cfg = _resolve_cfg(config)
     regime = detect_market_regime(cex_signals, cfg)
 
-    if "signal_weights" in cfg:
+    # Regime-specific weight overrides take priority; general signal_weights is the
+    # normal-regime fallback. This allows the built-in SLOW/ACTIVE tables to engage
+    # when no regime-specific config override exists.
+    if regime == "slow" and "slow_signal_weights" in cfg:
+        weights = SLOW_MARKET_WEIGHTS.copy()
+        weights.update(cfg["slow_signal_weights"])
+    elif regime == "active" and "active_signal_weights" in cfg:
+        weights = ACTIVE_MARKET_WEIGHTS.copy()
+        weights.update(cfg["active_signal_weights"])
+    elif "signal_weights" in cfg:
         weights = DEFAULT_WEIGHTS.copy()
         weights.update(cfg["signal_weights"])
     elif regime == "slow":
         weights = SLOW_MARKET_WEIGHTS.copy()
-        if "slow_signal_weights" in cfg:
-            weights.update(cfg["slow_signal_weights"])
     elif regime == "active":
         weights = ACTIVE_MARKET_WEIGHTS.copy()
-        if "active_signal_weights" in cfg:
-            weights.update(cfg["active_signal_weights"])
     else:
         weights = DEFAULT_WEIGHTS.copy()
 

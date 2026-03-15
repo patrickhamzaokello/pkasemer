@@ -1365,8 +1365,24 @@ def run_fast_market_strategy(
         )
         return
 
+    # ── Live ask price — fetch before payout/EV gates ────────────────────────
+    # Gamma's bestBid/bestAsk can be 5–30s stale; using stale mid for the payout
+    # check can approve trades where the actual fill price breaks the 1.10x floor.
+    # Fetch the CLOB ask now so both the fee-EV and payout checks use the real price.
+    ask_price = None
+    try:
+        _clob_ids  = json.loads(best.get("clob_token_ids", "[]") or "[]")
+        yes_token_id = _clob_ids[0] if _clob_ids else None
+    except (json.JSONDecodeError, IndexError, TypeError):
+        yes_token_id = None
+
+    if yes_token_id:
+        ask_price = _get_clob_ask(yes_token_id, side)
+
     # ── Fee-aware EV check ────────────────────────────────────────────────────
     entry_price = market_yes_price if side == "yes" else (1 - market_yes_price)
+    if ask_price is not None:
+        entry_price = max(ask_price, entry_price)  # always at or above Gamma mid
 
     if fee_rate > 0:
         win_profit   = (1 - entry_price) * (1 - fee_rate)
@@ -1478,20 +1494,8 @@ def run_fast_market_strategy(
         )
         return
 
-    # Try real-time CLOB price first; Gamma's bestBid/bestAsk can be 5–30s stale,
-    # which causes min_shares calculations to be wrong when the market has repriced.
-    ask_price = None
-    try:
-        clob_token_ids = json.loads(best.get("clob_token_ids", "[]") or "[]")
-        yes_token_id = clob_token_ids[0] if clob_token_ids else None
-    except (json.JSONDecodeError, IndexError, TypeError):
-        yes_token_id = None
-
-    if yes_token_id:
-        ask_price = _get_clob_ask(yes_token_id, side)
-        if ask_price is not None:
-            ask_price = max(ask_price, entry_price)  # ask always >= mid
-
+    # ask_price was already fetched from the CLOB above (before payout check).
+    # Fall back to Gamma bid/ask only if the CLOB call failed.
     if ask_price is None:
         # Fallback: Gamma cached bid/ask (may be stale but better than nothing)
         best_ask_raw = best.get("bestAsk")
